@@ -125,10 +125,10 @@ export default function Projects() {
         </div>
       )}
 
-      <button className="fixed bottom-6 left-6 bg-[#E94560] hover:bg-[#E94560]/80 text-white px-5 py-3 rounded-2xl shadow-lg hover:shadow-xl hover:scale-105 transition-all flex items-center gap-2 font-medium">
+      <Link to="/editor/new" className="fixed bottom-6 left-6 bg-[#E94560] hover:bg-[#E94560]/80 text-white px-5 py-3 rounded-2xl shadow-lg hover:shadow-xl hover:scale-105 transition-all flex items-center gap-2 font-medium z-10">
         <Plus size={20} />
         פרויקט חדש
-      </button>
+      </Link>
     </div>
   )
 }

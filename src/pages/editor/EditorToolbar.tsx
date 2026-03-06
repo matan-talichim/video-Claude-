@@ -87,7 +87,7 @@ export default function EditorToolbar() {
       />
 
       <div className="flex items-center gap-2">
-        <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-sm transition-colors">
+        <button onClick={() => openModal('share')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-sm transition-colors">
           <Share2 size={14} />
           שתף
         </button>
@@ -99,7 +99,7 @@ export default function EditorToolbar() {
           פרסם
         </button>
         <button
-          onClick={() => openModal('publish')}
+          onClick={() => openModal('export')}
           className="px-4 py-1.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-lg text-sm font-medium transition-colors"
         >
           ייצוא

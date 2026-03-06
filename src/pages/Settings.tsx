@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { User, CreditCard, Users, Plug, Upload, Check, X } from 'lucide-react'
+import { User, CreditCard, Users, Plug, Upload, Check } from 'lucide-react'
+import { useUIStore } from '../stores/uiStore'
 
 const tabs = [
   { id: 'profile', label: 'פרופיל', icon: User },
@@ -35,6 +36,7 @@ const roleBadgeColors: Record<string, string> = {
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState('profile')
+  const { addToast } = useUIStore()
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -91,7 +93,7 @@ export default function Settings() {
                 </select>
               </div>
             </div>
-            <button className="px-6 py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl text-sm font-medium transition-colors">שמור שינויים</button>
+            <button onClick={() => addToast('השינויים נשמרו!', 'success')} className="px-6 py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl text-sm font-medium transition-colors">שמור שינויים</button>
           </div>
         )}
 
@@ -116,7 +118,7 @@ export default function Settings() {
                 </div>
               </div>
             </div>
-            <button className="px-6 py-2.5 bg-[#0F3460] hover:bg-[#0F3460]/80 rounded-xl text-sm font-medium transition-colors">שדרג מנוי</button>
+            <button onClick={() => addToast('מעביר לדף שדרוג...', 'info')} className="px-6 py-2.5 bg-[#0F3460] hover:bg-[#0F3460]/80 rounded-xl text-sm font-medium transition-colors">שדרג מנוי</button>
             <div>
               <h3 className="font-medium mb-3">היסטוריית חיובים</h3>
               <table className="w-full text-sm">
@@ -153,7 +155,7 @@ export default function Settings() {
                 <option>Editor</option>
                 <option>Viewer</option>
               </select>
-              <button className="px-4 py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl text-sm transition-colors">הזמן</button>
+              <button onClick={() => addToast('ההזמנה נשלחה!', 'success')} className="px-4 py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl text-sm transition-colors">הזמן</button>
             </div>
           </div>
         )}

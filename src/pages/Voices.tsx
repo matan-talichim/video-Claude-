@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Play, Pencil, Trash2, Circle, Upload, Check } from 'lucide-react'
+import { Plus, Play, Pencil, Trash2, Circle, Check } from 'lucide-react'
 import Modal from '../components/Modal'
 
 const myVoices = [

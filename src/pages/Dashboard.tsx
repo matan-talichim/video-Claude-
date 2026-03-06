@@ -3,10 +3,10 @@ import { Sparkles, Upload, Monitor, FileText, MoreVertical } from 'lucide-react'
 import { useProjectsStore } from '../stores/projectsStore'
 
 const quickActions = [
-  { label: 'העלה קובץ', icon: Upload, gradient: 'from-blue-500 to-blue-700' },
-  { label: 'הקלט מסך', icon: Monitor, gradient: 'from-green-500 to-green-700' },
-  { label: 'צור מפרומפט', icon: Sparkles, gradient: 'from-purple-500 to-purple-700' },
-  { label: 'הדבק סקריפט', icon: FileText, gradient: 'from-orange-500 to-orange-700' },
+  { label: 'העלה קובץ', icon: Upload, gradient: 'from-blue-500 to-blue-700', path: '/projects' },
+  { label: 'הקלט מסך', icon: Monitor, gradient: 'from-green-500 to-green-700', path: '/recording' },
+  { label: 'צור מפרומפט', icon: Sparkles, gradient: 'from-purple-500 to-purple-700', path: '/editor/demo' },
+  { label: 'הדבק סקריפט', icon: FileText, gradient: 'from-orange-500 to-orange-700', path: '/editor/demo' },
 ]
 
 const statusColors: Record<string, string> = {
@@ -37,13 +37,14 @@ export default function Dashboard() {
         {quickActions.map((action) => {
           const Icon = action.icon
           return (
-            <button
+            <Link
               key={action.label}
+              to={action.path}
               className={`bg-gradient-to-br ${action.gradient} p-5 rounded-2xl text-center hover:scale-105 hover:shadow-xl transition-all duration-200 group`}
             >
               <Icon size={28} className="mx-auto mb-2 group-hover:scale-110 transition-transform" />
               <span className="text-sm font-medium">{action.label}</span>
-            </button>
+            </Link>
           )
         })}
       </div>
