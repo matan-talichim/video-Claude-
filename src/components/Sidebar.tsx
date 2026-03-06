@@ -7,7 +7,7 @@ const menuItems = [
   { path: '/recording', icon: Mic, label: 'הקלטות מהירות' },
   { path: '/brand', icon: Palette, label: 'סטודיו מותג' },
   { path: '/voices', icon: AudioLines, label: 'דוברי AI' },
-  { path: '/avatars', icon: LayoutGrid, label: 'חבילות עיצוב' },
+  { path: '/editor/demo', icon: LayoutGrid, label: 'חבילות עיצוב' },
 ]
 
 export default function Sidebar() {

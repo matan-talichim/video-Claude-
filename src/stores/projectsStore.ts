@@ -46,11 +46,19 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSortBy: (sort) => set({ sortBy: sort }),
   filteredProjects: () => {
-    const { projects, filter, searchQuery } = get()
-    return projects.filter((p) => {
+    const { projects, filter, searchQuery, sortBy } = get()
+    const filtered = projects.filter((p) => {
       if (filter !== 'הכל' && p.status !== filter) return false
       if (searchQuery && !p.name.includes(searchQuery)) return false
       return true
+    })
+    return [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'שם': return a.name.localeCompare(b.name, 'he')
+        case 'גודל': return parseFloat(a.size) - parseFloat(b.size)
+        case 'סטטוס': return a.status.localeCompare(b.status, 'he')
+        default: return 0
+      }
     })
   },
 }))
