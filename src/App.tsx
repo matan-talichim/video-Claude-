@@ -9,6 +9,7 @@ import Avatars from './pages/Avatars'
 import Recording from './pages/Recording'
 import BrandStudio from './pages/BrandStudio'
 import Settings from './pages/Settings'
+import Uploads from './pages/Uploads'
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
+        <Route path="/uploads" element={<Uploads />} />
         <Route path="/voices" element={<Voices />} />
         <Route path="/translation" element={<Translation />} />
         <Route path="/avatars" element={<Avatars />} />
