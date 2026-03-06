@@ -4,13 +4,14 @@ import { X } from 'lucide-react'
 interface ModalProps {
   isOpen: boolean
   onClose: () => void
-  title: string
+  title?: string
   subtitle?: string
   children: ReactNode
-  size?: 'sm' | 'md' | 'lg' | 'xl'
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
+  hideHeader?: boolean
 }
 
-export default function Modal({ isOpen, onClose, title, subtitle, children, size = 'md' }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, subtitle, children, size = 'md', hideHeader = false }: ModalProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -26,6 +27,7 @@ export default function Modal({ isOpen, onClose, title, subtitle, children, size
     md: 'max-w-lg',
     lg: 'max-w-2xl',
     xl: 'max-w-4xl',
+    full: 'max-w-6xl',
   }
 
   return (
@@ -41,20 +43,22 @@ export default function Modal({ isOpen, onClose, title, subtitle, children, size
         style={{ border: '1px solid rgba(255,255,255,0.08)' }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
-          <div>
-            <h2 className="text-lg font-bold text-text-primary">{title}</h2>
-            {subtitle && <p className="text-sm text-text-muted mt-0.5">{subtitle}</p>}
+        {!hideHeader && (
+          <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+            <div>
+              {title && <h2 className="text-lg font-bold text-text-primary">{title}</h2>}
+              {subtitle && <p className="text-sm text-text-muted mt-0.5">{subtitle}</p>}
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg hover:bg-white/[0.08] transition-colors text-text-muted hover:text-text-primary"
+            >
+              <X size={18} />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-white/[0.08] transition-colors text-text-muted hover:text-text-primary"
-          >
-            <X size={18} />
-          </button>
-        </div>
+        )}
         {/* Body */}
-        <div className="p-5 max-h-[70vh] overflow-y-auto">{children}</div>
+        <div className={`p-5 overflow-y-auto ${size === 'full' ? 'max-h-[85vh]' : 'max-h-[70vh]'}`}>{children}</div>
       </div>
     </div>
   )

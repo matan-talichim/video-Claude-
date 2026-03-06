@@ -5,12 +5,17 @@ import {
   Clock, Zap, ArrowLeft, Copy, Share2, Trash2
 } from 'lucide-react'
 import { useProjectsStore } from '../stores/projectsStore'
+import { useUIStore } from '../stores/uiStore'
+import UploadModal from '../components/upload/UploadModal'
+import RecordingModal from '../components/recording/RecordingModal'
+import GenerateFromPromptModal from '../components/generate/GenerateFromPromptModal'
+import PasteScriptModal from '../components/generate/PasteScriptModal'
 
 const quickActions = [
-  { label: 'העלה קובץ', desc: 'העלה וידאו או אודיו', icon: Upload, gradient: 'from-blue-600/20 to-blue-400/5', hoverGradient: 'from-blue-600/30 to-blue-400/10', iconColor: 'text-accent-blue', path: '/projects' },
-  { label: 'הקלט מסך', desc: 'הקלטת מסך עם מצלמה', icon: Monitor, gradient: 'from-green-600/20 to-green-400/5', hoverGradient: 'from-green-600/30 to-green-400/10', iconColor: 'text-success', path: '/recording' },
-  { label: 'צור מפרומפט', desc: 'AI ייצור עבורך וידאו', icon: Sparkles, gradient: 'from-purple-600/20 to-purple-400/5', hoverGradient: 'from-purple-600/30 to-purple-400/10', iconColor: 'text-accent-purple', path: '/editor/demo' },
-  { label: 'הדבק סקריפט', desc: 'הפוך טקסט לווידאו', icon: FileText, gradient: 'from-orange-600/20 to-orange-400/5', hoverGradient: 'from-orange-600/30 to-orange-400/10', iconColor: 'text-warning', path: '/editor/demo' },
+  { label: 'העלה קובץ', desc: 'העלה וידאו או אודיו', icon: Upload, gradient: 'from-blue-600/20 to-blue-400/5', hoverGradient: 'from-blue-600/30 to-blue-400/10', iconColor: 'text-accent-blue', action: 'upload' },
+  { label: 'הקלט מסך', desc: 'הקלטת מסך עם מצלמה', icon: Monitor, gradient: 'from-green-600/20 to-green-400/5', hoverGradient: 'from-green-600/30 to-green-400/10', iconColor: 'text-success', action: 'screenRecord' },
+  { label: 'צור מפרומפט', desc: 'AI ייצור עבורך וידאו', icon: Sparkles, gradient: 'from-purple-600/20 to-purple-400/5', hoverGradient: 'from-purple-600/30 to-purple-400/10', iconColor: 'text-accent-purple', action: 'generatePrompt' },
+  { label: 'הדבק סקריפט', desc: 'הפוך טקסט לווידאו', icon: FileText, gradient: 'from-orange-600/20 to-orange-400/5', hoverGradient: 'from-orange-600/30 to-orange-400/10', iconColor: 'text-warning', action: 'pasteScript' },
 ]
 
 const statusConfig: Record<string, { dot: string; label: string }> = {
@@ -80,6 +85,7 @@ function CircularProgress({ value, max, color, label, icon: Icon }: {
 
 export default function Dashboard() {
   const { projects } = useProjectsStore()
+  const { activeModal, openModal, closeModal } = useUIStore()
   const recentProjects = projects.slice(0, 6)
   const [placeholderIdx, setPlaceholderIdx] = useState(0)
   const [placeholderFade, setPlaceholderFade] = useState(true)
@@ -130,9 +136,9 @@ export default function Dashboard() {
         {quickActions.map((action) => {
           const Icon = action.icon
           return (
-            <Link
+            <button
               key={action.label}
-              to={action.path}
+              onClick={() => openModal(action.action)}
               className={`relative bg-gradient-to-br ${action.gradient} hover:bg-gradient-to-br p-6 rounded-2xl text-center border border-white/[0.06] hover:border-white/[0.12] hover:-translate-y-1 hover:shadow-xl hover:shadow-black/20 transition-all duration-200 group overflow-hidden`}
               style={{ minHeight: '150px' }}
             >
@@ -142,7 +148,7 @@ export default function Dashboard() {
               <div className="font-medium text-sm text-text-primary">{action.label}</div>
               <div className="text-xs text-text-muted mt-1">{action.desc}</div>
               <ArrowLeft size={16} className="absolute top-4 left-4 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
-            </Link>
+            </button>
           )
         })}
       </div>
@@ -252,6 +258,12 @@ export default function Dashboard() {
         <CircularProgress value={14} max={20} color="#5C8AFF" label="שעות מדיה" icon={Clock} />
         <CircularProgress value={280} max={400} color="#7C5CFF" label="AI Credits" icon={Zap} />
       </div>
+
+      {/* Modals */}
+      <UploadModal isOpen={activeModal === 'upload'} onClose={closeModal} />
+      <RecordingModal isOpen={activeModal === 'screenRecord'} onClose={closeModal} />
+      <GenerateFromPromptModal isOpen={activeModal === 'generatePrompt'} onClose={closeModal} />
+      <PasteScriptModal isOpen={activeModal === 'pasteScript'} onClose={closeModal} />
     </div>
   )
 }

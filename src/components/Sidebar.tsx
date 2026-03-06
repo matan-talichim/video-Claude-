@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard, FolderOpen, Mic, Palette, AudioLines,
+  LayoutDashboard, FolderOpen, HardDrive, Mic, Palette, AudioLines,
   Languages, UserCircle, Video, Settings, ChevronLeft, ChevronRight,
   ChevronDown
 } from 'lucide-react'
@@ -23,6 +23,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { path: '/', icon: LayoutDashboard, label: 'דשבורד' },
       { path: '/projects', icon: FolderOpen, label: 'פרויקטים' },
+      { path: '/uploads', icon: HardDrive, label: 'הקבצים שלי' },
     ],
   },
   {
