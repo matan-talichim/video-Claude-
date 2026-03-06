@@ -1,10 +1,14 @@
-import { Play, Pause, SkipBack, SkipForward, Volume2, Maximize } from 'lucide-react'
+import { useState } from 'react'
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Subtitles } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 
-const speeds = [0.5, 1, 1.5, 2]
+const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 export default function VideoPanel() {
-  const { currentTime, duration, isPlaying, playbackSpeed, volume, togglePlay, setPlaybackSpeed, setVolume, setCurrentTime } = useEditorStore()
+  const { currentTime, duration, isPlaying, volume, togglePlay, setPlaybackSpeed, setVolume, setCurrentTime } = useEditorStore()
+  const [showControls, setShowControls] = useState(false)
+  const [showVolume, setShowVolume] = useState(false)
+  const [speedIdx, setSpeedIdx] = useState(2)
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, '0')
@@ -12,77 +16,112 @@ export default function VideoPanel() {
     return `${m}:${sec}`
   }
 
+  const handleSpeedCycle = () => {
+    const nextIdx = (speedIdx + 1) % speeds.length
+    setSpeedIdx(nextIdx)
+    setPlaybackSpeed(speeds[nextIdx])
+  }
+
   return (
-    <div className="flex flex-col h-full bg-[#16213E] rounded-xl border border-white/5 overflow-hidden">
-      <div className="flex-1 bg-gradient-to-br from-[#0F3460]/60 to-[#1A1A2E] flex items-center justify-center relative">
+    <div
+      className="flex flex-col h-full bg-bg-deepest rounded-xl border border-white/[0.06] overflow-hidden"
+      onMouseEnter={() => setShowControls(true)}
+      onMouseLeave={() => { setShowControls(false); setShowVolume(false) }}
+    >
+      {/* Video area */}
+      <div className="flex-1 bg-bg-deepest flex items-center justify-center relative">
+        <div className="w-full h-full bg-gradient-to-br from-bg-panel to-bg-deepest rounded-lg flex items-center justify-center">
+          <div className="text-text-muted text-sm">תצוגה מקדימה</div>
+        </div>
+
+        {/* Center play button */}
         <button
           onClick={togglePlay}
-          className="w-16 h-16 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center hover:bg-white/20 hover:scale-110 transition-all"
+          className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200 ${showControls ? 'opacity-100' : 'opacity-0'}`}
         >
-          {isPlaying ? <Pause size={28} fill="white" /> : <Play size={28} fill="white" className="mr-[-2px]" />}
+          <div className="w-16 h-16 rounded-full glass flex items-center justify-center hover:scale-110 transition-transform shadow-2xl">
+            {isPlaying ? (
+              <Pause size={26} className="text-white animate-morph" />
+            ) : (
+              <Play size={26} className="text-white mr-[-2px] animate-morph" />
+            )}
+          </div>
         </button>
-      </div>
 
-      <div className="p-3 border-t border-white/10 space-y-2 shrink-0">
-        <div className="h-1 bg-white/10 rounded-full overflow-hidden cursor-pointer" onClick={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect()
-          const ratio = (e.clientX - rect.left) / rect.width
-          setCurrentTime(ratio * duration)
-        }}>
-          <div className="h-full bg-[#E94560] rounded-full" style={{ width: `${(currentTime / duration) * 100}%` }} />
-        </div>
-
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1">
-            <button onClick={() => setCurrentTime(Math.max(0, currentTime - 5))} className="p-1.5 hover:bg-white/10 rounded transition-colors">
-              <SkipBack size={14} />
-            </button>
-            <button onClick={togglePlay} className="p-1.5 hover:bg-white/10 rounded transition-colors">
-              {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-            </button>
-            <button onClick={() => setCurrentTime(Math.min(duration, currentTime + 5))} className="p-1.5 hover:bg-white/10 rounded transition-colors">
-              <SkipForward size={14} />
-            </button>
-          </div>
-
-          <span className="text-xs text-white/50 font-mono">{formatTime(currentTime)} / {formatTime(duration)}</span>
-
-          <div className="flex items-center gap-1">
-            {speeds.map((s) => (
-              <button
-                key={s}
-                onClick={() => setPlaybackSpeed(s)}
-                className={`px-1.5 py-0.5 rounded text-[10px] transition-colors ${
-                  playbackSpeed === s ? 'bg-[#0F3460] text-white' : 'text-white/40 hover:text-white'
-                }`}
+        {/* Glass controls overlay at bottom */}
+        <div className={`absolute bottom-0 left-0 right-0 transition-all duration-200 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
+          <div className="mx-3 mb-3 glass rounded-xl p-2 space-y-2">
+            {/* Progress bar */}
+            <div
+              className="h-1 bg-white/[0.08] rounded-full overflow-hidden cursor-pointer group hover:h-1.5 transition-all"
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const ratio = (e.clientX - rect.left) / rect.width
+                setCurrentTime(ratio * duration)
+              }}
+            >
+              <div
+                className="h-full bg-accent-purple rounded-full relative transition-all"
+                style={{ width: `${(currentTime / duration) * 100}%` }}
               >
-                {s}x
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </div>
+
+            {/* Controls row */}
+            <div className="flex items-center gap-2">
+              <button onClick={() => setCurrentTime(Math.max(0, currentTime - 5))} className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary">
+                <SkipBack size={14} />
               </button>
-            ))}
-          </div>
+              <button onClick={togglePlay} className="p-1.5 hover:bg-white/[0.08] rounded transition-colors text-text-primary">
+                {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+              </button>
+              <button onClick={() => setCurrentTime(Math.min(duration, currentTime + 5))} className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary">
+                <SkipForward size={14} />
+              </button>
 
-          <div className="flex items-center gap-1">
-            <Volume2 size={14} className="text-white/40" />
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={volume}
-              onChange={(e) => setVolume(Number(e.target.value))}
-              className="w-16 h-1 accent-[#E94560]"
-            />
-          </div>
+              <span className="text-xs text-text-muted font-mono px-1">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
 
-          <button className="p-1.5 hover:bg-white/10 rounded transition-colors">
-            <Maximize size={14} />
-          </button>
+              <div className="flex-1" />
+
+              <button
+                onClick={handleSpeedCycle}
+                className="px-2 py-0.5 rounded-full bg-white/[0.06] text-[11px] text-text-secondary hover:text-text-primary hover:bg-white/[0.1] transition-colors font-mono"
+              >
+                {speeds[speedIdx]}x
+              </button>
+
+              <div className="relative flex items-center" onMouseEnter={() => setShowVolume(true)} onMouseLeave={() => setShowVolume(false)}>
+                <button
+                  onClick={() => setVolume(volume > 0 ? 0 : 80)}
+                  className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary"
+                >
+                  {volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                </button>
+                <div className={`overflow-hidden transition-all duration-200 ${showVolume ? 'w-16 opacity-100 mr-1' : 'w-0 opacity-0'}`}>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={volume}
+                    onChange={(e) => setVolume(Number(e.target.value))}
+                    className="w-full h-1 accent-accent-purple"
+                  />
+                </div>
+              </div>
+
+              <button className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary">
+                <Subtitles size={14} />
+              </button>
+
+              <button className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary">
+                <Maximize size={14} />
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-
-      <div className="flex gap-2 p-3 border-t border-white/10 shrink-0">
-        {[1, 2, 3, 4].map((scene) => (
-          <div key={scene} className="flex-1 h-12 bg-gradient-to-r from-[#0F3460] to-[#16213E] rounded-lg border border-white/10 cursor-pointer hover:border-white/30 transition-colors" />
-        ))}
       </div>
     </div>
   )

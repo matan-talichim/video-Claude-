@@ -9,9 +9,15 @@ export const useThemeStore = create<ThemeState>((set) => ({
   isDark: true,
   toggle: () => set((state) => {
     const newDark = !state.isDark
+    // Add transition class for smooth theme switch
+    document.documentElement.classList.add('theme-transitioning')
     document.documentElement.classList.toggle('dark', newDark)
-    document.body.style.backgroundColor = newDark ? '#1A1A2E' : '#F3F4F6'
-    document.body.style.color = newDark ? '#FFFFFF' : '#1F2937'
+    document.body.style.backgroundColor = newDark ? '#0A0A0F' : '#FAFBFC'
+    document.body.style.color = newDark ? '#FFFFFF' : '#1A1A2E'
+    // Remove transition class after animation completes
+    setTimeout(() => {
+      document.documentElement.classList.remove('theme-transitioning')
+    }, 500)
     return { isDark: newDark }
   }),
 }))

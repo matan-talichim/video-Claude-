@@ -5,11 +5,12 @@ interface ModalProps {
   isOpen: boolean
   onClose: () => void
   title: string
+  subtitle?: string
   children: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
-export default function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, subtitle, children, size = 'md' }: ModalProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -29,14 +30,30 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' }:
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative ${sizeClasses[size]} w-full bg-[#16213E] rounded-2xl shadow-2xl border border-white/10 overflow-hidden transition-all duration-300 scale-100`}>
-        <div className="flex items-center justify-between p-5 border-b border-white/10">
-          <h2 className="text-lg font-bold">{title}</h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+      {/* Overlay */}
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
+        onClick={onClose}
+      />
+      {/* Modal content */}
+      <div
+        className={`relative ${sizeClasses[size]} w-full glass rounded-2xl shadow-2xl overflow-hidden animate-scale-in`}
+        style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+          <div>
+            <h2 className="text-lg font-bold text-text-primary">{title}</h2>
+            {subtitle && <p className="text-sm text-text-muted mt-0.5">{subtitle}</p>}
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-white/[0.08] transition-colors text-text-muted hover:text-text-primary"
+          >
             <X size={18} />
           </button>
         </div>
+        {/* Body */}
         <div className="p-5 max-h-[70vh] overflow-y-auto">{children}</div>
       </div>
     </div>
