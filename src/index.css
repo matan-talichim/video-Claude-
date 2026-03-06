@@ -1,42 +1,276 @@
 @import "tailwindcss";
 
 @theme {
-  --color-dark-bg: #1A1A2E;
-  --color-dark-secondary: #16213E;
-  --color-dark-accent: #0F3460;
-  --color-dark-highlight: #E94560;
+  /* Background layers (dark) */
+  --color-bg-deepest: #0A0A0F;
+  --color-bg-panel: #12121A;
+  --color-bg-card: #1A1A28;
+  --color-bg-elevated: #222233;
+
+  /* Text colors */
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #A0A0B8;
+  --color-text-muted: #65657A;
+
+  /* Accent colors */
+  --color-accent-purple: #7C5CFF;
+  --color-accent-blue: #5C8AFF;
+  --color-accent-pink: #FF6B8A;
+
+  /* Status colors */
+  --color-success: #4ADE80;
+  --color-warning: #FBBF24;
+  --color-error: #F87171;
+
+  /* Legacy aliases for compatibility */
+  --color-dark-bg: #0A0A0F;
+  --color-dark-secondary: #12121A;
+  --color-dark-accent: #7C5CFF;
+  --color-dark-highlight: #FF6B8A;
+
+  /* Fonts */
   --font-heebo: 'Heebo', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
 
 body {
   font-family: 'Heebo', sans-serif;
   margin: 0;
   min-height: 100vh;
+  background-color: #0A0A0F;
+  color: #FFFFFF;
+  line-height: 1.6;
+  transition: background-color 500ms ease, color 500ms ease;
 }
 
 button, a {
   cursor: pointer;
 }
 
+/* Typography scale */
+.text-caption { font-size: 11px; }
+.text-body-sm { font-size: 13px; }
+.text-body { font-size: 15px; }
+.text-subtitle { font-size: 18px; }
+.text-title { font-size: 24px; letter-spacing: -0.01em; }
+.text-hero { font-size: 32px; letter-spacing: -0.01em; }
+
+/* ============================================
+   GLASS MORPHISM
+   ============================================ */
+
+.glass {
+  background: rgba(18, 18, 26, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-hover:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.glass-light {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ============================================
+   GRADIENT UTILITIES
+   ============================================ */
+
+.gradient-border-bottom {
+  position: relative;
+}
+
+.gradient-border-bottom::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(to left, transparent, #5C8AFF, #7C5CFF, transparent);
+}
+
+.gradient-purple-blue {
+  background: linear-gradient(135deg, #7C5CFF, #5C8AFF);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #7C5CFF, #5C8AFF);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ============================================
+   KEYFRAME ANIMATIONS
+   ============================================ */
+
+@keyframes shimmer {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes scale-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.97); }
+}
+
 @keyframes slide-in {
-  from {
-    opacity: 0;
-    transform: translateX(-100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  from { opacity: 0; transform: translateX(-100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes bounce-dots {
+  0%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-6px); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(124, 92, 255, 0); }
+  50% { box-shadow: 0 0 20px 4px rgba(124, 92, 255, 0.3); }
+}
+
+@keyframes sparkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.85); }
+}
+
+@keyframes progress-shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+@keyframes draw-check {
+  0% { stroke-dashoffset: 24; }
+  100% { stroke-dashoffset: 0; }
+}
+
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes morph-icon {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.85); }
+  100% { transform: scale(1); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ============================================
+   ANIMATION UTILITY CLASSES
+   ============================================ */
+
+.animate-shimmer {
+  animation: shimmer 1.5s infinite;
+}
+
+.animate-fade-in {
+  animation: fade-in 200ms ease-out;
+}
+
+.animate-fade-up {
+  animation: fade-up 300ms ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 250ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-scale-out {
+  animation: scale-out 150ms ease-in;
 }
 
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
 
+.animate-slide-in-right {
+  animation: slide-in-right 200ms ease-out;
+}
+
+.animate-bounce-dot {
+  animation: bounce-dots 1.4s infinite ease-in-out;
+}
+
+.animate-bounce-dot-2 {
+  animation: bounce-dots 1.4s infinite ease-in-out 0.2s;
+}
+
+.animate-bounce-dot-3 {
+  animation: bounce-dots 1.4s infinite ease-in-out 0.4s;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s infinite;
+}
+
+.animate-sparkle {
+  animation: sparkle 2s infinite ease-in-out;
+}
+
+.animate-progress {
+  animation: progress-shrink 3s linear forwards;
+}
+
+.animate-draw-check {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: draw-check 0.5s ease-out 0.2s forwards;
+}
+
+.animate-count-up {
+  animation: count-up 600ms ease-out;
+}
+
+.animate-morph {
+  animation: morph-icon 300ms ease-in-out;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+/* ============================================
+   SCROLLBAR STYLING
+   ============================================ */
+
 * {
   scrollbar-width: thin;
-  scrollbar-color: #0F3460 #16213E;
+  scrollbar-color: #222233 #12121A;
 }
 
 *::-webkit-scrollbar {
@@ -45,10 +279,103 @@ button, a {
 }
 
 *::-webkit-scrollbar-track {
-  background: #16213E;
+  background: #12121A;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #0F3460;
+  background: #222233;
   border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #7C5CFF;
+}
+
+/* ============================================
+   SKELETON SHIMMER
+   ============================================ */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #1A1A28;
+  border-radius: 8px;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.04),
+    transparent
+  );
+  animation: shimmer 1.5s infinite;
+}
+
+/* ============================================
+   LIGHT MODE OVERRIDES
+   ============================================ */
+
+html:not(.dark) body {
+  background-color: #FAFBFC;
+  color: #1A1A2E;
+}
+
+html:not(.dark) .glass {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+html:not(.dark) .glass-light {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+html:not(.dark) .skeleton {
+  background: #F3F4F8;
+}
+
+html:not(.dark) .skeleton::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 0, 0, 0.04),
+    transparent
+  );
+}
+
+html:not(.dark) *::-webkit-scrollbar-track {
+  background: #F3F4F8;
+}
+
+html:not(.dark) *::-webkit-scrollbar-thumb {
+  background: #D1D5DB;
+}
+
+/* ============================================
+   THEME TRANSITION
+   ============================================ */
+
+.theme-transitioning * {
+  transition: background-color 500ms ease, color 500ms ease, border-color 500ms ease, box-shadow 500ms ease !important;
+}
+
+/* ============================================
+   FOCUS & SELECTION
+   ============================================ */
+
+::selection {
+  background: rgba(124, 92, 255, 0.3);
+  color: #FFFFFF;
+}
+
+*:focus-visible {
+  outline: 2px solid #7C5CFF;
+  outline-offset: 2px;
 }

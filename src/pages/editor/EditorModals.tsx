@@ -1,33 +1,40 @@
 import { useState, useCallback } from 'react'
-import { Copy, Play, Star, Download, Loader2, Link2 } from 'lucide-react'
+import { Copy, Play, Star, Download, Loader2, Link2, CheckCircle } from 'lucide-react'
 import Modal from '../../components/Modal'
 import { useUIStore } from '../../stores/uiStore'
 
 function useAIAction() {
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isDone, setIsDone] = useState(false)
   const { addToast, closeModal } = useUIStore()
 
   const run = useCallback((message: string) => {
     setIsProcessing(true)
+    setIsDone(false)
     setTimeout(() => {
       setIsProcessing(false)
+      setIsDone(true)
       addToast(message, 'success')
-      closeModal()
+      setTimeout(() => closeModal(), 800)
     }, 2000)
   }, [addToast, closeModal])
 
-  return { isProcessing, run }
+  return { isProcessing, isDone, run }
 }
 
 function AIActionButton({ label, message }: { label: string; message: string }) {
-  const { isProcessing, run } = useAIAction()
+  const { isProcessing, isDone, run } = useAIAction()
   return (
     <button
       onClick={() => run(message)}
-      disabled={isProcessing}
-      className="w-full py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 disabled:opacity-60 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2"
+      disabled={isProcessing || isDone}
+      className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20"
     >
-      {isProcessing ? <><Loader2 size={16} className="animate-spin" /> מעבד...</> : label}
+      {isDone ? (
+        <><CheckCircle size={16} className="text-success" /> בוצע!</>
+      ) : isProcessing ? (
+        <><Loader2 size={16} className="animate-spin" /> מעבד...</>
+      ) : label}
     </button>
   )
 }
@@ -37,46 +44,40 @@ export default function EditorModals() {
 
   return (
     <>
-      {/* Sound Studio Modal */}
-      <Modal isOpen={activeModal === 'soundStudio'} onClose={closeModal} title="סאונד סטודיו">
+      <Modal isOpen={activeModal === 'soundStudio'} onClose={closeModal} title="סאונד סטודיו" subtitle="שפר את איכות האודיו שלך">
         <div className="space-y-4">
-          <p className="text-sm text-white/60">שפר את איכות האודיו שלך</p>
           <div>
-            <label className="text-sm text-white/50 block mb-2">עוצמת שיפור</label>
-            <input type="range" min="0" max="100" defaultValue={75} className="w-full accent-[#E94560]" />
-            <div className="flex justify-between text-xs text-white/30 mt-1"><span>0%</span><span>100%</span></div>
+            <label className="text-sm text-text-muted block mb-2">עוצמת שיפור</label>
+            <input type="range" min="0" max="100" defaultValue={75} className="w-full accent-accent-purple" />
+            <div className="flex justify-between text-xs text-text-muted mt-1"><span>עדין</span><span>חזק</span></div>
           </div>
           <AIActionButton label="שפר אודיו" message="האודיו שופר בהצלחה!" />
         </div>
       </Modal>
 
-      {/* Filler Words Modal */}
-      <Modal isOpen={activeModal === 'fillerWords'} onClose={closeModal} title="הסר מילות מילוי" size="md">
+      <Modal isOpen={activeModal === 'fillerWords'} onClose={closeModal} title="הסר מילות מילוי" subtitle="נמצאו מילות מילוי בתמלול" size="md">
         <FillerWordsContent />
       </Modal>
 
-      {/* Retakes Modal */}
-      <Modal isOpen={activeModal === 'retakes'} onClose={closeModal} title="הסר חזרות">
+      <Modal isOpen={activeModal === 'retakes'} onClose={closeModal} title="הסר חזרות" subtitle="זיהינו קטעים חוזרים">
         <RetakesContent />
       </Modal>
 
-      {/* Silence Shortener Modal */}
       <Modal isOpen={activeModal === 'silence'} onClose={closeModal} title="קצר שתיקות">
         <div className="space-y-4">
           <div>
-            <label className="text-sm text-white/50 block mb-2">משך שתיקה מקסימלי (שניות)</label>
-            <input type="range" min="0.1" max="2" step="0.1" defaultValue={0.5} className="w-full accent-[#E94560]" />
-            <div className="flex justify-between text-xs text-white/30 mt-1"><span>0.1</span><span>2.0</span></div>
+            <label className="text-sm text-text-muted block mb-2">משך שתיקה מקסימלי (שניות)</label>
+            <input type="range" min="0.1" max="2" step="0.1" defaultValue={0.5} className="w-full accent-accent-purple" />
+            <div className="flex justify-between text-xs text-text-muted mt-1"><span>0.1</span><span>2.0</span></div>
           </div>
-          <div className="p-3 bg-white/5 rounded-xl text-sm text-center">
-            <p>נמצאו <span className="text-[#E94560] font-bold">23</span> פערים</p>
-            <p className="text-white/40">חיסכון: 0:45</p>
+          <div className="p-4 bg-accent-purple/5 border border-accent-purple/10 rounded-xl text-sm text-center">
+            <p>נמצאו <span className="text-accent-purple font-bold">23</span> פערים</p>
+            <p className="text-text-muted mt-1">חיסכון: 0:45</p>
           </div>
           <AIActionButton label="קצר שתיקות" message="שתיקות קוצרו בהצלחה!" />
         </div>
       </Modal>
 
-      {/* Auto Chapters Modal */}
       <Modal isOpen={activeModal === 'chapters'} onClose={closeModal} title="פרקים אוטומטיים" size="md">
         <div className="space-y-3">
           {[
@@ -85,51 +86,53 @@ export default function EditorModals() {
             { time: '1:15', title: 'יתרונות הטכנולוגיה' },
             { time: '2:10', title: 'סיכום וסגירה' },
           ].map((chapter, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-              <span className="text-xs text-white/40 font-mono w-10">{chapter.time}</span>
-              <input defaultValue={chapter.title} className="flex-1 bg-transparent text-sm focus:outline-none border-b border-transparent focus:border-white/20" />
+            <div key={i} className="flex items-center gap-3 p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
+              <span className="text-xs text-text-muted font-mono w-10">{chapter.time}</span>
+              <input defaultValue={chapter.title} className="flex-1 bg-transparent text-sm text-text-primary focus:outline-none border-b border-transparent focus:border-accent-purple/30 transition-colors" />
             </div>
           ))}
           <AIActionButton label="שמור פרקים" message="פרקים נוספו בהצלחה!" />
         </div>
       </Modal>
 
-      {/* Eye Contact Modal */}
       <Modal isOpen={activeModal === 'eyeContact'} onClose={closeModal} title="קשר עין">
         <div className="space-y-4">
           <ToggleOption label="תיקון קשר עין" defaultOn />
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white/5 rounded-xl p-2 text-center"><div className="h-24 bg-black/30 rounded-lg mb-1" /><span className="text-xs text-white/40">לפני</span></div>
-            <div className="bg-white/5 rounded-xl p-2 text-center"><div className="h-24 bg-black/30 rounded-lg mb-1" /><span className="text-xs text-white/40">אחרי</span></div>
+            <div className="bg-white/[0.04] rounded-xl p-2 text-center border border-white/[0.06]">
+              <div className="h-24 bg-black/30 rounded-lg mb-1" />
+              <span className="text-xs text-text-muted">לפני</span>
+            </div>
+            <div className="bg-accent-purple/5 rounded-xl p-2 text-center border border-accent-purple/10">
+              <div className="h-24 bg-black/30 rounded-lg mb-1" />
+              <span className="text-xs text-accent-purple">אחרי</span>
+            </div>
           </div>
           <AIActionButton label="החל" message="קשר עין תוקן!" />
         </div>
       </Modal>
 
-      {/* Green Screen Modal */}
       <Modal isOpen={activeModal === 'greenScreen'} onClose={closeModal} title="מסך ירוק" size="lg">
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
             {['משרד', 'טבע', 'עיר', 'מופשט', 'חלל', 'העלה'].map((bg) => (
-              <button key={bg} className="h-20 bg-gradient-to-br from-[#0F3460] to-[#16213E] rounded-xl border border-white/10 hover:border-[#E94560] transition-colors text-sm">
+              <button key={bg} className="h-20 bg-gradient-to-br from-bg-card to-bg-elevated rounded-xl border border-white/[0.06] hover:border-accent-purple/40 transition-all text-sm text-text-secondary hover:text-text-primary">
                 {bg}
               </button>
             ))}
           </div>
           <div>
-            <label className="text-sm text-white/50 block mb-2">רגישות</label>
-            <input type="range" min="0" max="100" defaultValue={50} className="w-full accent-[#E94560]" />
+            <label className="text-sm text-text-muted block mb-2">רגישות</label>
+            <input type="range" min="0" max="100" defaultValue={50} className="w-full accent-accent-purple" />
           </div>
           <AIActionButton label="החל" message="רקע הוחלף!" />
         </div>
       </Modal>
 
-      {/* Quick Style Modal */}
       <Modal isOpen={activeModal === 'quickStyle'} onClose={closeModal} title="עיצוב מהיר" size="lg">
         <QuickStyleContent />
       </Modal>
 
-      {/* Speaker Centering Modal */}
       <Modal isOpen={activeModal === 'speakerCenter'} onClose={closeModal} title="מרכז דובר">
         <div className="space-y-4">
           <ToggleOption label="מרכוז אוטומטי של הדובר" defaultOn />
@@ -137,43 +140,36 @@ export default function EditorModals() {
         </div>
       </Modal>
 
-      {/* Reframe Modal */}
       <Modal isOpen={activeModal === 'reframe'} onClose={closeModal} title="מסגור מחדש">
         <ReframeContent />
       </Modal>
 
-      {/* Glass Blur Modal */}
       <Modal isOpen={activeModal === 'glassBlur'} onClose={closeModal} title="טשטוש זכוכית">
         <div className="space-y-4">
           <div>
-            <label className="text-sm text-white/50 block mb-2">עוצמת טשטוש</label>
-            <input type="range" min="0" max="100" defaultValue={40} className="w-full accent-[#E94560]" />
+            <label className="text-sm text-text-muted block mb-2">עוצמת טשטוש</label>
+            <input type="range" min="0" max="100" defaultValue={40} className="w-full accent-accent-purple" />
           </div>
           <AIActionButton label="החל" message="טשטוש הוחל!" />
         </div>
       </Modal>
 
-      {/* Share Modal */}
-      <Modal isOpen={activeModal === 'share'} onClose={closeModal} title="שתף" size="md">
+      <Modal isOpen={activeModal === 'share'} onClose={closeModal} title="שתף" subtitle="שתף את הפרויקט שלך" size="md">
         <ShareContent />
       </Modal>
 
-      {/* Publish Modal */}
       <Modal isOpen={activeModal === 'publish'} onClose={closeModal} title="פרסום" size="xl">
         <PublishContent defaultTab="web" />
       </Modal>
 
-      {/* Export Modal */}
       <Modal isOpen={activeModal === 'export'} onClose={closeModal} title="ייצוא" size="xl">
         <PublishContent defaultTab="export" />
       </Modal>
 
-      {/* Generate Content Modal */}
       <Modal isOpen={activeModal === 'generateContent'} onClose={closeModal} title="צור תוכן" size="xl">
         <GenerateContent />
       </Modal>
 
-      {/* Clips Modal */}
       <Modal isOpen={activeModal === 'clips'} onClose={closeModal} title="צור קליפים" size="xl">
         <ClipsContent />
       </Modal>
@@ -184,10 +180,10 @@ export default function EditorModals() {
 function ToggleOption({ label, defaultOn = false }: { label: string; defaultOn?: boolean }) {
   const [on, setOn] = useState(defaultOn)
   return (
-    <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
-      <span className="text-sm">{label}</span>
-      <div onClick={() => setOn(!on)} className={`w-10 h-5 rounded-full cursor-pointer relative transition-colors ${on ? 'bg-[#E94560]' : 'bg-white/20'}`}>
-        <div className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all ${on ? 'left-0.5' : 'left-[22px]'}`} />
+    <div className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
+      <span className="text-sm text-text-primary">{label}</span>
+      <div onClick={() => setOn(!on)} className={`w-10 h-5 rounded-full cursor-pointer relative transition-colors ${on ? 'bg-accent-purple' : 'bg-white/[0.12]'}`}>
+        <div className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all shadow-sm ${on ? 'left-0.5' : 'left-[22px]'}`} />
       </div>
     </div>
   )
@@ -198,18 +194,20 @@ function RetakesContent() {
   return (
     <div className="space-y-3">
       {['משפט חוזר #1 (0:23-0:28)', 'משפט חוזר #2 (1:05-1:12)', 'משפט חוזר #3 (2:01-2:08)'].map((retake, i) => (
-        <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
+        <div key={i} className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
           <div className="flex items-center gap-2">
-            <button className="p-1.5 bg-white/10 rounded-lg hover:bg-white/20 transition-colors"><Play size={12} /></button>
-            <span className="text-sm">{retake}</span>
+            <button className="p-1.5 bg-white/[0.06] rounded-lg hover:bg-white/[0.1] transition-colors text-text-secondary">
+              <Play size={12} />
+            </button>
+            <span className="text-sm text-text-primary">{retake}</span>
           </div>
-          <button className="px-3 py-1 bg-[#0F3460] hover:bg-[#0F3460]/80 rounded-lg text-xs transition-colors">שמור את זה</button>
+          <button className="px-3 py-1 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-xs transition-colors">שמור את זה</button>
         </div>
       ))}
       <button
         onClick={() => run('חזרות הוסרו בהצלחה!')}
         disabled={isProcessing}
-        className="w-full py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 disabled:opacity-60 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2"
+        className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20"
       >
         {isProcessing ? <><Loader2 size={16} className="animate-spin" /> מעבד...</> : 'הסר חזרות'}
       </button>
@@ -235,12 +233,12 @@ function FillerWordsContent() {
     <div className="space-y-4">
       <div className="space-y-2">
         {fillers.map((f) => (
-          <label key={f.word} className="flex items-center justify-between p-2 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors">
+          <label key={f.word} className="flex items-center justify-between p-2.5 bg-white/[0.04] rounded-xl border border-white/[0.06] cursor-pointer hover:bg-white/[0.06] transition-colors">
             <div className="flex items-center gap-2">
-              <input type="checkbox" checked={selected[f.word] ?? false} onChange={(e) => setSelected({ ...selected, [f.word]: e.target.checked })} className="w-4 h-4 rounded accent-[#E94560]" />
-              <span className="text-sm">{f.word}</span>
+              <input type="checkbox" checked={selected[f.word] ?? false} onChange={(e) => setSelected({ ...selected, [f.word]: e.target.checked })} className="w-4 h-4 rounded accent-accent-purple" />
+              <span className="text-sm text-text-primary">{f.word}</span>
             </div>
-            <span className="text-xs text-white/40 bg-white/10 px-2 py-0.5 rounded-full">{f.count}</span>
+            <span className="text-xs text-text-muted bg-white/[0.06] px-2 py-0.5 rounded-full">{f.count}</span>
           </label>
         ))}
       </div>
@@ -248,14 +246,14 @@ function FillerWordsContent() {
         <button
           onClick={() => run('מילות מילוי נבחרות הוסרו!')}
           disabled={isProcessing}
-          className="flex-1 py-2.5 bg-[#0F3460] hover:bg-[#0F3460]/80 disabled:opacity-60 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          className="flex-1 py-2.5 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-60 rounded-xl text-sm text-text-primary transition-all flex items-center justify-center gap-2 border border-white/[0.06]"
         >
           {isProcessing ? <Loader2 size={16} className="animate-spin" /> : 'הסר נבחרות'}
         </button>
         <button
           onClick={() => run('כל מילות המילוי הוסרו!')}
           disabled={isProcessing}
-          className="flex-1 py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 disabled:opacity-60 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          className="flex-1 py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20"
         >
           {isProcessing ? <Loader2 size={16} className="animate-spin" /> : 'הסר הכל'}
         </button>
@@ -281,7 +279,7 @@ function QuickStyleContent() {
           key={style.name}
           onClick={() => run(`סגנון "${style.name}" הוחל!`)}
           disabled={isProcessing}
-          className={`bg-gradient-to-br ${style.gradient} p-6 rounded-xl text-center hover:scale-105 hover:shadow-xl transition-all disabled:opacity-60`}
+          className={`bg-gradient-to-br ${style.gradient} p-6 rounded-xl text-center hover:-translate-y-1 hover:shadow-xl transition-all disabled:opacity-60 border border-white/[0.06]`}
         >
           {isProcessing ? <Loader2 size={16} className="animate-spin mx-auto" /> : <span className="font-medium text-sm">{style.name}</span>}
         </button>
@@ -305,14 +303,14 @@ function ReframeContent() {
           key={format.ratio}
           onClick={() => run(`פורמט שונה ל-${format.ratio}!`)}
           disabled={isProcessing}
-          className="p-4 bg-white/5 hover:bg-white/10 rounded-xl text-center transition-colors border border-white/10 hover:border-[#E94560] disabled:opacity-60"
+          className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40 disabled:opacity-60"
         >
           {isProcessing ? (
             <Loader2 size={16} className="animate-spin mx-auto" />
           ) : (
             <>
-              <p className="font-medium text-sm">{format.label}</p>
-              <p className="text-xs text-white/40 mt-1">{format.ratio}</p>
+              <p className="font-medium text-sm text-text-primary">{format.label}</p>
+              <p className="text-xs text-text-muted mt-1">{format.ratio}</p>
             </>
           )}
         </button>
@@ -332,33 +330,32 @@ function ShareContent() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-white/60">שתף את הפרויקט שלך</p>
       <div>
-        <label className="text-xs text-white/50 block mb-1">קישור לשיתוף</label>
+        <label className="text-xs text-text-muted block mb-1.5">קישור לשיתוף</label>
         <div className="flex gap-2">
-          <div className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-white/5 rounded-xl border border-white/10">
-            <Link2 size={14} className="text-white/40 shrink-0" />
-            <span className="text-sm text-white/70 truncate">{shareUrl}</span>
+          <div className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-white/[0.04] rounded-xl border border-white/[0.06]">
+            <Link2 size={14} className="text-text-muted shrink-0" />
+            <span className="text-sm text-text-secondary truncate">{shareUrl}</span>
           </div>
-          <button onClick={copyLink} className="px-4 py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl transition-colors flex items-center gap-1.5">
+          <button onClick={copyLink} className="px-4 py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl transition-all flex items-center gap-1.5 shadow-lg shadow-accent-purple/20">
             <Copy size={14} />
             <span className="text-sm">העתק</span>
           </button>
         </div>
       </div>
       <div>
-        <label className="text-xs text-white/50 block mb-2">הרשאות</label>
-        <select className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none cursor-pointer">
+        <label className="text-xs text-text-muted block mb-1.5">הרשאות</label>
+        <select className="w-full px-4 py-2.5 bg-white/[0.04] rounded-xl border border-white/[0.06] text-sm text-text-primary focus:outline-none focus:border-accent-purple/30 cursor-pointer">
           <option>צפייה בלבד</option>
           <option>עריכה</option>
           <option>הערות בלבד</option>
         </select>
       </div>
       <div>
-        <label className="text-xs text-white/50 block mb-1">הזמן בעזרת אימייל</label>
+        <label className="text-xs text-text-muted block mb-1.5">הזמן בעזרת אימייל</label>
         <div className="flex gap-2">
-          <input placeholder="אימייל..." className="flex-1 px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none focus:border-[#0F3460]" />
-          <button onClick={() => addToast('ההזמנה נשלחה!', 'success')} className="px-4 py-2.5 bg-[#0F3460] hover:bg-[#0F3460]/80 rounded-xl text-sm transition-colors">שלח</button>
+          <input placeholder="אימייל..." className="flex-1 px-4 py-2.5 bg-white/[0.04] rounded-xl border border-white/[0.06] text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-purple/30" />
+          <button onClick={() => addToast('ההזמנה נשלחה!', 'success')} className="px-4 py-2.5 bg-white/[0.06] hover:bg-white/[0.1] rounded-xl text-sm transition-colors border border-white/[0.06]">שלח</button>
         </div>
       </div>
     </div>
@@ -375,24 +372,40 @@ function PublishContent({ defaultTab = 'web' }: { defaultTab?: 'web' | 'export' 
   ]
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 border-b border-white/10">
+      <div className="flex gap-1 border-b border-white/[0.06]">
         {tabs.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-sm border-b-2 transition-colors ${tab === t.id ? 'border-[#E94560] text-white' : 'border-transparent text-white/50'}`}>{t.label}</button>
+          <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-sm border-b-2 transition-all ${tab === t.id ? 'border-accent-purple text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
+            {t.label}
+          </button>
         ))}
       </div>
       {tab === 'web' && (
         <div className="space-y-4">
-          <div className="aspect-video bg-black/30 rounded-xl" />
+          <div className="aspect-video bg-black/30 rounded-xl border border-white/[0.06]" />
           <div className="grid grid-cols-2 gap-4">
-            <div><label className="text-xs text-white/50 block mb-1">צבע נגן</label><input type="color" defaultValue="#E94560" className="w-full h-8 rounded cursor-pointer" /></div>
-            <div><label className="text-xs text-white/50 block mb-1">מיקום לוגו</label><select className="w-full px-3 py-2 bg-white/5 rounded-lg border border-white/10 text-sm"><option>למעלה מימין</option><option>למעלה משמאל</option></select></div>
+            <div>
+              <label className="text-xs text-text-muted block mb-1.5">צבע נגן</label>
+              <input type="color" defaultValue="#7C5CFF" className="w-full h-8 rounded cursor-pointer" />
+            </div>
+            <div>
+              <label className="text-xs text-text-muted block mb-1.5">מיקום לוגו</label>
+              <select className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary">
+                <option>למעלה מימין</option>
+                <option>למעלה משמאל</option>
+              </select>
+            </div>
           </div>
-          <div><label className="text-xs text-white/50 block mb-1">כתובת URL</label><input defaultValue="studio-ai.app/v/podcast-47" className="w-full px-3 py-2 bg-white/5 rounded-lg border border-white/10 text-sm" /></div>
           <div>
-            <label className="text-xs text-white/50 block mb-1">קוד הטמעה</label>
+            <label className="text-xs text-text-muted block mb-1.5">כתובת URL</label>
+            <input defaultValue="studio-ai.app/v/podcast-47" className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary" />
+          </div>
+          <div>
+            <label className="text-xs text-text-muted block mb-1.5">קוד הטמעה</label>
             <div className="relative">
-              <textarea readOnly value='<iframe src="https://studio-ai.app/embed/podcast-47" width="640" height="360"></iframe>' className="w-full px-3 py-2 bg-white/5 rounded-lg border border-white/10 text-xs font-mono h-16 resize-none" />
-              <button onClick={() => addToast('קוד ההטמעה הועתק!', 'success')} className="absolute top-2 left-2 p-1 bg-white/10 rounded hover:bg-white/20 transition-colors"><Copy size={12} /></button>
+              <textarea readOnly value='<iframe src="https://studio-ai.app/embed/podcast-47" width="640" height="360"></iframe>' className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-xs font-mono text-text-secondary h-16 resize-none" />
+              <button onClick={() => addToast('קוד ההטמעה הועתק!', 'success')} className="absolute top-2 left-2 p-1 bg-white/[0.06] rounded hover:bg-white/[0.1] transition-colors text-text-muted">
+                <Copy size={12} />
+              </button>
             </div>
           </div>
         </div>
@@ -400,9 +413,9 @@ function PublishContent({ defaultTab = 'web' }: { defaultTab?: 'web' | 'export' 
       {tab === 'export' && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {['MP4 720p', 'MP4 1080p', 'MP4 4K', 'MP3', 'WAV', 'SRT', 'VTT', 'DOCX'].map((format) => (
-            <button key={format} onClick={() => addToast(`מייצא ${format}...`, 'info')} className="p-4 bg-white/5 hover:bg-white/10 rounded-xl text-center transition-colors border border-white/10 hover:border-[#E94560]">
-              <Download size={20} className="mx-auto mb-2 text-white/40" />
-              <p className="text-sm font-medium">{format}</p>
+            <button key={format} onClick={() => addToast(`מייצא ${format}...`, 'info')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+              <Download size={20} className="mx-auto mb-2 text-text-muted" />
+              <p className="text-sm font-medium text-text-primary">{format}</p>
             </button>
           ))}
         </div>
@@ -410,11 +423,11 @@ function PublishContent({ defaultTab = 'web' }: { defaultTab?: 'web' | 'export' 
       {tab === 'youtube' && (
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-red-500 mb-2"><span className="text-xl">▶️</span><span className="font-bold">YouTube</span></div>
-          <div><label className="text-xs text-white/50 block mb-1">כותרת</label><input defaultValue="פודקאסט שבועי #47 - AI ויצירת תוכן" className="w-full px-3 py-2 bg-white/5 rounded-lg border border-white/10 text-sm" /></div>
-          <div><label className="text-xs text-white/50 block mb-1">תיאור</label><textarea defaultValue="בפרק הזה אנחנו מדברים על AI ויצירת תוכן..." className="w-full px-3 py-2 bg-white/5 rounded-lg border border-white/10 text-sm h-20 resize-none" /></div>
-          <div><label className="text-xs text-white/50 block mb-1">תגיות</label><input defaultValue="AI, פודקאסט, טכנולוגיה, יצירת תוכן" className="w-full px-3 py-2 bg-white/5 rounded-lg border border-white/10 text-sm" /></div>
-          <div><label className="text-xs text-white/50 block mb-1">פרטיות</label><select className="w-full px-3 py-2 bg-white/5 rounded-lg border border-white/10 text-sm"><option>ציבורי</option><option>לא רשום</option><option>פרטי</option></select></div>
-          <div className="h-20 bg-white/5 rounded-xl border-2 border-dashed border-white/20 flex items-center justify-center text-xs text-white/40">העלה תמונה ממוזערת</div>
+          <div><label className="text-xs text-text-muted block mb-1.5">כותרת</label><input defaultValue="פודקאסט שבועי #47 - AI ויצירת תוכן" className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary" /></div>
+          <div><label className="text-xs text-text-muted block mb-1.5">תיאור</label><textarea defaultValue="בפרק הזה אנחנו מדברים על AI ויצירת תוכן..." className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary h-20 resize-none" /></div>
+          <div><label className="text-xs text-text-muted block mb-1.5">תגיות</label><input defaultValue="AI, פודקאסט, טכנולוגיה, יצירת תוכן" className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary" /></div>
+          <div><label className="text-xs text-text-muted block mb-1.5">פרטיות</label><select className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary"><option>ציבורי</option><option>לא רשום</option><option>פרטי</option></select></div>
+          <div className="h-20 bg-white/[0.04] rounded-xl border-2 border-dashed border-white/[0.08] flex items-center justify-center text-xs text-text-muted">העלה תמונה ממוזערת</div>
           <button onClick={() => addToast('הסרטון פורסם ליוטיוב!', 'success')} className="w-full py-2.5 bg-red-600 hover:bg-red-700 rounded-xl text-sm font-medium transition-colors">פרסם ליוטיוב</button>
         </div>
       )}
@@ -429,7 +442,7 @@ function GenerateContent() {
     { id: 'social', label: 'פוסט לרשתות חברתיות', content: '🎙️ פרק חדש בפודקאסט!\n\nדיברנו על איך AI משנה את עולם יצירת התוכן. מתברר שעריכת וידאו מבוססת טקסט זה העתיד 🚀\n\nהאזינו עכשיו 👇\n\n#AI #פודקאסט #טכנולוגיה #יצירתתוכן #סטודיוAI' },
     { id: 'youtube', label: 'תיאור ליוטיוב', content: 'בפרק 47 של הפודקאסט השבועי שלנו, אנחנו צוללים לעומק לנושא עריכת וידאו מבוססת AI.\n\n⏱️ חותמות זמן:\n0:00 פתיחה\n0:35 מהי עריכה מבוססת טקסט?\n1:15 יתרונות הטכנולוגיה\n2:10 סיכום\n\n🔗 קישורים:\nסטודיו AI - studio-ai.app' },
     { id: 'summary', label: 'סיכום / Show Notes', content: '• דיון על עריכה מבוססת טקסט וכיצד היא מפשטת את תהליך העריכה\n• הסבר על הסרת מילות מילוי אוטומטית\n• השוואה בין שיטות עריכה מסורתיות לחדשות\n• תחזית לעתיד יצירת התוכן' },
-    { id: 'blog', label: 'פוסט לבלוג', content: 'עריכת וידאו מבוססת טקסט: המהפכה השקטה\n\nבשנים האחרונות, עולם עריכת הוידאו עובר שינוי מהותי. בפרק האחרון של הפודקאסט שלנו, דיברנו על הטכנולוגיה שמאפשרת לערוך סרטונים כמו שעורכים מסמך טקסט.\n\nהרעיון פשוט: במקום לגרור קליפים על ציר זמן, אתה פשוט מוחק מילים מהתמלול. המילה נעלמת - וגם הקטע המתאים בסרטון.\n\nזה נשמע כמו קסם, אבל זו מציאות.' },
+    { id: 'blog', label: 'פוסט לבלוג', content: 'עריכת וידאו מבוססת טקסט: המהפכה השקטה\n\nבשנים האחרונות, עולם עריכת הוידאו עובר שינוי מהותי. בפרק האחרון של הפודקאסט שלנו, דיברנו על הטכנולוגיה שמאפשרת לערוך סרטונים כמו שעורכים מסמך טקסט.' },
     { id: 'titles', label: 'כותרות', content: '' },
   ]
   const titles = [
@@ -445,27 +458,31 @@ function GenerateContent() {
       {!activeType ? (
         <div className="grid grid-cols-1 gap-3">
           {types.map((type) => (
-            <button key={type.id} onClick={() => setActiveType(type.id)} className="p-4 bg-white/5 hover:bg-white/10 rounded-xl text-right transition-colors border border-white/10 hover:border-[#E94560]">
-              <span className="font-medium text-sm">{type.label}</span>
+            <button key={type.id} onClick={() => setActiveType(type.id)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-right transition-all border border-white/[0.06] hover:border-accent-purple/40">
+              <span className="font-medium text-sm text-text-primary">{type.label}</span>
             </button>
           ))}
         </div>
       ) : activeType === 'titles' ? (
         <div className="space-y-3">
-          <button onClick={() => setActiveType(null)} className="text-xs text-white/40 hover:text-white">← חזרה</button>
+          <button onClick={() => setActiveType(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">← חזרה</button>
           {titles.map((title, i) => (
-            <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
-              <span className="text-sm">{title}</span>
-              <button onClick={() => addToast('הכותרת הועתקה!', 'success')} className="p-1.5 bg-white/10 rounded-lg hover:bg-white/20 transition-colors"><Copy size={14} /></button>
+            <div key={i} className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
+              <span className="text-sm text-text-primary">{title}</span>
+              <button onClick={() => addToast('הכותרת הועתקה!', 'success')} className="p-1.5 bg-white/[0.06] rounded-lg hover:bg-white/[0.1] transition-colors text-text-muted">
+                <Copy size={14} />
+              </button>
             </div>
           ))}
         </div>
       ) : (
         <div className="space-y-4">
-          <button onClick={() => setActiveType(null)} className="text-xs text-white/40 hover:text-white">← חזרה</button>
-          <h3 className="font-medium">{types.find((t) => t.id === activeType)?.label}</h3>
-          <textarea defaultValue={types.find((t) => t.id === activeType)?.content} className="w-full px-4 py-3 bg-white/5 rounded-xl border border-white/10 text-sm h-48 resize-none focus:outline-none" />
-          <button onClick={() => addToast('התוכן הועתק!', 'success')} className="flex items-center gap-2 px-4 py-2 bg-[#0F3460] hover:bg-[#0F3460]/80 rounded-xl text-sm transition-colors"><Copy size={14} /> העתק</button>
+          <button onClick={() => setActiveType(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">← חזרה</button>
+          <h3 className="font-medium text-text-primary">{types.find((t) => t.id === activeType)?.label}</h3>
+          <textarea defaultValue={types.find((t) => t.id === activeType)?.content} className="w-full px-4 py-3 bg-white/[0.04] rounded-xl border border-white/[0.06] text-sm text-text-primary h-48 resize-none focus:outline-none focus:border-accent-purple/30" />
+          <button onClick={() => addToast('התוכן הועתק!', 'success')} className="flex items-center gap-2 px-4 py-2 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-xl text-sm transition-colors border border-accent-purple/10">
+            <Copy size={14} /> העתק
+          </button>
         </div>
       )}
     </div>
@@ -485,36 +502,38 @@ function ClipsContent() {
   return (
     <div className="space-y-4">
       {clips.map((clip, i) => (
-        <div key={i} className="p-4 bg-white/5 rounded-xl border border-white/10 space-y-3">
+        <div key={i} className="p-4 bg-white/[0.04] rounded-xl border border-white/[0.06] space-y-3">
           <div className="flex items-start justify-between">
             <div>
-              <h4 className="font-medium text-sm">{clip.title}</h4>
-              <div className="flex items-center gap-2 text-xs text-white/40 mt-1">
-                <span>{clip.range}</span>
+              <h4 className="font-medium text-sm text-text-primary">{clip.title}</h4>
+              <div className="flex items-center gap-2 text-xs text-text-muted mt-1">
+                <span className="font-mono">{clip.range}</span>
                 <span>({clip.duration})</span>
               </div>
             </div>
             <div className="flex">
               {Array.from({ length: 5 }).map((_, si) => (
-                <Star key={si} size={12} className={si < clip.stars ? 'text-yellow-400 fill-yellow-400' : 'text-white/20'} />
+                <Star key={si} size={12} className={si < clip.stars ? 'text-warning fill-warning' : 'text-text-muted/30'} />
               ))}
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
             {formats.map((fmt) => (
-              <button key={fmt} className="px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-[10px] transition-colors">{fmt}</button>
+              <button key={fmt} className="px-2 py-1 bg-white/[0.06] hover:bg-white/[0.1] rounded text-[10px] text-text-secondary transition-colors">{fmt}</button>
             ))}
           </div>
           <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
-              <input type="checkbox" defaultChecked className="w-3 h-3 rounded accent-[#E94560]" />
+            <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+              <input type="checkbox" defaultChecked className="w-3 h-3 rounded accent-accent-purple" />
               הוסף כתוביות
             </label>
-            <button onClick={() => addToast(`קליפ "${clip.title}" ייוצא!`, 'success')} className="flex items-center gap-1 px-3 py-1.5 bg-[#0F3460] hover:bg-[#0F3460]/80 rounded-lg text-xs transition-colors"><Download size={12} /> ייצא</button>
+            <button onClick={() => addToast(`קליפ "${clip.title}" ייוצא!`, 'success')} className="flex items-center gap-1 px-3 py-1.5 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-xs transition-colors">
+              <Download size={12} /> ייצא
+            </button>
           </div>
         </div>
       ))}
-      <button onClick={() => addToast('כל הקליפים ייוצאו!', 'success')} className="w-full py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2">
+      <button onClick={() => addToast('כל הקליפים ייוצאו!', 'success')} className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">
         <Download size={16} /> ייצא הכל
       </button>
     </div>

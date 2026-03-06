@@ -54,10 +54,10 @@ export default function Translation() {
       <h1 className="text-2xl font-bold mb-6">תרגום</h1>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Settings Panel */}
-        <div className="bg-[#16213E] rounded-xl p-6 border border-white/5 space-y-5">
+        <div className="bg-bg-card rounded-xl p-6 border border-white/[0.06] space-y-5">
           <div>
-            <label className="text-sm text-white/60 block mb-1">שפת מקור</label>
-            <select className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none cursor-pointer">
+            <label className="text-sm text-text-secondary block mb-1">שפת מקור</label>
+            <select className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none cursor-pointer">
               <option>זיהוי אוטומטי</option>
               <option>עברית 🇮🇱</option>
               <option>English 🇺🇸</option>
@@ -65,20 +65,20 @@ export default function Translation() {
           </div>
 
           <div>
-            <label className="text-sm text-white/60 block mb-2">שפות יעד</label>
+            <label className="text-sm text-text-secondary block mb-2">שפות יעד</label>
             <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
               {targetLanguages.map((lang) => (
                 <label
                   key={lang.code}
                   className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
-                    selectedLangs.includes(lang.code) ? 'bg-[#0F3460]' : 'bg-white/5 hover:bg-white/10'
+                    selectedLangs.includes(lang.code) ? 'bg-accent-blue/20' : 'bg-white/5 hover:bg-white/10'
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={selectedLangs.includes(lang.code)}
                     onChange={() => toggleLang(lang.code)}
-                    className="w-4 h-4 rounded accent-[#E94560]"
+                    className="w-4 h-4 rounded accent-accent-purple"
                   />
                   <span>{lang.flag}</span>
                   <span className="text-sm">{lang.name}</span>
@@ -97,12 +97,12 @@ export default function Translation() {
               return (
                 <label key={feature.key} className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer">
                   <div className="flex items-center gap-2">
-                    <Icon size={16} className="text-white/50" />
+                    <Icon size={16} className="text-text-muted" />
                     <span className="text-sm">{feature.label}</span>
                   </div>
                   <div
                     onClick={() => setFeatures({ ...features, [feature.key]: !features[feature.key] })}
-                    className={`w-10 h-5 rounded-full transition-colors cursor-pointer relative ${features[feature.key] ? 'bg-[#E94560]' : 'bg-white/20'}`}
+                    className={`w-10 h-5 rounded-full transition-colors cursor-pointer relative ${features[feature.key] ? 'bg-accent-purple' : 'bg-white/20'}`}
                   >
                     <div className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all ${features[feature.key] ? 'left-0.5' : 'left-[22px]'}`} />
                   </div>
@@ -112,7 +112,7 @@ export default function Translation() {
           </div>
 
           <div>
-            <label className="text-sm text-white/60 block mb-2">סגנון תרגום</label>
+            <label className="text-sm text-text-secondary block mb-2">סגנון תרגום</label>
             <div className="flex gap-2">
               {[
                 { value: 'timing', label: 'התאמת תזמון' },
@@ -122,7 +122,7 @@ export default function Translation() {
                   key={style.value}
                   onClick={() => setTranslationStyle(style.value)}
                   className={`flex-1 py-2 rounded-xl text-sm transition-colors ${
-                    translationStyle === style.value ? 'bg-[#0F3460]' : 'bg-white/5 hover:bg-white/10'
+                    translationStyle === style.value ? 'bg-accent-blue/20' : 'bg-white/5 hover:bg-white/10'
                   }`}
                 >
                   {style.label}
@@ -132,18 +132,18 @@ export default function Translation() {
           </div>
 
           <div>
-            <label className="text-sm text-white/60 block mb-1">מונחים שלא לתרגם</label>
+            <label className="text-sm text-text-secondary block mb-1">מונחים שלא לתרגם</label>
             <textarea
               value={noTranslateTerms}
               onChange={(e) => setNoTranslateTerms(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none focus:border-[#0F3460] h-20 resize-none"
+              className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30 h-20 resize-none"
               placeholder="הפרד במילים עם פסיק..."
             />
           </div>
 
           <button
             onClick={startTranslation}
-            className="w-full py-3 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+            className="w-full py-3 bg-accent-purple hover:bg-accent-purple/80 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
           >
             <Globe size={18} />
             תרגם
@@ -151,17 +151,17 @@ export default function Translation() {
         </div>
 
         {/* Preview Panel */}
-        <div className="bg-[#16213E] rounded-xl p-6 border border-white/5 space-y-5">
+        <div className="bg-bg-card rounded-xl p-6 border border-white/[0.06] space-y-5">
           <div className="aspect-video bg-black/50 rounded-xl flex items-center justify-center relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-[#0F3460]/50 to-[#1A1A2E]/50" />
-            <p className="text-white/30 text-sm z-10">תצוגה מקדימה</p>
+            <div className="absolute inset-0 bg-gradient-to-br from-accent-blue/10 to-bg-deepest/50" />
+            <p className="text-text-muted text-sm z-10">תצוגה מקדימה</p>
             <div className="absolute bottom-4 left-4 right-4 text-center">
               <span className="bg-black/60 px-3 py-1 rounded text-sm">כתובית לדוגמה</span>
             </div>
           </div>
 
           {selectedLangs.length > 0 && (
-            <div className="flex gap-1 border-b border-white/10">
+            <div className="flex gap-1 border-b border-white/[0.06]">
               {selectedLangs.map((code) => {
                 const lang = targetLanguages.find((l) => l.code === code)
                 return (
@@ -179,11 +179,11 @@ export default function Translation() {
               <div className="flex items-center justify-between">
                 {translationSteps.map((step, i) => (
                   <div key={step.key} className="flex items-center">
-                    <div className={`flex items-center gap-1 ${i <= currentStep ? 'text-white' : 'text-white/30'}`}>
+                    <div className={`flex items-center gap-1 ${i <= currentStep ? 'text-white' : 'text-text-muted'}`}>
                       {i < currentStep ? (
                         <Check size={16} className="text-green-400" />
                       ) : i === currentStep ? (
-                        <Loader2 size={16} className="animate-spin text-[#E94560]" />
+                        <Loader2 size={16} className="animate-spin text-accent-purple" />
                       ) : (
                         <div className="w-4 h-4 rounded-full border border-white/30" />
                       )}

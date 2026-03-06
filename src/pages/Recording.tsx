@@ -41,13 +41,13 @@ export default function Recording() {
               >
                 <Icon size={48} className="mx-auto mb-4 group-hover:scale-110 transition-transform" />
                 <h3 className="text-lg font-bold mb-2">{type.label}</h3>
-                <p className="text-sm text-white/80">{type.description}</p>
+                <p className="text-sm text-text-secondary">{type.description}</p>
               </button>
             )
           })}
         </div>
       ) : (
-        <div className="bg-[#16213E] rounded-xl p-6 border border-white/5">
+        <div className="bg-bg-card rounded-xl p-6 border border-white/[0.06]">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-bold">{recordingTypes.find((t) => t.id === activeType)?.label}</h2>
             <button onClick={() => { setActiveType(null); setIsRecording(false); setRecordingTime(0) }} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
@@ -57,17 +57,17 @@ export default function Recording() {
 
           {activeType === 'screen' && (
             <div className="space-y-6">
-              <div className="aspect-video bg-black/50 rounded-xl flex items-center justify-center border border-white/10">
-                <p className="text-white/30 text-sm">תצוגה מקדימה של המסך</p>
+              <div className="aspect-video bg-black/50 rounded-xl flex items-center justify-center border border-white/[0.06]">
+                <p className="text-text-muted text-sm">תצוגה מקדימה של המסך</p>
               </div>
               <div className="flex items-center gap-4">
-                <span className="text-sm text-white/60">מצלמה:</span>
+                <span className="text-sm text-text-secondary">מצלמה:</span>
                 <div className="flex gap-2">
                   {([['circle', Circle], ['square', Square], ['off', X]] as const).map(([shape, Icon]) => (
                     <button
                       key={shape}
                       onClick={() => setWebcamShape(shape as typeof webcamShape)}
-                      className={`p-2 rounded-lg transition-colors ${webcamShape === shape ? 'bg-[#0F3460]' : 'bg-white/5 hover:bg-white/10'}`}
+                      className={`p-2 rounded-lg transition-colors ${webcamShape === shape ? 'bg-accent-blue/20' : 'bg-white/5 hover:bg-white/10'}`}
                     >
                       <Icon size={16} />
                     </button>
@@ -75,8 +75,8 @@ export default function Recording() {
                 </div>
               </div>
               <div>
-                <label className="text-sm text-white/60 block mb-1">מיקרופון</label>
-                <select className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none cursor-pointer">
+                <label className="text-sm text-text-secondary block mb-1">מיקרופון</label>
+                <select className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none cursor-pointer">
                   <option>מיקרופון ברירת מחדל</option>
                   <option>מיקרופון חיצוני</option>
                 </select>
@@ -95,24 +95,24 @@ export default function Recording() {
           {activeType === 'remote' && (
             <div className="space-y-6">
               <div>
-                <label className="text-sm text-white/60 block mb-1">שם החדר</label>
-                <input defaultValue="הקלטה משותפת" className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none focus:border-[#0F3460]" />
+                <label className="text-sm text-text-secondary block mb-1">שם החדר</label>
+                <input defaultValue="הקלטה משותפת" className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30" />
               </div>
               <div>
-                <label className="text-sm text-white/60 block mb-1">קישור להזמנה</label>
+                <label className="text-sm text-text-secondary block mb-1">קישור להזמנה</label>
                 <div className="flex gap-2">
-                  <input readOnly value="https://studio-ai.app/room/abc123" className="flex-1 px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm text-white/60" />
-                  <button className="px-4 py-2.5 bg-[#0F3460] hover:bg-[#0F3460]/80 rounded-xl transition-colors"><Copy size={16} /></button>
+                  <input readOnly value="https://studio-ai.app/room/abc123" className="flex-1 px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm text-text-secondary" />
+                  <button className="px-4 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-xl transition-colors"><Copy size={16} /></button>
                 </div>
               </div>
               <div>
-                <label className="text-sm text-white/60 block mb-2">משתתפים</label>
+                <label className="text-sm text-text-secondary block mb-2">משתתפים</label>
                 <div className="grid grid-cols-2 gap-4">
                   {['מתן (מארח)', 'אורח 1', 'אורח 2', 'אורח 3'].map((name, i) => (
-                    <div key={i} className="aspect-video bg-black/30 rounded-xl flex items-center justify-center border border-white/10">
+                    <div key={i} className="aspect-video bg-black/30 rounded-xl flex items-center justify-center border border-white/[0.06]">
                       <div className="text-center">
-                        <UserCircle size={32} className="mx-auto text-white/20 mb-1" />
-                        <span className="text-xs text-white/40">{name}</span>
+                        <UserCircle size={32} className="mx-auto text-text-muted mb-1" />
+                        <span className="text-xs text-text-muted">{name}</span>
                       </div>
                     </div>
                   ))}
@@ -139,7 +139,7 @@ export default function Recording() {
               <div className="h-2 bg-white/10 rounded-full overflow-hidden w-48 mx-auto">
                 <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: isRecording ? '75%' : '0%' }} />
               </div>
-              <p className="text-xs text-white/40">רמת מיקרופון</p>
+              <p className="text-xs text-text-muted">רמת מיקרופון</p>
               <button
                 onClick={isRecording ? () => { setIsRecording(false); setRecordingTime(0) } : startRecording}
                 className={`w-20 h-20 rounded-full mx-auto flex items-center justify-center transition-all ${

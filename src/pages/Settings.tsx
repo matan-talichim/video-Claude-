@@ -42,7 +42,7 @@ export default function Settings() {
     <div className="max-w-4xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold">הגדרות</h1>
 
-      <div className="flex gap-1 border-b border-white/10">
+      <div className="flex gap-1 border-b border-white/[0.06]">
         {tabs.map((tab) => {
           const Icon = tab.icon
           return (
@@ -51,8 +51,8 @@ export default function Settings() {
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-2 px-4 py-3 text-sm border-b-2 transition-colors ${
                 activeTab === tab.id
-                  ? 'border-[#E94560] text-white'
-                  : 'border-transparent text-white/50 hover:text-white'
+                  ? 'border-accent-purple text-white'
+                  : 'border-transparent text-text-muted hover:text-white'
               }`}
             >
               <Icon size={16} />
@@ -62,11 +62,11 @@ export default function Settings() {
         })}
       </div>
 
-      <div className="bg-[#16213E] rounded-xl p-6 border border-white/5">
+      <div className="bg-bg-card rounded-xl p-6 border border-white/[0.06]">
         {activeTab === 'profile' && (
           <div className="space-y-6">
             <div className="flex items-center gap-4">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#E94560] to-[#0F3460] flex items-center justify-center text-2xl font-bold">מ</div>
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-accent-purple to-accent-blue flex items-center justify-center text-2xl font-bold">מ</div>
               <button className="flex items-center gap-2 px-4 py-2 bg-white/5 rounded-lg hover:bg-white/10 transition-colors text-sm">
                 <Upload size={16} />
                 העלה תמונה
@@ -74,36 +74,36 @@ export default function Settings() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-white/60 mb-1">שם מלא</label>
-                <input defaultValue="מתן כהן" className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none focus:border-[#0F3460]" />
+                <label className="block text-sm text-text-secondary mb-1">שם מלא</label>
+                <input defaultValue="מתן כהן" className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30" />
               </div>
               <div>
-                <label className="block text-sm text-white/60 mb-1">אימייל</label>
-                <input defaultValue="matan@example.com" className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none focus:border-[#0F3460]" />
+                <label className="block text-sm text-text-secondary mb-1">אימייל</label>
+                <input defaultValue="matan@example.com" className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30" />
               </div>
               <div>
-                <label className="block text-sm text-white/60 mb-1">סיסמה</label>
-                <input type="password" defaultValue="••••••••" className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none focus:border-[#0F3460]" />
+                <label className="block text-sm text-text-secondary mb-1">סיסמה</label>
+                <input type="password" defaultValue="••••••••" className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30" />
               </div>
               <div>
-                <label className="block text-sm text-white/60 mb-1">שפה מועדפת</label>
-                <select className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none cursor-pointer">
+                <label className="block text-sm text-text-secondary mb-1">שפה מועדפת</label>
+                <select className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none cursor-pointer">
                   <option>עברית</option>
                   <option>English</option>
                 </select>
               </div>
             </div>
-            <button onClick={() => addToast('השינויים נשמרו!', 'success')} className="px-6 py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl text-sm font-medium transition-colors">שמור שינויים</button>
+            <button onClick={() => addToast('השינויים נשמרו!', 'success')} className="px-6 py-2.5 bg-accent-purple hover:bg-accent-purple/80 rounded-xl text-sm font-medium transition-colors">שמור שינויים</button>
           </div>
         )}
 
         {activeTab === 'subscription' && (
           <div className="space-y-6">
-            <div className="bg-gradient-to-br from-[#0F3460] to-[#16213E] rounded-xl p-6 border border-white/10">
+            <div className="bg-gradient-to-br from-accent-blue to-bg-panel rounded-xl p-6 border border-white/[0.06]">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-lg font-bold">Creator</h3>
-                  <p className="text-white/60 text-sm">$24/חודש</p>
+                  <p className="text-text-secondary text-sm">$24/חודש</p>
                 </div>
                 <span className="px-3 py-1 bg-green-500/20 text-green-300 rounded-full text-xs">פעיל</span>
               </div>
@@ -118,14 +118,14 @@ export default function Settings() {
                 </div>
               </div>
             </div>
-            <button onClick={() => addToast('מעביר לדף שדרוג...', 'info')} className="px-6 py-2.5 bg-[#0F3460] hover:bg-[#0F3460]/80 rounded-xl text-sm font-medium transition-colors">שדרג מנוי</button>
+            <button onClick={() => addToast('מעביר לדף שדרוג...', 'info')} className="px-6 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-xl text-sm font-medium transition-colors">שדרג מנוי</button>
             <div>
               <h3 className="font-medium mb-3">היסטוריית חיובים</h3>
               <table className="w-full text-sm">
-                <thead><tr className="text-white/40 border-b border-white/10"><th className="text-right p-2">תאריך</th><th className="text-right p-2">סכום</th><th className="text-right p-2">סטטוס</th></tr></thead>
+                <thead><tr className="text-text-muted border-b border-white/[0.06]"><th className="text-right p-2">תאריך</th><th className="text-right p-2">סכום</th><th className="text-right p-2">סטטוס</th></tr></thead>
                 <tbody>
                   {billingHistory.map((item, i) => (
-                    <tr key={i} className="border-b border-white/5"><td className="p-2">{item.date}</td><td className="p-2">{item.amount}</td><td className="p-2 text-green-400">{item.status}</td></tr>
+                    <tr key={i} className="border-b border-white/[0.06]"><td className="p-2">{item.date}</td><td className="p-2">{item.amount}</td><td className="p-2 text-green-400">{item.status}</td></tr>
                   ))}
                 </tbody>
               </table>
@@ -139,10 +139,10 @@ export default function Settings() {
               {teamMembers.map((member, i) => (
                 <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#E94560] to-[#0F3460] flex items-center justify-center text-xs font-bold">{member.avatar}</div>
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent-purple to-accent-blue flex items-center justify-center text-xs font-bold">{member.avatar}</div>
                     <div>
                       <p className="text-sm font-medium">{member.name}</p>
-                      <p className="text-xs text-white/40">{member.email}</p>
+                      <p className="text-xs text-text-muted">{member.email}</p>
                     </div>
                   </div>
                   <span className={`px-2 py-0.5 rounded-full text-xs ${roleBadgeColors[member.role]}`}>{member.role}</span>
@@ -150,12 +150,12 @@ export default function Settings() {
               ))}
             </div>
             <div className="flex gap-2">
-              <input placeholder="אימייל להזמנה" className="flex-1 px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none focus:border-[#0F3460]" />
-              <select className="px-3 py-2.5 bg-white/5 rounded-xl border border-white/10 text-sm focus:outline-none cursor-pointer">
+              <input placeholder="אימייל להזמנה" className="flex-1 px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30" />
+              <select className="px-3 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none cursor-pointer">
                 <option>Editor</option>
                 <option>Viewer</option>
               </select>
-              <button onClick={() => addToast('ההזמנה נשלחה!', 'success')} className="px-4 py-2.5 bg-[#E94560] hover:bg-[#E94560]/80 rounded-xl text-sm transition-colors">הזמן</button>
+              <button onClick={() => addToast('ההזמנה נשלחה!', 'success')} className="px-4 py-2.5 bg-accent-purple hover:bg-accent-purple/80 rounded-xl text-sm transition-colors">הזמן</button>
             </div>
           </div>
         )}
@@ -168,11 +168,11 @@ export default function Settings() {
                   <span className="text-2xl">{int.icon}</span>
                   <div>
                     <p className="font-medium text-sm">{int.name}</p>
-                    <p className="text-xs text-white/40">{int.connected ? 'מחובר' : 'לא מחובר'}</p>
+                    <p className="text-xs text-text-muted">{int.connected ? 'מחובר' : 'לא מחובר'}</p>
                   </div>
                 </div>
                 <button className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                  int.connected ? 'bg-green-500/20 text-green-300' : 'bg-white/10 text-white/60 hover:bg-white/20'
+                  int.connected ? 'bg-green-500/20 text-green-300' : 'bg-white/10 text-text-secondary hover:bg-white/20'
                 }`}>
                   {int.connected ? <><Check size={14} /> מחובר</> : <><Plug size={14} /> חבר</>}
                 </button>
