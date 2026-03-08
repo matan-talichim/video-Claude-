@@ -14,7 +14,7 @@ export interface Segment {
   words: Word[]
 }
 
-const mockTranscript: Segment[] = [
+const demoTranscript: Segment[] = [
   {
     speaker: 'דני',
     color: 'border-blue-400',
@@ -118,34 +118,228 @@ const mockTranscript: Segment[] = [
   },
 ]
 
+export interface EditHistoryEntry {
+  action: string
+  description: string
+  timestamp: number
+  previousTranscript?: Segment[]
+}
+
 interface EditorState {
+  projectId: string | null
+  projectName: string
+  isDemo: boolean
+  mediaFile: File | null
+  mediaBlobUrl: string | null
+  mediaType: 'video' | 'audio' | null
+  waveformData: number[] | null
   currentTime: number
   duration: number
   isPlaying: boolean
   playbackSpeed: number
   volume: number
   transcript: Segment[]
-  projectName: string
+  transcriptMode: 'real' | 'demo'
+  showCaptions: boolean
+  editHistory: EditHistoryEntry[]
+  lastSavedAt: number | null
+  isDirty: boolean
+
+  setProjectId: (id: string | null) => void
+  setProjectName: (name: string) => void
+  setIsDemo: (demo: boolean) => void
+  setMediaFile: (file: File | null) => void
+  setMediaBlobUrl: (url: string | null) => void
+  setMediaType: (type: 'video' | 'audio' | null) => void
+  setWaveformData: (data: number[] | null) => void
   setCurrentTime: (time: number) => void
+  setDuration: (duration: number) => void
   setIsPlaying: (playing: boolean) => void
   togglePlay: () => void
   setPlaybackSpeed: (speed: number) => void
   setVolume: (volume: number) => void
-  setProjectName: (name: string) => void
+  setTranscript: (transcript: Segment[]) => void
+  setTranscriptMode: (mode: 'real' | 'demo') => void
+  setShowCaptions: (show: boolean) => void
+  addEditHistory: (entry: Omit<EditHistoryEntry, 'timestamp'>) => void
+  markSaved: () => void
+  setIsDirty: (dirty: boolean) => void
+  loadProject: (opts: {
+    id: string
+    name: string
+    isDemo?: boolean
+    mediaFile?: File | null
+    mediaBlobUrl?: string | null
+    mediaType?: 'video' | 'audio' | null
+    transcript?: Segment[]
+    transcriptMode?: 'real' | 'demo'
+    duration?: number
+    editHistory?: EditHistoryEntry[]
+  }) => void
+  resetEditor: () => void
+  removeFillerWords: () => { removed: Record<string, number>; totalRemoved: number; timeSaved: number }
+  replaceWord: (oldWord: string, newWord: string) => number
+  removeTimeRange: (startTime: number, endTime: number) => void
+  undoLastEdit: () => string | null
+  getDemoTranscript: () => Segment[]
 }
 
-export const useEditorStore = create<EditorState>((set) => ({
+export const useEditorStore = create<EditorState>((set, get) => ({
+  projectId: null,
+  projectName: '',
+  isDemo: false,
+  mediaFile: null,
+  mediaBlobUrl: null,
+  mediaType: null,
+  waveformData: null,
   currentTime: 0,
-  duration: 167,
+  duration: 0,
   isPlaying: false,
   playbackSpeed: 1,
   volume: 80,
-  transcript: mockTranscript,
-  projectName: 'פודקאסט שבועי #47',
+  transcript: [],
+  transcriptMode: 'real',
+  showCaptions: false,
+  editHistory: [],
+  lastSavedAt: null,
+  isDirty: false,
+
+  setProjectId: (id) => set({ projectId: id }),
+  setProjectName: (name) => set({ projectName: name, isDirty: true }),
+  setIsDemo: (demo) => set({ isDemo: demo }),
+  setMediaFile: (file) => set({ mediaFile: file }),
+  setMediaBlobUrl: (url) => set({ mediaBlobUrl: url }),
+  setMediaType: (type) => set({ mediaType: type }),
+  setWaveformData: (data) => set({ waveformData: data }),
   setCurrentTime: (time) => set({ currentTime: time }),
+  setDuration: (duration) => set({ duration }),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
-  setVolume: (volume) => set({ volume: volume }),
-  setProjectName: (name) => set({ projectName: name }),
+  setVolume: (volume) => set({ volume }),
+  setTranscript: (transcript) => set({ transcript, isDirty: true }),
+  setTranscriptMode: (mode) => {
+    if (mode === 'demo') {
+      set({ transcriptMode: mode, transcript: demoTranscript })
+    } else {
+      set({ transcriptMode: mode, transcript: [] })
+    }
+  },
+  setShowCaptions: (show) => set({ showCaptions: show }),
+  addEditHistory: (entry) => set((s) => ({
+    editHistory: [...s.editHistory, { ...entry, timestamp: Date.now() }],
+    isDirty: true,
+  })),
+  markSaved: () => set({ lastSavedAt: Date.now(), isDirty: false }),
+  setIsDirty: (dirty) => set({ isDirty: dirty }),
+
+  loadProject: (opts) => {
+    const isDemo = opts.isDemo ?? false
+    const hasTranscript = opts.transcript && opts.transcript.length > 0
+    set({
+      projectId: opts.id,
+      projectName: opts.name,
+      isDemo,
+      mediaFile: opts.mediaFile ?? null,
+      mediaBlobUrl: opts.mediaBlobUrl ?? null,
+      mediaType: opts.mediaType ?? null,
+      transcript: hasTranscript ? opts.transcript! : isDemo ? demoTranscript : [],
+      transcriptMode: opts.transcriptMode ?? (isDemo ? 'demo' : 'real'),
+      duration: opts.duration ?? (isDemo ? 167 : 0),
+      editHistory: opts.editHistory ?? [],
+      currentTime: 0,
+      isPlaying: false,
+      playbackSpeed: 1,
+      isDirty: false,
+      lastSavedAt: null,
+      showCaptions: false,
+      waveformData: null,
+    })
+  },
+
+  resetEditor: () => set({
+    projectId: null, projectName: '', isDemo: false,
+    mediaFile: null, mediaBlobUrl: null, mediaType: null, waveformData: null,
+    currentTime: 0, duration: 0, isPlaying: false, playbackSpeed: 1, volume: 80,
+    transcript: [], transcriptMode: 'real', showCaptions: false,
+    editHistory: [], lastSavedAt: null, isDirty: false,
+  }),
+
+  removeFillerWords: () => {
+    const { transcript, editHistory } = get()
+    const fillerList = ['אממ', 'אההה', 'כאילו', 'נו', 'בעצם', 'אז', 'סתם', 'יודע', 'יודעת']
+    const removed: Record<string, number> = {}
+    let timeSaved = 0
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+
+    const newTranscript = transcript.map((seg) => ({
+      ...seg,
+      words: seg.words.filter((w) => {
+        if (w.isFiller || fillerList.includes(w.text.replace(/[.,!?]/g, ''))) {
+          const word = w.text.replace(/[.,!?]/g, '')
+          removed[word] = (removed[word] || 0) + 1
+          timeSaved += w.end - w.start
+          return false
+        }
+        return true
+      }),
+    })).filter((seg) => seg.words.length > 0)
+
+    const totalRemoved = Object.values(removed).reduce((s, c) => s + c, 0)
+    set({
+      transcript: newTranscript, isDirty: true,
+      editHistory: [...editHistory, { action: 'removeFillerWords', description: `הוסרו ${totalRemoved} מילות מילוי`, timestamp: Date.now(), previousTranscript }],
+    })
+    return { removed, totalRemoved, timeSaved }
+  },
+
+  replaceWord: (oldWord, newWord) => {
+    const { transcript, editHistory } = get()
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    let count = 0
+    const newTranscript = transcript.map((seg) => ({
+      ...seg,
+      words: seg.words.map((w) => {
+        const clean = w.text.replace(/[.,!?]/g, '')
+        if (w.text === oldWord || clean === oldWord) {
+          count++
+          const suffix = w.text.slice(clean.length)
+          return { ...w, text: newWord + suffix }
+        }
+        return w
+      }),
+    }))
+    if (count > 0) {
+      set({
+        transcript: newTranscript, isDirty: true,
+        editHistory: [...editHistory, { action: 'replaceWord', description: `הוחלפו ${count} מופעים של '${oldWord}' ב-'${newWord}'`, timestamp: Date.now(), previousTranscript }],
+      })
+    }
+    return count
+  },
+
+  removeTimeRange: (startTime, endTime) => {
+    const { transcript, editHistory } = get()
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    const newTranscript = transcript.map((seg) => ({
+      ...seg,
+      words: seg.words.filter((w) => w.start < startTime || w.end > endTime),
+    })).filter((seg) => seg.words.length > 0)
+    set({
+      transcript: newTranscript, isDirty: true,
+      editHistory: [...editHistory, { action: 'removeTimeRange', description: `נמחק קטע מ-${startTime.toFixed(1)} עד ${endTime.toFixed(1)}`, timestamp: Date.now(), previousTranscript }],
+    })
+  },
+
+  undoLastEdit: () => {
+    const { editHistory } = get()
+    if (editHistory.length === 0) return null
+    const lastEdit = editHistory[editHistory.length - 1]
+    if (lastEdit.previousTranscript) {
+      set({ transcript: lastEdit.previousTranscript, editHistory: editHistory.slice(0, -1), isDirty: true })
+    }
+    return lastEdit.description
+  },
+
+  getDemoTranscript: () => demoTranscript,
 }))

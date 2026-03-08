@@ -78,8 +78,15 @@ function Dropdown({ label, emoji, items, accentColor }: { label: string; emoji: 
 }
 
 export default function EditorToolbar() {
-  const { projectName, setProjectName } = useEditorStore()
-  const { openModal } = useUIStore()
+  const { projectName, setProjectName, undoLastEdit, editHistory } = useEditorStore()
+  const { openModal, addToast } = useUIStore()
+
+  const handleUndo = () => {
+    const desc = undoLastEdit()
+    if (desc) {
+      addToast(`בוטל: ${desc}`, 'info')
+    }
+  }
 
   return (
     <div className="flex items-center justify-between px-4 h-12 bg-bg-panel border-b border-white/[0.06] shrink-0">
@@ -87,10 +94,15 @@ export default function EditorToolbar() {
         <Dropdown label="שמע טוב" emoji="🎵" items={audioItems} accentColor="text-accent-purple" />
         <Dropdown label="תיראה טוב" emoji="🎬" items={videoItems} accentColor="text-accent-blue" />
         <div className="w-px h-5 bg-white/[0.06] mx-1" />
-        <button className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary" title="⌘Z">
+        <button
+          onClick={handleUndo}
+          disabled={editHistory.length === 0}
+          className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary disabled:opacity-30"
+          title="⌘Z"
+        >
           <Undo2 size={15} />
         </button>
-        <button className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary" title="⌘⇧Z">
+        <button className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary opacity-30" title="⌘⇧Z">
           <Redo2 size={15} />
         </button>
       </div>

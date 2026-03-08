@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { Copy, Play, Star, Download, Loader2, Link2, CheckCircle } from 'lucide-react'
 import Modal from '../../components/Modal'
 import { useUIStore } from '../../stores/uiStore'
+import { useEditorStore } from '../../stores/editorStore'
 
 function useAIAction() {
   const [isProcessing, setIsProcessing] = useState(false)
@@ -163,7 +164,7 @@ export default function EditorModals() {
       </Modal>
 
       <Modal isOpen={activeModal === 'export'} onClose={closeModal} title="ייצוא" size="xl">
-        <PublishContent defaultTab="export" />
+        <ExportContent />
       </Modal>
 
       <Modal isOpen={activeModal === 'generateContent'} onClose={closeModal} title="צור תוכן" size="xl">
@@ -196,19 +197,13 @@ function RetakesContent() {
       {['משפט חוזר #1 (0:23-0:28)', 'משפט חוזר #2 (1:05-1:12)', 'משפט חוזר #3 (2:01-2:08)'].map((retake, i) => (
         <div key={i} className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
           <div className="flex items-center gap-2">
-            <button className="p-1.5 bg-white/[0.06] rounded-lg hover:bg-white/[0.1] transition-colors text-text-secondary">
-              <Play size={12} />
-            </button>
+            <button className="p-1.5 bg-white/[0.06] rounded-lg hover:bg-white/[0.1] transition-colors text-text-secondary"><Play size={12} /></button>
             <span className="text-sm text-text-primary">{retake}</span>
           </div>
           <button className="px-3 py-1 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-xs transition-colors">שמור את זה</button>
         </div>
       ))}
-      <button
-        onClick={() => run('חזרות הוסרו בהצלחה!')}
-        disabled={isProcessing}
-        className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20"
-      >
+      <button onClick={() => run('חזרות הוסרו בהצלחה!')} disabled={isProcessing} className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">
         {isProcessing ? <><Loader2 size={16} className="animate-spin" /> מעבד...</> : 'הסר חזרות'}
       </button>
     </div>
@@ -217,18 +212,22 @@ function RetakesContent() {
 
 function FillerWordsContent() {
   const { isProcessing, run } = useAIAction()
+  const removeFillerWords = useEditorStore((s) => s.removeFillerWords)
+  const { addToast, closeModal } = useUIStore()
   const [selected, setSelected] = useState<Record<string, boolean>>({
     'אממ': true, 'אההה': true, 'כאילו': true, 'נו': true, 'בעצם': true, 'אז': true, 'סתם': false,
   })
   const fillers = [
-    { word: 'אממ', count: 12 },
-    { word: 'אההה', count: 8 },
-    { word: 'כאילו', count: 15 },
-    { word: 'נו', count: 5 },
-    { word: 'בעצם', count: 7 },
-    { word: 'אז', count: 9 },
-    { word: 'סתם', count: 3 },
+    { word: 'אממ', count: 12 }, { word: 'אההה', count: 8 }, { word: 'כאילו', count: 15 },
+    { word: 'נו', count: 5 }, { word: 'בעצם', count: 7 }, { word: 'אז', count: 9 }, { word: 'סתם', count: 3 },
   ]
+
+  const handleRemoveAll = () => {
+    const result = removeFillerWords()
+    addToast(`הוסרו ${result.totalRemoved} מילות מילוי!`, 'success')
+    setTimeout(() => closeModal(), 500)
+  }
+
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -243,18 +242,10 @@ function FillerWordsContent() {
         ))}
       </div>
       <div className="flex gap-2">
-        <button
-          onClick={() => run('מילות מילוי נבחרות הוסרו!')}
-          disabled={isProcessing}
-          className="flex-1 py-2.5 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-60 rounded-xl text-sm text-text-primary transition-all flex items-center justify-center gap-2 border border-white/[0.06]"
-        >
+        <button onClick={() => run('מילות מילוי נבחרות הוסרו!')} disabled={isProcessing} className="flex-1 py-2.5 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-60 rounded-xl text-sm text-text-primary transition-all flex items-center justify-center gap-2 border border-white/[0.06]">
           {isProcessing ? <Loader2 size={16} className="animate-spin" /> : 'הסר נבחרות'}
         </button>
-        <button
-          onClick={() => run('כל מילות המילוי הוסרו!')}
-          disabled={isProcessing}
-          className="flex-1 py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20"
-        >
+        <button onClick={handleRemoveAll} disabled={isProcessing} className="flex-1 py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">
           {isProcessing ? <Loader2 size={16} className="animate-spin" /> : 'הסר הכל'}
         </button>
       </div>
@@ -275,12 +266,7 @@ function QuickStyleContent() {
   return (
     <div className="grid grid-cols-3 gap-4">
       {styles.map((style) => (
-        <button
-          key={style.name}
-          onClick={() => run(`סגנון "${style.name}" הוחל!`)}
-          disabled={isProcessing}
-          className={`bg-gradient-to-br ${style.gradient} p-6 rounded-xl text-center hover:-translate-y-1 hover:shadow-xl transition-all disabled:opacity-60 border border-white/[0.06]`}
-        >
+        <button key={style.name} onClick={() => run(`סגנון "${style.name}" הוחל!`)} disabled={isProcessing} className={`bg-gradient-to-br ${style.gradient} p-6 rounded-xl text-center hover:-translate-y-1 hover:shadow-xl transition-all disabled:opacity-60 border border-white/[0.06]`}>
           {isProcessing ? <Loader2 size={16} className="animate-spin mx-auto" /> : <span className="font-medium text-sm">{style.name}</span>}
         </button>
       ))}
@@ -299,19 +285,9 @@ function ReframeContent() {
   return (
     <div className="grid grid-cols-2 gap-3">
       {formats.map((format) => (
-        <button
-          key={format.ratio}
-          onClick={() => run(`פורמט שונה ל-${format.ratio}!`)}
-          disabled={isProcessing}
-          className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40 disabled:opacity-60"
-        >
-          {isProcessing ? (
-            <Loader2 size={16} className="animate-spin mx-auto" />
-          ) : (
-            <>
-              <p className="font-medium text-sm text-text-primary">{format.label}</p>
-              <p className="text-xs text-text-muted mt-1">{format.ratio}</p>
-            </>
+        <button key={format.ratio} onClick={() => run(`פורמט שונה ל-${format.ratio}!`)} disabled={isProcessing} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40 disabled:opacity-60">
+          {isProcessing ? <Loader2 size={16} className="animate-spin mx-auto" /> : (
+            <><p className="font-medium text-sm text-text-primary">{format.label}</p><p className="text-xs text-text-muted mt-1">{format.ratio}</p></>
           )}
         </button>
       ))}
@@ -322,12 +298,10 @@ function ReframeContent() {
 function ShareContent() {
   const { addToast } = useUIStore()
   const shareUrl = 'https://studio-ai.app/v/podcast-47'
-
   const copyLink = () => {
     navigator.clipboard.writeText(shareUrl).catch(() => {})
     addToast('הקישור הועתק!', 'success')
   }
-
   return (
     <div className="space-y-4">
       <div>
@@ -338,17 +312,14 @@ function ShareContent() {
             <span className="text-sm text-text-secondary truncate">{shareUrl}</span>
           </div>
           <button onClick={copyLink} className="px-4 py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl transition-all flex items-center gap-1.5 shadow-lg shadow-accent-purple/20">
-            <Copy size={14} />
-            <span className="text-sm">העתק</span>
+            <Copy size={14} /><span className="text-sm">העתק</span>
           </button>
         </div>
       </div>
       <div>
         <label className="text-xs text-text-muted block mb-1.5">הרשאות</label>
-        <select className="w-full px-4 py-2.5 bg-white/[0.04] rounded-xl border border-white/[0.06] text-sm text-text-primary focus:outline-none focus:border-accent-purple/30 cursor-pointer">
-          <option>צפייה בלבד</option>
-          <option>עריכה</option>
-          <option>הערות בלבד</option>
+        <select className="w-full px-4 py-2.5 bg-white/[0.04] rounded-xl border border-white/[0.06] text-sm text-text-primary focus:outline-none cursor-pointer">
+          <option>צפייה בלבד</option><option>עריכה</option><option>הערות בלבד</option>
         </select>
       </div>
       <div>
@@ -360,6 +331,187 @@ function ShareContent() {
       </div>
     </div>
   )
+}
+
+function ExportContent() {
+  const { addToast } = useUIStore()
+  const { mediaBlobUrl, projectName, transcript } = useEditorStore()
+  const [exporting, setExporting] = useState<string | null>(null)
+  const [exportProgress, setExportProgress] = useState(0)
+  const [exportDone, setExportDone] = useState<string | null>(null)
+
+  const handleExport = (format: string) => {
+    // For SRT/VTT/TXT - generate and download immediately
+    if (['SRT', 'VTT', 'TXT'].includes(format)) {
+      let content = ''
+      const allWords = transcript.flatMap(s => s.words)
+      const fileName = `${projectName || 'export'}.${format.toLowerCase()}`
+
+      if (format === 'SRT') {
+        let idx = 1
+        for (let i = 0; i < allWords.length; i += 5) {
+          const chunk = allWords.slice(i, i + 5)
+          const start = formatSRTTime(chunk[0].start)
+          const end = formatSRTTime(chunk[chunk.length - 1].end)
+          content += `${idx}\n${start} --> ${end}\n${chunk.map(w => w.text).join(' ')}\n\n`
+          idx++
+        }
+      } else if (format === 'VTT') {
+        content = 'WEBVTT\n\n'
+        for (let i = 0; i < allWords.length; i += 5) {
+          const chunk = allWords.slice(i, i + 5)
+          const start = formatVTTTime(chunk[0].start)
+          const end = formatVTTTime(chunk[chunk.length - 1].end)
+          content += `${start} --> ${end}\n${chunk.map(w => w.text).join(' ')}\n\n`
+        }
+      } else {
+        content = transcript.map(s => `[${s.speaker}] ${s.words.map(w => w.text).join(' ')}`).join('\n\n')
+      }
+
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+      triggerDownload(blob, fileName)
+      addToast(`${format} יוצא בהצלחה!`, 'success')
+      return
+    }
+
+    // For video/audio formats - if we have a blob URL, download the original
+    if (mediaBlobUrl) {
+      setExporting(format)
+      setExportProgress(0)
+      setExportDone(null)
+
+      const interval = setInterval(() => {
+        setExportProgress(prev => {
+          if (prev >= 100) {
+            clearInterval(interval)
+            setExportDone(format)
+            setExporting(null)
+            return 100
+          }
+          return prev + 5
+        })
+      }, 150)
+    } else {
+      addToast('אין מדיה לייצוא', 'warning')
+    }
+  }
+
+  const handleDownload = () => {
+    if (!mediaBlobUrl) return
+    const ext = exportDone?.toLowerCase().replace(/\s+\d+p?/, '') || 'mp4'
+    fetch(mediaBlobUrl).then(r => r.blob()).then(blob => {
+      triggerDownload(blob, `${projectName || 'export'}.${ext === 'mp4 720p' || ext === 'mp4 1080p' || ext === 'mp4 4k' ? 'mp4' : ext}`)
+      addToast('הקובץ הורד בהצלחה!', 'success')
+      setExportDone(null)
+      setExportProgress(0)
+    })
+  }
+
+  const videoFormats = [
+    { label: 'MP4 720p', desc: 'קובץ קטן' },
+    { label: 'MP4 1080p', desc: 'איכות גבוהה' },
+    { label: 'MP4 4K', desc: 'איכות מקסימלית' },
+    { label: 'WebM', desc: 'לאינטרנט' },
+  ]
+  const audioFormats = [
+    { label: 'MP3', desc: '320kbps' },
+    { label: 'WAV', desc: 'lossless' },
+  ]
+  const subtitleFormats = ['SRT', 'VTT', 'TXT']
+
+  return (
+    <div className="space-y-6">
+      {/* Export progress */}
+      {exporting && (
+        <div className="p-6 bg-accent-purple/5 border border-accent-purple/20 rounded-xl text-center space-y-3">
+          <Loader2 size={32} className="mx-auto text-accent-purple animate-spin" />
+          <p className="text-sm text-text-primary">מייצא {exporting}... {Math.round(exportProgress)}%</p>
+          <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden max-w-xs mx-auto">
+            <div className="h-full bg-accent-purple rounded-full transition-all" style={{ width: `${exportProgress}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Export complete */}
+      {exportDone && !exporting && (
+        <div className="p-6 bg-success/5 border border-success/20 rounded-xl text-center space-y-3">
+          <CheckCircle size={32} className="mx-auto text-success" />
+          <p className="text-sm text-text-primary">הייצוא הושלם!</p>
+          <button onClick={handleDownload} className="px-6 py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20 inline-flex items-center gap-2">
+            <Download size={16} /> הורד קובץ
+          </button>
+        </div>
+      )}
+
+      {!exporting && !exportDone && (
+        <>
+          <div>
+            <h4 className="text-sm font-medium text-text-primary mb-3">וידאו</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {videoFormats.map((f) => (
+                <button key={f.label} onClick={() => handleExport(f.label)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+                  <Download size={20} className="mx-auto mb-2 text-text-muted" />
+                  <p className="text-sm font-medium text-text-primary">{f.label}</p>
+                  <p className="text-xs text-text-muted mt-1">{f.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-medium text-text-primary mb-3">אודיו</h4>
+            <div className="grid grid-cols-2 gap-3">
+              {audioFormats.map((f) => (
+                <button key={f.label} onClick={() => handleExport(f.label)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+                  <Download size={20} className="mx-auto mb-2 text-text-muted" />
+                  <p className="text-sm font-medium text-text-primary">{f.label}</p>
+                  <p className="text-xs text-text-muted mt-1">{f.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-medium text-text-primary mb-3">כתוביות / תמלול</h4>
+            <div className="grid grid-cols-3 gap-3">
+              {subtitleFormats.map((f) => (
+                <button key={f} onClick={() => handleExport(f)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+                  <Download size={20} className="mx-auto mb-2 text-text-muted" />
+                  <p className="text-sm font-medium text-text-primary">{f}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function formatSRTTime(s: number): string {
+  const h = Math.floor(s / 3600).toString().padStart(2, '0')
+  const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0')
+  const sec = Math.floor(s % 60).toString().padStart(2, '0')
+  const ms = Math.floor((s % 1) * 1000).toString().padStart(3, '0')
+  return `${h}:${m}:${sec},${ms}`
+}
+
+function formatVTTTime(s: number): string {
+  const m = Math.floor(s / 60).toString().padStart(2, '0')
+  const sec = Math.floor(s % 60).toString().padStart(2, '0')
+  const ms = Math.floor((s % 1) * 1000).toString().padStart(3, '0')
+  return `${m}:${sec}.${ms}`
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 function PublishContent({ defaultTab = 'web' }: { defaultTab?: 'web' | 'export' | 'youtube' }) {
@@ -383,51 +535,18 @@ function PublishContent({ defaultTab = 'web' }: { defaultTab?: 'web' | 'export' 
         <div className="space-y-4">
           <div className="aspect-video bg-black/30 rounded-xl border border-white/[0.06]" />
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-text-muted block mb-1.5">צבע נגן</label>
-              <input type="color" defaultValue="#7C5CFF" className="w-full h-8 rounded cursor-pointer" />
-            </div>
-            <div>
-              <label className="text-xs text-text-muted block mb-1.5">מיקום לוגו</label>
-              <select className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary">
-                <option>למעלה מימין</option>
-                <option>למעלה משמאל</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-text-muted block mb-1.5">כתובת URL</label>
-            <input defaultValue="studio-ai.app/v/podcast-47" className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary" />
-          </div>
-          <div>
-            <label className="text-xs text-text-muted block mb-1.5">קוד הטמעה</label>
-            <div className="relative">
-              <textarea readOnly value='<iframe src="https://studio-ai.app/embed/podcast-47" width="640" height="360"></iframe>' className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-xs font-mono text-text-secondary h-16 resize-none" />
-              <button onClick={() => addToast('קוד ההטמעה הועתק!', 'success')} className="absolute top-2 left-2 p-1 bg-white/[0.06] rounded hover:bg-white/[0.1] transition-colors text-text-muted">
-                <Copy size={12} />
-              </button>
-            </div>
+            <div><label className="text-xs text-text-muted block mb-1.5">צבע נגן</label><input type="color" defaultValue="#7C5CFF" className="w-full h-8 rounded cursor-pointer" /></div>
+            <div><label className="text-xs text-text-muted block mb-1.5">מיקום לוגו</label><select className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary"><option>למעלה מימין</option><option>למעלה משמאל</option></select></div>
           </div>
         </div>
       )}
-      {tab === 'export' && (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {['MP4 720p', 'MP4 1080p', 'MP4 4K', 'MP3', 'WAV', 'SRT', 'VTT', 'DOCX'].map((format) => (
-            <button key={format} onClick={() => addToast(`מייצא ${format}...`, 'info')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
-              <Download size={20} className="mx-auto mb-2 text-text-muted" />
-              <p className="text-sm font-medium text-text-primary">{format}</p>
-            </button>
-          ))}
-        </div>
-      )}
+      {tab === 'export' && <ExportContent />}
       {tab === 'youtube' && (
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-red-500 mb-2"><span className="text-xl">▶️</span><span className="font-bold">YouTube</span></div>
           <div><label className="text-xs text-text-muted block mb-1.5">כותרת</label><input defaultValue="פודקאסט שבועי #47 - AI ויצירת תוכן" className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary" /></div>
           <div><label className="text-xs text-text-muted block mb-1.5">תיאור</label><textarea defaultValue="בפרק הזה אנחנו מדברים על AI ויצירת תוכן..." className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary h-20 resize-none" /></div>
           <div><label className="text-xs text-text-muted block mb-1.5">תגיות</label><input defaultValue="AI, פודקאסט, טכנולוגיה, יצירת תוכן" className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary" /></div>
-          <div><label className="text-xs text-text-muted block mb-1.5">פרטיות</label><select className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary"><option>ציבורי</option><option>לא רשום</option><option>פרטי</option></select></div>
-          <div className="h-20 bg-white/[0.04] rounded-xl border-2 border-dashed border-white/[0.08] flex items-center justify-center text-xs text-text-muted">העלה תמונה ממוזערת</div>
           <button onClick={() => addToast('הסרטון פורסם ליוטיוב!', 'success')} className="w-full py-2.5 bg-red-600 hover:bg-red-700 rounded-xl text-sm font-medium transition-colors">פרסם ליוטיוב</button>
         </div>
       )}
@@ -439,19 +558,12 @@ function GenerateContent() {
   const [activeType, setActiveType] = useState<string | null>(null)
   const { addToast } = useUIStore()
   const types = [
-    { id: 'social', label: 'פוסט לרשתות חברתיות', content: '🎙️ פרק חדש בפודקאסט!\n\nדיברנו על איך AI משנה את עולם יצירת התוכן. מתברר שעריכת וידאו מבוססת טקסט זה העתיד 🚀\n\nהאזינו עכשיו 👇\n\n#AI #פודקאסט #טכנולוגיה #יצירתתוכן #סטודיוAI' },
-    { id: 'youtube', label: 'תיאור ליוטיוב', content: 'בפרק 47 של הפודקאסט השבועי שלנו, אנחנו צוללים לעומק לנושא עריכת וידאו מבוססת AI.\n\n⏱️ חותמות זמן:\n0:00 פתיחה\n0:35 מהי עריכה מבוססת טקסט?\n1:15 יתרונות הטכנולוגיה\n2:10 סיכום\n\n🔗 קישורים:\nסטודיו AI - studio-ai.app' },
-    { id: 'summary', label: 'סיכום / Show Notes', content: '• דיון על עריכה מבוססת טקסט וכיצד היא מפשטת את תהליך העריכה\n• הסבר על הסרת מילות מילוי אוטומטית\n• השוואה בין שיטות עריכה מסורתיות לחדשות\n• תחזית לעתיד יצירת התוכן' },
-    { id: 'blog', label: 'פוסט לבלוג', content: 'עריכת וידאו מבוססת טקסט: המהפכה השקטה\n\nבשנים האחרונות, עולם עריכת הוידאו עובר שינוי מהותי. בפרק האחרון של הפודקאסט שלנו, דיברנו על הטכנולוגיה שמאפשרת לערוך סרטונים כמו שעורכים מסמך טקסט.' },
+    { id: 'social', label: 'פוסט לרשתות חברתיות', content: '🎙️ פרק חדש בפודקאסט!\n\nדיברנו על איך AI משנה את עולם יצירת התוכן.\n\n#AI #פודקאסט #טכנולוגיה' },
+    { id: 'youtube', label: 'תיאור ליוטיוב', content: 'בפרק 47 של הפודקאסט השבועי שלנו, אנחנו צוללים לעומק לנושא עריכת וידאו מבוססת AI.\n\n⏱️ חותמות זמן:\n0:00 פתיחה\n0:35 מהי עריכה מבוססת טקסט?\n1:15 יתרונות הטכנולוגיה' },
+    { id: 'summary', label: 'סיכום', content: '• דיון על עריכה מבוססת טקסט\n• הסבר על הסרת מילות מילוי אוטומטית\n• השוואה בין שיטות עריכה' },
     { id: 'titles', label: 'כותרות', content: '' },
   ]
-  const titles = [
-    'AI ועריכת וידאו: למה אתה עדיין עורך בדרך הישנה?',
-    'עריכת טקסט = עריכת וידאו: המהפכה כבר כאן',
-    'איך AI חוסך לנו שעות של עריכה',
-    'הפודקאסט שישנה את הדרך שלכם ליצור תוכן',
-    'מילות מילוי? תנו ל-AI לטפל בזה',
-  ]
+  const titles = ['AI ועריכת וידאו: למה אתה עדיין עורך בדרך הישנה?', 'עריכת טקסט = עריכת וידאו: המהפכה כבר כאן', 'איך AI חוסך לנו שעות של עריכה']
 
   return (
     <div className="space-y-4">
@@ -469,9 +581,7 @@ function GenerateContent() {
           {titles.map((title, i) => (
             <div key={i} className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
               <span className="text-sm text-text-primary">{title}</span>
-              <button onClick={() => addToast('הכותרת הועתקה!', 'success')} className="p-1.5 bg-white/[0.06] rounded-lg hover:bg-white/[0.1] transition-colors text-text-muted">
-                <Copy size={14} />
-              </button>
+              <button onClick={() => { navigator.clipboard.writeText(title).catch(() => {}); addToast('הכותרת הועתקה!', 'success') }} className="p-1.5 bg-white/[0.06] rounded-lg hover:bg-white/[0.1] transition-colors text-text-muted"><Copy size={14} /></button>
             </div>
           ))}
         </div>
@@ -497,8 +607,6 @@ function ClipsContent() {
     { title: 'השוואה לעריכה מסורתית', range: '01:20-01:50', stars: 3, duration: '0:30' },
     { title: 'עתיד יצירת התוכן', range: '02:00-02:35', stars: 4, duration: '0:35' },
   ]
-  const formats = ['9:16 TikTok', '9:16 Reel', '9:16 Short', '16:9 LinkedIn']
-
   return (
     <div className="space-y-4">
       {clips.map((clip, i) => (
@@ -507,8 +615,7 @@ function ClipsContent() {
             <div>
               <h4 className="font-medium text-sm text-text-primary">{clip.title}</h4>
               <div className="flex items-center gap-2 text-xs text-text-muted mt-1">
-                <span className="font-mono">{clip.range}</span>
-                <span>({clip.duration})</span>
+                <span className="font-mono">{clip.range}</span><span>({clip.duration})</span>
               </div>
             </div>
             <div className="flex">
@@ -517,20 +624,9 @@ function ClipsContent() {
               ))}
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            {formats.map((fmt) => (
-              <button key={fmt} className="px-2 py-1 bg-white/[0.06] hover:bg-white/[0.1] rounded text-[10px] text-text-secondary transition-colors">{fmt}</button>
-            ))}
-          </div>
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
-              <input type="checkbox" defaultChecked className="w-3 h-3 rounded accent-accent-purple" />
-              הוסף כתוביות
-            </label>
-            <button onClick={() => addToast(`קליפ "${clip.title}" ייוצא!`, 'success')} className="flex items-center gap-1 px-3 py-1.5 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-xs transition-colors">
-              <Download size={12} /> ייצא
-            </button>
-          </div>
+          <button onClick={() => addToast(`קליפ "${clip.title}" ייוצא!`, 'success')} className="flex items-center gap-1 px-3 py-1.5 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-xs transition-colors">
+            <Download size={12} /> ייצא
+          </button>
         </div>
       ))}
       <button onClick={() => addToast('כל הקליפים ייוצאו!', 'success')} className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">

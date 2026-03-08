@@ -13,6 +13,9 @@ export interface UploadFile {
   thumbnailGradient: string
   createdAt: Date
   duration?: string
+  projectId?: string
+  file?: File
+  blobUrl?: string
 }
 
 interface UploadsState {
@@ -25,7 +28,7 @@ interface UploadsState {
   addFile: (file: Omit<UploadFile, 'id' | 'createdAt'>) => string
   updateFile: (id: string, updates: Partial<UploadFile>) => void
   removeFiles: (ids: string[]) => void
-  simulateUpload: (id: string) => void
+  simulateUpload: (id: string, onComplete?: (uploadId: string) => void) => void
   retryUpload: (id: string) => void
 
   setViewMode: (mode: 'grid' | 'table') => void
@@ -79,11 +82,10 @@ export const useUploadsStore = create<UploadsState>((set, get) => ({
     }))
   },
 
-  simulateUpload: (id) => {
+  simulateUpload: (id, onComplete) => {
     const { updateFile } = get()
     const addToast = useUIStore.getState().addToast
 
-    // Phase 1: Upload (5 seconds, 0→100)
     updateFile(id, { status: 'uploading', progress: 0 })
     let uploadProgress = 0
     const uploadInterval = setInterval(() => {
@@ -96,12 +98,11 @@ export const useUploadsStore = create<UploadsState>((set, get) => ({
       if (uploadProgress >= 100) {
         clearInterval(uploadInterval)
         updateFile(id, { status: 'transcribing', progress: 0 })
-        addToast('ההעלאה הושלמה, מתחיל תמלול...', 'info')
+        addToast('ההעלאה הושלמה, מעבד...', 'info')
 
-        // Phase 2: Transcription (8 seconds, 0→100)
         let transcribeProgress = 0
         const transcribeInterval = setInterval(() => {
-          transcribeProgress += 12.5
+          transcribeProgress += 20
           const f = get().files.find((f) => f.id === id)
           if (!f) {
             clearInterval(transcribeInterval)
@@ -111,14 +112,15 @@ export const useUploadsStore = create<UploadsState>((set, get) => ({
             clearInterval(transcribeInterval)
             updateFile(id, { status: 'ready', progress: 100 })
             addToast('הקובץ מוכן לעריכה!', 'success')
+            onComplete?.(id)
           } else {
             updateFile(id, { progress: Math.min(transcribeProgress, 100) })
           }
-        }, 1000)
+        }, 600)
       } else {
         updateFile(id, { progress: uploadProgress })
       }
-    }, 500)
+    }, 300)
   },
 
   retryUpload: (id) => {

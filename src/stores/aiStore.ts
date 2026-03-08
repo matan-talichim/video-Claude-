@@ -4,33 +4,48 @@ export interface AIMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  isProcessing?: boolean
 }
-
-const initialMessages: AIMessage[] = [
-  { id: '1', role: 'user', content: 'נקה את האודיו ושפר את האיכות' },
-  { id: '2', role: 'assistant', content: 'בוצע! שיפרתי את איכות האודיו:\n✅ הוסרו רעשי רקע\n✅ שופר בהירות הקול\n✅ אוזנו רמות השמע' },
-  { id: '3', role: 'user', content: 'הסר את כל מילות המילוי' },
-  { id: '4', role: 'assistant', content: 'מצאתי 23 מילות מילוי. הוסרו:\n• אממ (8)\n• כאילו (6)\n• בעצם (5)\n• נו (4)\nנחסכו 1:12 דקות' },
-]
 
 interface AIState {
   messages: AIMessage[]
   mode: 'execute' | 'discuss'
   inputValue: string
+  isProcessing: boolean
   setMode: (mode: 'execute' | 'discuss') => void
   setInputValue: (value: string) => void
-  addMessage: (role: AIMessage['role'], content: string) => void
+  addMessage: (role: AIMessage['role'], content: string, isProcessing?: boolean) => string
+  updateMessage: (id: string, content: string, isProcessing?: boolean) => void
+  removeMessage: (id: string) => void
+  setIsProcessing: (processing: boolean) => void
+  clearMessages: () => void
 }
 
 export const useAIStore = create<AIState>((set) => ({
-  messages: initialMessages,
+  messages: [],
   mode: 'execute',
   inputValue: '',
+  isProcessing: false,
   setMode: (mode) => set({ mode }),
   setInputValue: (value) => set({ inputValue: value }),
-  addMessage: (role, content) =>
+  addMessage: (role, content, isProcessing = false) => {
+    const id = Date.now().toString() + Math.random().toString(36).slice(2, 5)
     set((s) => ({
-      messages: [...s.messages, { id: Date.now().toString(), role, content }],
-      inputValue: '',
-    })),
+      messages: [...s.messages, { id, role, content, isProcessing }],
+      inputValue: role === 'user' ? '' : s.inputValue,
+    }))
+    return id
+  },
+  updateMessage: (id, content, isProcessing = false) => {
+    set((s) => ({
+      messages: s.messages.map((m) =>
+        m.id === id ? { ...m, content, isProcessing } : m
+      ),
+    }))
+  },
+  removeMessage: (id) => {
+    set((s) => ({ messages: s.messages.filter((m) => m.id !== id) }))
+  },
+  setIsProcessing: (processing) => set({ isProcessing: processing }),
+  clearMessages: () => set({ messages: [] }),
 }))

@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { ArrowRight, Bot } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ArrowRight, Bot, Save, Check } from 'lucide-react'
 import EditorToolbar from './EditorToolbar'
 import TranscriptPanel from './TranscriptPanel'
 import VideoPanel from './VideoPanel'
@@ -8,19 +8,136 @@ import TimelinePanel from './TimelinePanel'
 import AISidebar from './AISidebar'
 import EditorModals from './EditorModals'
 import ToastContainer from '../../components/Toast'
+import { useEditorStore } from '../../stores/editorStore'
+import { useProjectsStore } from '../../stores/projectsStore'
+import { useUIStore } from '../../stores/uiStore'
 
 export default function Editor() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [showAI, setShowAI] = useState(true)
   const [timelineExpanded, setTimelineExpanded] = useState(true)
+  const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const { loadProject, projectId, projectName, isDirty, markSaved, mediaBlobUrl, transcript, editHistory } = useEditorStore()
+  const getProject = useProjectsStore((s) => s.getProject)
+  const saveEditorState = useProjectsStore((s) => s.saveEditorState)
+
+
+  // Load project on mount
+  useEffect(() => {
+    if (!id) return
+    const project = getProject(id)
+    if (project) {
+      loadProject({
+        id: project.id,
+        name: project.name,
+        isDemo: project.isDemo,
+        mediaFile: project.mediaFile,
+        mediaBlobUrl: project.mediaBlobUrl,
+        mediaType: project.mediaType,
+        transcript: project.transcript,
+        transcriptMode: project.transcriptMode,
+        editHistory: project.editHistory,
+      })
+    } else {
+      // Demo project fallback
+      loadProject({
+        id,
+        name: id.startsWith('demo') ? 'פרויקט דמו' : 'פרויקט חדש',
+        isDemo: id.startsWith('demo'),
+      })
+    }
+    return () => {
+      // Cleanup blob URLs is handled by the store
+    }
+  }, [id, getProject, loadProject])
+
+  // Auto-save every 30 seconds
+  const doSave = useCallback(() => {
+    if (!projectId || !isDirty) return
+    setSaveIndicator('saving')
+    saveEditorState(projectId, {
+      name: projectName,
+      transcript,
+      editHistory,
+      mediaBlobUrl: mediaBlobUrl ?? undefined,
+    })
+    markSaved()
+    setTimeout(() => {
+      setSaveIndicator('saved')
+      setTimeout(() => setSaveIndicator('idle'), 2000)
+    }, 300)
+  }, [projectId, isDirty, projectName, transcript, editHistory, mediaBlobUrl, saveEditorState, markSaved])
+
+  useEffect(() => {
+    autoSaveRef.current = setInterval(doSave, 30000)
+    return () => {
+      if (autoSaveRef.current) clearInterval(autoSaveRef.current)
+    }
+  }, [doSave])
+
+  // Keyboard shortcut Cmd+S to save
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault()
+        doSave()
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
+        e.preventDefault()
+        useUIStore.getState().openModal('export')
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [doSave])
+
+  // Warn on navigate away with unsaved changes
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [isDirty])
+
+  const handleBack = () => {
+    if (isDirty) {
+      const save = window.confirm('יש שינויים שלא נשמרו. לשמור לפני יציאה?')
+      if (save) {
+        doSave()
+      }
+    }
+    navigate('/')
+  }
 
   return (
     <div className="h-screen flex flex-col bg-bg-deepest text-text-primary overflow-hidden">
       {/* Top nav */}
       <div className="flex items-center gap-3 px-4 py-2 glass gradient-border-bottom shrink-0 relative z-20">
-        <Link to="/" className="flex items-center gap-1 text-sm text-text-muted hover:text-text-primary transition-colors">
+        <button onClick={handleBack} className="flex items-center gap-1 text-sm text-text-muted hover:text-text-primary transition-colors">
           <ArrowRight size={16} />
           חזרה
-        </Link>
+        </button>
+
+        {/* Save indicator */}
+        <div className="flex items-center gap-1.5 text-xs">
+          {saveIndicator === 'saving' && (
+            <span className="flex items-center gap-1 text-text-muted animate-pulse">
+              <Save size={12} /> שומר...
+            </span>
+          )}
+          {saveIndicator === 'saved' && (
+            <span className="flex items-center gap-1 text-success">
+              <Check size={12} /> נשמר
+            </span>
+          )}
+        </div>
+
         <div className="flex-1" />
         {!showAI && (
           <button
@@ -37,14 +154,12 @@ export default function Editor() {
 
       {/* Main editor area */}
       <div className="flex flex-1 overflow-hidden">
-        {/* AI Sidebar - LEFT in RTL */}
         {showAI && (
           <div className="w-80 shrink-0 p-2 animate-slide-in-right">
             <AISidebar onClose={() => setShowAI(false)} />
           </div>
         )}
 
-        {/* Center content */}
         <div className="flex-1 flex flex-col overflow-hidden p-2 gap-2">
           <div className="flex flex-1 gap-2 overflow-hidden">
             <div className="flex-1">
