@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Monitor, Users, Mic, Copy, Circle, Square, UserCircle, X } from 'lucide-react'
 
 const recordingTypes = [
@@ -12,6 +12,13 @@ export default function Recording() {
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [webcamShape, setWebcamShape] = useState<'circle' | 'square' | 'off'>('circle')
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [])
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0')
@@ -21,8 +28,7 @@ export default function Recording() {
 
   const startRecording = () => {
     setIsRecording(true)
-    const interval = setInterval(() => setRecordingTime((t) => t + 1), 1000)
-    return () => clearInterval(interval)
+    timerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000)
   }
 
   return (
@@ -50,7 +56,7 @@ export default function Recording() {
         <div className="bg-bg-card rounded-xl p-6 border border-white/[0.06]">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-bold">{recordingTypes.find((t) => t.id === activeType)?.label}</h2>
-            <button onClick={() => { setActiveType(null); setIsRecording(false); setRecordingTime(0) }} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+            <button onClick={() => { setActiveType(null); setIsRecording(false); setRecordingTime(0); if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null } }} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
               <X size={18} />
             </button>
           </div>
@@ -102,7 +108,7 @@ export default function Recording() {
                 <label className="text-sm text-text-secondary block mb-1">קישור להזמנה</label>
                 <div className="flex gap-2">
                   <input readOnly value="https://studio-ai.app/room/abc123" className="flex-1 px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm text-text-secondary" />
-                  <button className="px-4 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-xl transition-colors"><Copy size={16} /></button>
+                  <button className="px-4 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-xl transition-colors"><Copy size={16} /></button>
                 </div>
               </div>
               <div>
@@ -141,7 +147,7 @@ export default function Recording() {
               </div>
               <p className="text-xs text-text-muted">רמת מיקרופון</p>
               <button
-                onClick={isRecording ? () => { setIsRecording(false); setRecordingTime(0) } : startRecording}
+                onClick={isRecording ? () => { setIsRecording(false); setRecordingTime(0); if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null } } : startRecording}
                 className={`w-20 h-20 rounded-full mx-auto flex items-center justify-center transition-all ${
                   isRecording ? 'bg-red-600 hover:bg-red-700 scale-90' : 'bg-red-500 hover:bg-red-600 hover:scale-110'
                 }`}

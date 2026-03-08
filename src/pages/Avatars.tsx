@@ -38,7 +38,7 @@ export default function Avatars() {
             </div>
             <div className="flex gap-2">
               <button className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors">צפה בדמו</button>
-              <button className="flex-1 py-1.5 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-lg text-xs transition-colors">בחר</button>
+              <button className="flex-1 py-1.5 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-lg text-xs transition-colors">בחר</button>
             </div>
           </div>
         ))}

@@ -322,6 +322,16 @@ button, a {
    LIGHT MODE OVERRIDES
    ============================================ */
 
+html:not(.dark) {
+  --color-bg-deepest: #FAFBFC;
+  --color-bg-panel: #F3F4F8;
+  --color-bg-card: #FFFFFF;
+  --color-bg-elevated: #F0F1F5;
+  --color-text-primary: #1A1A2E;
+  --color-text-secondary: #4A4A60;
+  --color-text-muted: #8A8AA0;
+}
+
 html:not(.dark) body {
   background-color: #FAFBFC;
   color: #1A1A2E;

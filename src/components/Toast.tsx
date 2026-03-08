@@ -4,10 +4,10 @@ import { useUIStore } from '../stores/uiStore'
 import type { Toast } from '../stores/uiStore'
 
 const toastConfig: Record<Toast['type'], { icon: typeof CheckCircle; color: string; borderColor: string; bgColor: string }> = {
-  success: { icon: CheckCircle, color: 'text-success', borderColor: 'border-l-success', bgColor: 'bg-success/5' },
-  error: { icon: XCircle, color: 'text-error', borderColor: 'border-l-error', bgColor: 'bg-error/5' },
-  warning: { icon: AlertTriangle, color: 'text-warning', borderColor: 'border-l-warning', bgColor: 'bg-warning/5' },
-  info: { icon: Info, color: 'text-accent-blue', borderColor: 'border-l-accent-blue', bgColor: 'bg-accent-blue/5' },
+  success: { icon: CheckCircle, color: 'text-success', borderColor: 'border-r-success', bgColor: 'bg-success/5' },
+  error: { icon: XCircle, color: 'text-error', borderColor: 'border-r-error', bgColor: 'bg-error/5' },
+  warning: { icon: AlertTriangle, color: 'text-warning', borderColor: 'border-r-warning', bgColor: 'bg-warning/5' },
+  info: { icon: Info, color: 'text-accent-blue', borderColor: 'border-r-accent-blue', bgColor: 'bg-accent-blue/5' },
 }
 
 function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) {
@@ -17,7 +17,7 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) 
 
   return (
     <div
-      className={`glass ${config.bgColor} border-l-[3px] ${config.borderColor} rounded-xl shadow-lg animate-slide-in min-w-[280px] max-w-[380px]`}
+      className={`glass ${config.bgColor} border-r-[3px] ${config.borderColor} rounded-xl shadow-lg animate-slide-in min-w-[280px] max-w-[380px]`}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >

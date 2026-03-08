@@ -118,7 +118,7 @@ export default function Settings() {
                 </div>
               </div>
             </div>
-            <button onClick={() => addToast('מעביר לדף שדרוג...', 'info')} className="px-6 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-xl text-sm font-medium transition-colors">שדרג מנוי</button>
+            <button onClick={() => addToast('מעביר לדף שדרוג...', 'info')} className="px-6 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-xl text-sm font-medium transition-colors">שדרג מנוי</button>
             <div>
               <h3 className="font-medium mb-3">היסטוריית חיובים</h3>
               <table className="w-full text-sm">
