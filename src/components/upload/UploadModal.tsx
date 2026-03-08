@@ -15,8 +15,8 @@ interface LocalFile {
   nativeFile: File
 }
 
-const ACCEPTED_TYPES = '.mp4,.mov,.webm,.mp3,.wav,.m4a'
-const VIDEO_EXTENSIONS = ['mp4', 'mov', 'webm']
+const ACCEPTED_TYPES = '.mp4,.mov,.webm,.mp3,.wav,.m4a,.avi,.mkv,.flac,.ogg,.mpeg,.mpga,.oga,.ogv'
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'webm', 'avi', 'mkv', 'mpeg', 'ogv']
 
 function getFileType(name: string): 'video' | 'audio' {
   const ext = name.split('.').pop()?.toLowerCase() || ''
@@ -240,7 +240,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
               <CloudUpload size={64} className={`mx-auto mb-4 ${dragOver ? 'text-accent-purple' : 'text-text-muted'} transition-colors`} />
               <p className="text-lg font-medium text-text-primary mb-1">גרור קבצים לכאן</p>
               <p className="text-sm text-text-muted mb-2">או לחץ לבחירת קבצים</p>
-              <p className="text-xs text-text-muted">MP4, MOV, WebM, MP3, WAV, M4A</p>
+              <p className="text-xs text-text-muted">MP4, MOV, WebM, AVI, MKV, MP3, WAV, M4A, FLAC, OGG</p>
             </div>
 
             {/* File list */}
