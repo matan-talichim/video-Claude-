@@ -42,7 +42,7 @@ const storage = multer.diskStorage({
     cb(null, uniqueName)
   },
 })
-const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } }) // 100MB limit
+const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } }) // 500MB max
 
 // Serve audio/video files from uploads
 app.use('/api/audio', express.static(uploadsDir))
@@ -74,13 +74,29 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     }
 
     const filePath = req.file.path
+    const fileSize = req.file.size
+
+    // Logging
+    console.log('Received file:', req.file.originalname, req.file.mimetype, req.file.size)
+    console.log('Saved to:', filePath)
+
+    // Whisper API max is 25MB
+    const WHISPER_MAX = 25 * 1024 * 1024
+    if (fileSize > WHISPER_MAX) {
+      fs.unlinkSync(filePath)
+      return res.status(413).json({
+        message: 'הקובץ גדול מדי לתמלול. מגבלה: 25MB. נסה לדחוס את הקובץ.'
+      })
+    }
+
+    console.log('Sending to Whisper...')
 
     const transcription = await ai.audio.transcriptions.create({
       model: 'whisper-1',
       file: fs.createReadStream(filePath),
       language: 'he',
       response_format: 'verbose_json',
-      timestamp_granularities: ['word', 'segment'],
+      timestamp_granularities: ['segment'],
     })
 
     // Parse response into structured format
@@ -99,6 +115,8 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
     // Also use top-level words if available
     const allWords = transcription.words || []
+
+    console.log('Transcription complete:', segments.length, 'segments,', (transcription.text || '').length, 'chars')
 
     // Clean up temp file
     fs.unlinkSync(filePath)
@@ -123,8 +141,8 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     if (error.status === 413) {
       return res.status(413).json({ message: 'הקובץ גדול מדי. הגבלה: 25MB לתמלול.' })
     }
-    console.error('Transcription error:', error.message)
-    return res.status(500).json({ message: 'שגיאה בתמלול. נסה שוב.' })
+    console.error('Transcription error:', error.message, error.status, error.code)
+    return res.status(500).json({ message: `שגיאה בתמלול: ${error.message || 'שגיאה לא ידועה'}` })
   }
 })
 
