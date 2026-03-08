@@ -1,9 +1,10 @@
 import { useState, useCallback } from 'react'
-import { Copy, Play, Star, Download, Loader2, Link2, CheckCircle } from 'lucide-react'
+import { Copy, Play, Star, Download, Loader2, Link2, CheckCircle, FileText, Music, Film, Captions } from 'lucide-react'
 import Modal from '../../components/Modal'
 import { useUIStore } from '../../stores/uiStore'
 import { useEditorStore } from '../../stores/editorStore'
 import { api } from '../../services/api'
+import { exportVideo, exportAudio, exportSubtitles, exportTranscript, triggerDownload as triggerExportDownload } from '../../services/exportService'
 
 function useAIAction() {
   const [isProcessing, setIsProcessing] = useState(false)
@@ -339,86 +340,105 @@ function ExportContent() {
   const { mediaBlobUrl, projectName, transcript } = useEditorStore()
   const [exporting, setExporting] = useState<string | null>(null)
   const [exportProgress, setExportProgress] = useState(0)
-  const [exportDone, setExportDone] = useState<string | null>(null)
+  const [exportStatus, setExportStatus] = useState('')
+  const [exportError, setExportError] = useState<string | null>(null)
 
-  const handleExport = (format: string) => {
-    // For SRT/VTT/TXT - generate and download immediately
-    if (['SRT', 'VTT', 'TXT'].includes(format)) {
-      let content = ''
-      const allWords = transcript.flatMap(s => s.words)
-      const fileName = `${projectName || 'export'}.${format.toLowerCase()}`
+  const getTranscriptSegments = () => {
+    return transcript.map((seg) => ({
+      speaker: seg.speaker,
+      text: seg.words.map((w) => w.text).join(' '),
+      start: seg.words[0]?.start ?? 0,
+      end: seg.words[seg.words.length - 1]?.end ?? 0,
+    }))
+  }
 
-      if (format === 'SRT') {
-        let idx = 1
-        for (let i = 0; i < allWords.length; i += 5) {
-          const chunk = allWords.slice(i, i + 5)
-          const start = formatSRTTime(chunk[0].start)
-          const end = formatSRTTime(chunk[chunk.length - 1].end)
-          content += `${idx}\n${start} --> ${end}\n${chunk.map(w => w.text).join(' ')}\n\n`
-          idx++
-        }
-      } else if (format === 'VTT') {
-        content = 'WEBVTT\n\n'
-        for (let i = 0; i < allWords.length; i += 5) {
-          const chunk = allWords.slice(i, i + 5)
-          const start = formatVTTTime(chunk[0].start)
-          const end = formatVTTTime(chunk[chunk.length - 1].end)
-          content += `${start} --> ${end}\n${chunk.map(w => w.text).join(' ')}\n\n`
-        }
-      } else {
-        content = transcript.map(s => `[${s.speaker}] ${s.words.map(w => w.text).join(' ')}`).join('\n\n')
-      }
-
-      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-      triggerDownload(blob, fileName)
-      addToast(`${format} יוצא בהצלחה!`, 'success')
+  const handleVideoExport = async (format: 'mp4-720' | 'mp4-1080' | 'mp4-4k' | 'webm') => {
+    if (!mediaBlobUrl) {
+      addToast('העלה סרטון כדי לייצא', 'warning')
       return
     }
-
-    // For video/audio formats - if we have a blob URL, download the original
-    if (mediaBlobUrl) {
-      setExporting(format)
+    setExporting(format)
+    setExportProgress(0)
+    setExportError(null)
+    setExportStatus('טוען מנוע עיבוד...')
+    try {
+      const blob = await exportVideo(mediaBlobUrl, format, (p) => {
+        setExportProgress(p)
+        setExportStatus(`מייצא... ${p}%`)
+      })
+      const ext = format === 'webm' ? 'webm' : 'mp4'
+      triggerExportDownload(blob, `${projectName || 'export'}.${ext}`)
+      addToast('הייצוא הושלם! הקובץ הורד למחשב', 'success')
+    } catch (err: any) {
+      console.error('Export error:', err)
+      setExportError('שגיאה בייצוא. נסה פורמט אחר.')
+    } finally {
+      setExporting(null)
       setExportProgress(0)
-      setExportDone(null)
-
-      const interval = setInterval(() => {
-        setExportProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval)
-            setExportDone(format)
-            setExporting(null)
-            return 100
-          }
-          return prev + 5
-        })
-      }, 150)
-    } else {
-      addToast('אין מדיה לייצוא', 'warning')
+      setExportStatus('')
     }
   }
 
-  const handleDownload = () => {
-    if (!mediaBlobUrl) return
-    const ext = exportDone?.toLowerCase().replace(/\s+\d+p?/, '') || 'mp4'
-    fetch(mediaBlobUrl).then(r => r.blob()).then(blob => {
-      triggerDownload(blob, `${projectName || 'export'}.${ext === 'mp4 720p' || ext === 'mp4 1080p' || ext === 'mp4 4k' ? 'mp4' : ext}`)
-      addToast('הקובץ הורד בהצלחה!', 'success')
-      setExportDone(null)
+  const handleAudioExport = async (format: 'mp3-128' | 'mp3-256' | 'mp3-320' | 'wav') => {
+    if (!mediaBlobUrl) {
+      addToast('העלה סרטון כדי לייצא', 'warning')
+      return
+    }
+    setExporting(format)
+    setExportProgress(0)
+    setExportError(null)
+    setExportStatus('טוען מנוע עיבוד...')
+    try {
+      const blob = await exportAudio(mediaBlobUrl, format, (p) => {
+        setExportProgress(p)
+        setExportStatus(`מייצא... ${p}%`)
+      })
+      const ext = format.startsWith('mp3') ? 'mp3' : 'wav'
+      triggerExportDownload(blob, `${projectName || 'export'}.${ext}`)
+      addToast('הייצוא הושלם! הקובץ הורד למחשב', 'success')
+    } catch (err: any) {
+      console.error('Export error:', err)
+      setExportError('שגיאה בייצוא. נסה פורמט אחר.')
+    } finally {
+      setExporting(null)
       setExportProgress(0)
-    })
+      setExportStatus('')
+    }
   }
 
-  const videoFormats = [
-    { label: 'MP4 720p', desc: 'קובץ קטן' },
-    { label: 'MP4 1080p', desc: 'איכות גבוהה' },
-    { label: 'MP4 4K', desc: 'איכות מקסימלית' },
-    { label: 'WebM', desc: 'לאינטרנט' },
+  const handleSubtitleExport = (format: 'srt' | 'vtt') => {
+    const segments = getTranscriptSegments()
+    if (segments.length === 0) {
+      addToast('אין תמלול לייצוא', 'warning')
+      return
+    }
+    const blob = exportSubtitles(segments, format)
+    triggerExportDownload(blob, `${projectName || 'export'}.${format}`)
+    addToast('קובץ כתוביות הורד!', 'success')
+  }
+
+  const handleTranscriptExport = (format: 'txt' | 'docx') => {
+    const segments = getTranscriptSegments()
+    if (segments.length === 0) {
+      addToast('אין תמלול לייצוא', 'warning')
+      return
+    }
+    const blob = exportTranscript(segments, format)
+    triggerExportDownload(blob, `${projectName || 'export'}.${format}`)
+    addToast('קובץ תמלול הורד!', 'success')
+  }
+
+  const videoFormats: Array<{ id: 'mp4-720' | 'mp4-1080' | 'mp4-4k' | 'webm'; label: string; desc: string }> = [
+    { id: 'mp4-720', label: 'MP4 720p', desc: 'קובץ קטן' },
+    { id: 'mp4-1080', label: 'MP4 1080p', desc: 'איכות גבוהה' },
+    { id: 'mp4-4k', label: 'MP4 4K', desc: 'איכות מקסימלית' },
+    { id: 'webm', label: 'WebM', desc: 'לאינטרנט' },
   ]
-  const audioFormats = [
-    { label: 'MP3', desc: '320kbps' },
-    { label: 'WAV', desc: 'lossless' },
+  const audioFormats: Array<{ id: 'mp3-128' | 'mp3-256' | 'mp3-320' | 'wav'; label: string; desc: string }> = [
+    { id: 'mp3-128', label: 'MP3 128kbps', desc: 'קובץ קטן' },
+    { id: 'mp3-320', label: 'MP3 320kbps', desc: 'איכות גבוהה' },
+    { id: 'wav', label: 'WAV', desc: 'lossless' },
   ]
-  const subtitleFormats = ['SRT', 'VTT', 'TXT']
 
   return (
     <div className="space-y-6">
@@ -426,31 +446,34 @@ function ExportContent() {
       {exporting && (
         <div className="p-6 bg-accent-purple/5 border border-accent-purple/20 rounded-xl text-center space-y-3">
           <Loader2 size={32} className="mx-auto text-accent-purple animate-spin" />
-          <p className="text-sm text-text-primary">מייצא {exporting}... {Math.round(exportProgress)}%</p>
-          <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden max-w-xs mx-auto">
-            <div className="h-full bg-accent-purple rounded-full transition-all" style={{ width: `${exportProgress}%` }} />
-          </div>
+          <p className="text-sm text-text-primary">{exportStatus || 'מכין לייצוא...'}</p>
+          {exportProgress > 0 && (
+            <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden max-w-xs mx-auto">
+              <div className="h-full bg-accent-purple rounded-full transition-all" style={{ width: `${exportProgress}%` }} />
+            </div>
+          )}
         </div>
       )}
 
-      {/* Export complete */}
-      {exportDone && !exporting && (
-        <div className="p-6 bg-success/5 border border-success/20 rounded-xl text-center space-y-3">
-          <CheckCircle size={32} className="mx-auto text-success" />
-          <p className="text-sm text-text-primary">הייצוא הושלם!</p>
-          <button onClick={handleDownload} className="px-6 py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20 inline-flex items-center gap-2">
-            <Download size={16} /> הורד קובץ
-          </button>
+      {/* Export error */}
+      {exportError && !exporting && (
+        <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-xl text-center space-y-2">
+          <p className="text-sm text-red-400">{exportError}</p>
+          <button onClick={() => setExportError(null)} className="px-4 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] rounded-lg text-xs text-text-secondary transition-colors">נסה שוב</button>
         </div>
       )}
 
-      {!exporting && !exportDone && (
+      {!exporting && (
         <>
+          {/* Video */}
           <div>
-            <h4 className="text-sm font-medium text-text-primary mb-3">וידאו</h4>
+            <div className="flex items-center gap-2 mb-3">
+              <Film size={16} className="text-text-muted" />
+              <h4 className="text-sm font-medium text-text-primary">וידאו</h4>
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {videoFormats.map((f) => (
-                <button key={f.label} onClick={() => handleExport(f.label)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+                <button key={f.id} onClick={() => handleVideoExport(f.id)} disabled={!!exporting} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40 disabled:opacity-50">
                   <Download size={20} className="mx-auto mb-2 text-text-muted" />
                   <p className="text-sm font-medium text-text-primary">{f.label}</p>
                   <p className="text-xs text-text-muted mt-1">{f.desc}</p>
@@ -459,60 +482,66 @@ function ExportContent() {
             </div>
           </div>
 
+          {/* Audio */}
           <div>
-            <h4 className="text-sm font-medium text-text-primary mb-3">אודיו</h4>
-            <div className="grid grid-cols-2 gap-3">
-              {audioFormats.map((f) => (
-                <button key={f.label} onClick={() => handleExport(f.label)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
-                  <Download size={20} className="mx-auto mb-2 text-text-muted" />
-                  <p className="text-sm font-medium text-text-primary">{f.label}</p>
-                  <p className="text-xs text-text-muted mt-1">{f.desc}</p>
-                </button>
-              ))}
+            <div className="flex items-center gap-2 mb-3">
+              <Music size={16} className="text-text-muted" />
+              <h4 className="text-sm font-medium text-text-primary">אודיו</h4>
             </div>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-medium text-text-primary mb-3">כתוביות / תמלול</h4>
             <div className="grid grid-cols-3 gap-3">
-              {subtitleFormats.map((f) => (
-                <button key={f} onClick={() => handleExport(f)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+              {audioFormats.map((f) => (
+                <button key={f.id} onClick={() => handleAudioExport(f.id)} disabled={!!exporting} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40 disabled:opacity-50">
                   <Download size={20} className="mx-auto mb-2 text-text-muted" />
-                  <p className="text-sm font-medium text-text-primary">{f}</p>
+                  <p className="text-sm font-medium text-text-primary">{f.label}</p>
+                  <p className="text-xs text-text-muted mt-1">{f.desc}</p>
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Subtitles */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Captions size={16} className="text-text-muted" />
+              <h4 className="text-sm font-medium text-text-primary">כתוביות</h4>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => handleSubtitleExport('srt')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+                <Download size={20} className="mx-auto mb-2 text-text-muted" />
+                <p className="text-sm font-medium text-text-primary">SRT</p>
+                <p className="text-xs text-text-muted mt-1">כתוביות סטנדרטיות</p>
+              </button>
+              <button onClick={() => handleSubtitleExport('vtt')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+                <Download size={20} className="mx-auto mb-2 text-text-muted" />
+                <p className="text-sm font-medium text-text-primary">VTT</p>
+                <p className="text-xs text-text-muted mt-1">כתוביות לאינטרנט</p>
+              </button>
+            </div>
+          </div>
+
+          {/* Transcript */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <FileText size={16} className="text-text-muted" />
+              <h4 className="text-sm font-medium text-text-primary">תמלול</h4>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => handleTranscriptExport('txt')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+                <Download size={20} className="mx-auto mb-2 text-text-muted" />
+                <p className="text-sm font-medium text-text-primary">TXT</p>
+                <p className="text-xs text-text-muted mt-1">טקסט פשוט</p>
+              </button>
+              <button onClick={() => handleTranscriptExport('docx')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
+                <Download size={20} className="mx-auto mb-2 text-text-muted" />
+                <p className="text-sm font-medium text-text-primary">DOCX</p>
+                <p className="text-xs text-text-muted mt-1">מסמך Word</p>
+              </button>
             </div>
           </div>
         </>
       )}
     </div>
   )
-}
-
-function formatSRTTime(s: number): string {
-  const h = Math.floor(s / 3600).toString().padStart(2, '0')
-  const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0')
-  const sec = Math.floor(s % 60).toString().padStart(2, '0')
-  const ms = Math.floor((s % 1) * 1000).toString().padStart(3, '0')
-  return `${h}:${m}:${sec},${ms}`
-}
-
-function formatVTTTime(s: number): string {
-  const m = Math.floor(s / 60).toString().padStart(2, '0')
-  const sec = Math.floor(s % 60).toString().padStart(2, '0')
-  const ms = Math.floor((s % 1) * 1000).toString().padStart(3, '0')
-  return `${m}:${sec}.${ms}`
-}
-
-function triggerDownload(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
 }
 
 function PublishContent({ defaultTab = 'web' }: { defaultTab?: 'web' | 'export' | 'youtube' }) {
