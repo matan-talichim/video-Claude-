@@ -189,6 +189,7 @@ export default function TranscriptPanel() {
 
   const hasRealMedia = !!mediaBlobUrl && !isDemo
   const showApiPrompt = transcriptMode === 'real' && transcript.length === 0 && hasRealMedia && !isTranscribing && !openaiConnected && apiChecked
+  const showTranscribeButton = transcriptMode === 'real' && transcript.length === 0 && hasRealMedia && !isTranscribing && openaiConnected && apiChecked
 
   return (
     <div className="flex flex-col h-full bg-bg-panel rounded-xl border border-white/[0.06] overflow-hidden">
@@ -265,6 +266,22 @@ export default function TranscriptPanel() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* API connected - show transcribe button */}
+        {showTranscribeButton && (
+          <div className="text-center py-8 space-y-4">
+            <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto">
+              <Link2 size={24} className="text-green-400" />
+            </div>
+            <p className="text-sm text-text-primary font-medium">שירות התמלול מחובר ומוכן</p>
+            <button
+              onClick={handleAutoTranscribe}
+              className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-accent-purple hover:bg-accent-purple/90 text-white rounded-lg text-sm font-medium transition-all shadow-sm"
+            >
+              תמלל אוטומטית
+            </button>
           </div>
         )}
 
