@@ -99,38 +99,38 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     const ext = path.extname(req.file.originalname).toLowerCase()
 
     // Logging
-    console.log('Received file:', req.file.originalname, req.file.mimetype, fileSize)
-    console.log('Original format:', ext)
-    console.log('File size:', (fileSize / 1024 / 1024).toFixed(1) + 'MB')
-    console.log('Needs conversion:', !WHISPER_SUPPORTED_FORMATS.includes(ext))
+    console.log('[1] File with extension:', filePath)
+    console.log('[1] Original name:', req.file.originalname, '| MIME:', req.file.mimetype)
+    console.log('[1] File size:', (fileSize / 1024 / 1024).toFixed(1), 'MB')
 
     const ffmpegPath = getFfmpegPath()
 
-    // Step 1: Convert unsupported formats (like .mov, .avi, .mkv) to MP3
+    // Step 1: Convert unsupported formats (like .mov, .avi, .mkv, .wmv) to MP3
     if (!WHISPER_SUPPORTED_FORMATS.includes(ext)) {
-      console.log('Format not supported by Whisper. Converting to MP3...')
-      const mp3Path = filePath.replace(/\.[^.]+$/, '.mp3')
+      console.log('[2] Format', ext, 'not supported. Converting to MP3...')
+      const mp3Path = filePath.replace(/\.[^.]+$/, '_converted.mp3')
       tempFiles.push(mp3Path)
       try {
-        execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -q:a 4 "${mp3Path}" -y`, {
-          timeout: 120000,
-          stdio: 'pipe',
+        execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -ab 128k -ar 16000 -ac 1 "${mp3Path}" -y`, {
+          timeout: 300000,
+          stdio: ['pipe', 'pipe', 'pipe'],
         })
-        console.log('Conversion done:', mp3Path)
-        filePath = mp3Path
-        // Delete original
+        console.log('[3] Conversion SUCCESS:', mp3Path)
+        console.log('[3] Converted size:', (fs.statSync(mp3Path).size / 1024 / 1024).toFixed(1), 'MB')
+        // Delete original, use converted
         safeUnlink(originalPath)
+        filePath = mp3Path
       } catch (convError: any) {
-        console.error('FFmpeg conversion failed:', convError.message)
-        // Try alternative: rename to .mp4 (MOV is often compatible)
+        console.error('[3] FFmpeg conversion FAILED:', convError.stderr?.toString() || convError.message)
+        // Fallback: try just renaming to .mp4
         const mp4Path = originalPath.replace(/\.[^.]+$/, '.mp4')
         try {
           fs.renameSync(originalPath, mp4Path)
           filePath = mp4Path
           tempFiles.push(mp4Path)
-          console.log('Renamed to mp4:', mp4Path)
+          console.log('[3] Fallback: renamed to', mp4Path)
         } catch (renameError: any) {
-          console.error('Rename also failed:', renameError.message)
+          console.error('[3] Rename also failed:', renameError.message)
           tempFiles.forEach(safeUnlink)
           return res.status(500).json({
             message: 'שגיאה בהמרת הקובץ. וודא שהפורמט תקין ו-ffmpeg מותקן.',
@@ -139,32 +139,33 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       }
     }
 
-    // Step 2: Check file size - if > 25MB, extract audio only as MP3
+    // Step 2: Check file size - Whisper max 25MB
     const WHISPER_MAX = 25 * 1024 * 1024
     const currentSize = fs.statSync(filePath).size
+    console.log('[4] File size:', (currentSize / 1024 / 1024).toFixed(1), 'MB')
 
     if (currentSize > WHISPER_MAX) {
-      console.log('File too large (' + (currentSize / 1024 / 1024).toFixed(1) + 'MB). Extracting audio...')
+      console.log('[4] Too large for Whisper. Compressing audio...')
       const smallPath = filePath.replace(/\.[^.]+$/, '_small.mp3')
       tempFiles.push(smallPath)
       try {
         execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -ab 64k -ar 16000 -ac 1 "${smallPath}" -y`, {
-          timeout: 120000,
-          stdio: 'pipe',
+          timeout: 300000,
+          stdio: ['pipe', 'pipe', 'pipe'],
         })
+        const compressedSize = fs.statSync(smallPath).size
+        console.log('[5] Compression SUCCESS:', (compressedSize / 1024 / 1024).toFixed(1), 'MB')
         safeUnlink(filePath)
         filePath = smallPath
-        const audioSize = fs.statSync(filePath).size
-        console.log('Audio extracted:', smallPath, (audioSize / 1024 / 1024).toFixed(1) + 'MB')
 
-        if (audioSize > WHISPER_MAX) {
+        if (compressedSize > WHISPER_MAX) {
           tempFiles.forEach(safeUnlink)
           return res.status(413).json({
             message: 'הקובץ גדול מדי גם אחרי חילוץ אודיו. מגבלה: 25MB. נסה לקצר את הקובץ.',
           })
         }
       } catch (audioError: any) {
-        console.error('Audio extraction failed:', audioError.message)
+        console.error('[5] Compression FAILED:', audioError.message)
         tempFiles.forEach(safeUnlink)
         return res.status(500).json({
           message: 'שגיאה בחילוץ אודיו מהקובץ. וודא ש-ffmpeg מותקן.',
@@ -172,7 +173,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       }
     }
 
-    console.log('Sending to Whisper:', filePath)
+    console.log('[6] Sending to Whisper:', filePath)
 
     const transcription = await ai.audio.transcriptions.create({
       model: 'whisper-1',
@@ -199,7 +200,8 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     // Also use top-level words if available
     const allWords = transcription.words || []
 
-    console.log('Transcription success! Length:', (transcription.text || '').length)
+    console.log('[7] Whisper SUCCESS! Text length:', (transcription.text || '').length)
+    console.log('[7] First 100 chars:', (transcription.text || '').substring(0, 100))
 
     // Clean up ALL temp files
     tempFiles.forEach(safeUnlink)
@@ -808,4 +810,14 @@ app.listen(PORT, () => {
   console.log(`   OpenAI:     ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   ElevenLabs: ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   DeepL:      ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+
+  // Test FFmpeg availability
+  const ffmpegTestPath = getFfmpegPath()
+  console.log('   FFmpeg path:', ffmpegTestPath)
+  try {
+    const version = execSync(`"${ffmpegTestPath}" -version`).toString().split('\n')[0]
+    console.log('   FFmpeg version:', version)
+  } catch {
+    console.error('   FFmpeg NOT FOUND! Conversion will fail.')
+  }
 })
