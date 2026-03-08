@@ -111,7 +111,7 @@ export default function BrandStudio() {
             placeholder="הוסף מונח..."
             className="flex-1 px-4 py-2 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30"
           />
-          <button onClick={addTerm} className="px-4 py-2 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-xl text-sm transition-colors">הוסף</button>
+          <button onClick={addTerm} className="px-4 py-2 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-xl text-sm transition-colors">הוסף</button>
         </div>
       </div>
     </div>

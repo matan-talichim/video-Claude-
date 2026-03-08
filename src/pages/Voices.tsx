@@ -78,7 +78,7 @@ export default function Voices() {
           {myVoices.map((voice, i) => (
             <div key={i} className="flex items-center justify-between p-4 bg-bg-card rounded-xl border border-white/[0.06]">
               <div className="flex items-center gap-3">
-                <button className="w-10 h-10 rounded-full bg-accent-blue/20 flex items-center justify-center hover:bg-accent-blue/20/80 transition-colors">
+                <button className="w-10 h-10 rounded-full bg-accent-blue/20 flex items-center justify-center hover:bg-accent-blue/30 transition-colors">
                   <Play size={16} fill="white" />
                 </button>
                 <div>
@@ -124,7 +124,7 @@ export default function Voices() {
                   <button className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors flex items-center justify-center gap-1">
                     <Play size={12} /> השמע
                   </button>
-                  <button className="flex-1 py-1.5 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-lg text-xs transition-colors">בחר</button>
+                  <button className="flex-1 py-1.5 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-lg text-xs transition-colors">בחר</button>
                 </div>
               </div>
             ))}
@@ -172,7 +172,7 @@ export default function Voices() {
               </div>
             </div>
             <p className="text-sm text-text-muted">או <button className="text-accent-purple hover:underline">העלה קובץ אודיו</button></p>
-            <button onClick={() => { setWizardStep(3); startProgress() }} className="w-full py-3 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-xl font-medium transition-colors">המשך</button>
+            <button onClick={() => { setWizardStep(3); startProgress() }} className="w-full py-3 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-xl font-medium transition-colors">המשך</button>
           </div>
         )}
         {wizardStep === 3 && (
@@ -194,7 +194,7 @@ export default function Voices() {
               <span className="text-sm">המודל מוכן!</span>
             </div>
             <input placeholder="הקלד טקסט לבדיקה..." className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30" />
-            <button className="px-6 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/20/80 rounded-xl text-sm transition-colors">נסה</button>
+            <button className="px-6 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-xl text-sm transition-colors">נסה</button>
             <div className="h-12 bg-white/5 rounded-xl" />
             <button onClick={() => setWizardStep(5)} className="w-full py-3 bg-accent-purple hover:bg-accent-purple/80 rounded-xl font-medium transition-colors">המשך</button>
           </div>
