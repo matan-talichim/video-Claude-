@@ -70,38 +70,23 @@ app.get('/api/status', async (_req, res) => {
 
 // ==================== TRANSCRIPTION (OpenAI Whisper) ====================
 
-// Whisper supported formats
-const WHISPER_SUPPORTED_FORMATS = ['.flac', '.m4a', '.mp3', '.mp4', '.mpeg', '.mpga', '.oga', '.ogg', '.wav', '.webm']
-
 // ESM-compatible require for ffmpeg-static
 const esmRequire = createRequire(import.meta.url)
 
-// Get ffmpeg path: prefer ffmpeg-static, fall back to system ffmpeg
-function getFfmpegPath(): string {
-  // Try ffmpeg-static first
-  try {
-    const staticPath = esmRequire('ffmpeg-static') as string
-    if (staticPath && fs.existsSync(staticPath)) {
-      return staticPath
-    }
-  } catch { /* ffmpeg-static not available */ }
-
-  // Try system ffmpeg
-  try {
-    execSync('ffmpeg -version', { stdio: 'pipe' })
-    return 'ffmpeg'
-  } catch { /* system ffmpeg not available */ }
-
-  throw new Error('FFmpeg not found. Install ffmpeg-static or system ffmpeg.')
-}
-
-// Helper to safely delete a file if it exists
-function safeUnlink(filePath: string) {
-  try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath) } catch { /* ignore */ }
+// Get ffmpeg path: prefer system ffmpeg, fall back to ffmpeg-static
+function getFFmpeg(): string {
+  // Try homebrew path first (macOS)
+  if (fs.existsSync('/opt/homebrew/bin/ffmpeg')) return '/opt/homebrew/bin/ffmpeg'
+  // Try system path
+  try { execSync('which ffmpeg', { stdio: 'pipe' }); return 'ffmpeg' } catch {}
+  // Try ffmpeg-static as last resort
+  try { return esmRequire('ffmpeg-static') as string } catch {}
+  throw new Error('FFmpeg not found')
 }
 
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
-  const tempFiles: string[] = [] // Track all temp files for cleanup
+  let inputPath = ''
+  let mp3Path = ''
 
   try {
     const ai = await getOpenAI()
@@ -110,154 +95,84 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר. הגדר אותו בקובץ .env' })
     }
 
-    if (!req.file) {
-      return res.status(400).json({ message: 'לא הועלה קובץ' })
+    if (!req.file) return res.status(400).json({ message: 'לא נבחר קובץ' })
+
+    inputPath = req.file.path
+    mp3Path = inputPath.replace(/\.[^.]+$/, '') + '_audio.mp3'
+
+    console.log('[TRANSCRIBE 1] Received:', req.file.originalname, req.file.mimetype, (req.file.size / 1024 / 1024).toFixed(1) + 'MB')
+
+    // ALWAYS extract audio as compressed MP3
+    const ffmpeg = getFFmpeg()
+    console.log('[TRANSCRIBE 2] Extracting audio using:', ffmpeg)
+
+    try {
+      execSync(`"${ffmpeg}" -i "${inputPath}" -vn -acodec libmp3lame -ab 64k -ar 16000 -ac 1 "${mp3Path}" -y`, {
+        timeout: 300000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+    } catch (ffErr: any) {
+      console.error('[TRANSCRIBE 2] FFmpeg error:', ffErr.stderr?.toString() || ffErr.message)
+      return res.status(500).json({ message: 'שגיאה בעיבוד הקובץ. נסה קובץ אחר.' })
     }
 
-    let filePath = req.file.path
-    const originalPath = filePath
-    tempFiles.push(originalPath)
-    const fileSize = req.file.size
-    const ext = path.extname(req.file.originalname).toLowerCase()
+    const mp3Size = fs.statSync(mp3Path).size
+    console.log('[TRANSCRIBE 3] Audio extracted:', (mp3Size / 1024 / 1024).toFixed(1) + 'MB')
 
-    // Logging
-    console.log('[TRANSCRIBE 1] Received:', req.file.originalname, 'Format:', ext, 'Size:', (fileSize / 1024 / 1024).toFixed(1) + 'MB')
-    console.log('[TRANSCRIBE 1] Saved to:', filePath, '| MIME:', req.file.mimetype)
-
-    const ffmpegPath = getFfmpegPath()
-
-    // Step 1: Convert unsupported formats (like .mov, .avi, .mkv, .wmv) to MP3
-    if (!WHISPER_SUPPORTED_FORMATS.includes(ext)) {
-      console.log('[CONVERT] Input:', filePath)
-      console.log('[CONVERT] Converting', ext, 'to MP3 using FFmpeg...')
-      console.log('[CONVERT] FFmpeg:', ffmpegPath)
-      const mp3Path = filePath.replace(/\.[^.]+$/, '_converted.mp3')
-      console.log('[CONVERT] Output:', mp3Path)
-      tempFiles.push(mp3Path)
-      const cmd = `"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -ab 128k -ar 16000 -ac 1 "${mp3Path}" -y`
-      console.log('[CONVERT] Command:', cmd)
-      try {
-        execSync(cmd, {
-          timeout: 300000,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        })
-        console.log('[CONVERT] Success! Output size:', fs.statSync(mp3Path).size)
-        // Delete original, use converted
-        safeUnlink(originalPath)
-        filePath = mp3Path
-      } catch (convError: any) {
-        console.error('[CONVERT] FFmpeg stderr:', convError.stderr?.toString())
-        console.error('[CONVERT] FFmpeg error:', convError.message)
-        // Fallback: try copying to .mp4
-        const mp4Path = originalPath.replace(/\.[^.]+$/, '.mp4')
-        try {
-          fs.copyFileSync(originalPath, mp4Path)
-          safeUnlink(originalPath)
-          filePath = mp4Path
-          tempFiles.push(mp4Path)
-          console.log('[TRANSCRIBE 3] Fallback: copied to .mp4')
-        } catch (renameError: any) {
-          console.error('[TRANSCRIBE 3] Rename also failed:', renameError.message)
-          tempFiles.forEach(safeUnlink)
-          return res.status(500).json({
-            message: 'שגיאה בהמרת הקובץ. וודא שהפורמט תקין ו-ffmpeg מותקן.',
-          })
-        }
-      }
-    } else {
-      console.log('[TRANSCRIBE 2] Format supported, no conversion needed')
+    if (mp3Size > 25 * 1024 * 1024) {
+      return res.status(413).json({ message: 'הקובץ גדול מדי גם אחרי דחיסה. נסה קובץ קצר יותר.' })
     }
 
-    // Step 2: Check file size - Whisper max 25MB
-    const WHISPER_MAX = 25 * 1024 * 1024
-    const currentSize = fs.statSync(filePath).size
-    console.log('[TRANSCRIBE 4] File size:', (currentSize / 1024 / 1024).toFixed(1) + 'MB')
+    // Delete original
+    try { fs.unlinkSync(inputPath); inputPath = '' } catch {}
 
-    if (currentSize > WHISPER_MAX) {
-      console.log('[TRANSCRIBE 4] File too large for Whisper. Compressing audio...')
-      const smallPath = filePath.replace(/\.[^.]+$/, '_small.mp3')
-      tempFiles.push(smallPath)
-      try {
-        execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -ab 64k -ar 16000 -ac 1 "${smallPath}" -y`, {
-          timeout: 300000,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        })
-        const compressedSize = fs.statSync(smallPath).size
-        console.log('[TRANSCRIBE 5] Compression SUCCESS:', (compressedSize / 1024 / 1024).toFixed(1) + 'MB')
-        safeUnlink(filePath)
-        filePath = smallPath
-
-        if (compressedSize > WHISPER_MAX) {
-          tempFiles.forEach(safeUnlink)
-          return res.status(413).json({
-            message: 'הקובץ גדול מדי גם אחרי חילוץ אודיו. מגבלה: 25MB. נסה לקצר את הקובץ.',
-          })
-        }
-      } catch (audioError: any) {
-        console.error('[TRANSCRIBE 5] Compression FAILED:', audioError.message)
-        tempFiles.forEach(safeUnlink)
-        return res.status(500).json({
-          message: 'שגיאה בחילוץ אודיו מהקובץ. וודא ש-ffmpeg מותקן.',
-        })
-      }
-    }
-
-    console.log('[TRANSCRIBE 6] Sending to Whisper:', filePath)
-
+    // Send to Whisper
+    console.log('[TRANSCRIBE 4] Sending to Whisper...')
     const transcription = await ai.audio.transcriptions.create({
       model: 'whisper-1',
-      file: fs.createReadStream(filePath),
+      file: fs.createReadStream(mp3Path),
       language: 'he',
       response_format: 'verbose_json',
       timestamp_granularities: ['segment'],
     })
 
-    // Parse response into structured format
-    const segments = (transcription.segments || []).map((seg: any, idx: number) => ({
-      id: idx,
-      speaker: `דובר ${(idx % 2) + 1}`,
-      text: seg.text?.trim() || '',
-      start: seg.start || 0,
-      end: seg.end || 0,
-      words: (seg.words || []).map((w: any) => ({
-        word: w.word?.trim() || '',
-        start: w.start || 0,
-        end: w.end || 0,
-      })),
+    console.log('[TRANSCRIBE 5] SUCCESS! Text length:', (transcription.text || '').length)
+    console.log('[TRANSCRIBE 5] Preview:', (transcription.text || '').substring(0, 100))
+
+    // Cleanup
+    try { fs.unlinkSync(mp3Path); mp3Path = '' } catch {}
+
+    // Format response
+    const segments = ((transcription as any).segments || []).map((seg: any, i: number) => ({
+      id: i,
+      speaker: 'דובר ' + ((i % 2) + 1),
+      text: seg.text.trim(),
+      start: seg.start,
+      end: seg.end,
+      words: seg.words || [],
     }))
 
-    // Also use top-level words if available
-    const allWords = transcription.words || []
-
-    console.log('[TRANSCRIBE 7] SUCCESS! Text length:', (transcription.text || '').length)
-    console.log('[TRANSCRIBE 7] First 100 chars:', (transcription.text || '').substring(0, 100))
-
-    // Clean up ALL temp files
-    tempFiles.forEach(safeUnlink)
+    if (segments.length === 0 && transcription.text) {
+      segments.push({ id: 0, speaker: 'דובר 1', text: transcription.text, start: 0, end: 0, words: [] })
+    }
 
     res.json({
       text: transcription.text || '',
-      duration: transcription.duration || 0,
-      language: transcription.language || 'he',
+      duration: (transcription as any).duration || 0,
+      language: 'he',
       segments,
-      words: allWords,
     })
   } catch (error: any) {
-    // Clean up all temp files on error
-    tempFiles.forEach(safeUnlink)
-    if (req.file && !tempFiles.includes(req.file.path)) safeUnlink(req.file.path)
+    console.error('[TRANSCRIBE ERROR]', error.message, error.status)
+    // Cleanup
+    try { if (inputPath) fs.unlinkSync(inputPath) } catch {}
+    try { if (mp3Path) fs.unlinkSync(mp3Path) } catch {}
 
-    if (error.status === 401) {
-      return res.status(401).json({ message: 'מפתח ה-API לא תקין. בדוק בהגדרות.' })
-    }
-    if (error.status === 429) {
-      return res.status(429).json({ message: 'הגעת למגבלת השימוש. נסה שוב בעוד כמה דקות.' })
-    }
-    if (error.status === 413) {
-      return res.status(413).json({ message: 'הקובץ גדול מדי. הגבלה: 25MB לתמלול.' })
-    }
-    console.error('[TRANSCRIBE ERROR]', error.message, error.status, error.code)
-    return res.status(500).json({ message: `שגיאה בתמלול: ${error.message || 'שגיאה לא ידועה'}` })
+    const status = error.status || 500
+    const message = error.status === 413
+      ? 'הקובץ גדול מדי. מגבלה: 25MB.'
+      : 'שגיאה בתמלול: ' + (error.message || 'שגיאה לא ידועה')
+    res.status(status).json({ message })
   }
 })
 
@@ -840,21 +755,13 @@ app.listen(PORT, () => {
   console.log(`   ElevenLabs: ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   DeepL:      ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
 
-  // Test FFmpeg availability
+  // Check FFmpeg availability
+  console.log('Checking FFmpeg...')
   try {
-    const ffmpegStaticPath = esmRequire('ffmpeg-static') as string
-    console.log('   FFmpeg binary path:', ffmpegStaticPath)
-    console.log('   FFmpeg exists:', fs.existsSync(ffmpegStaticPath))
-    const version = execSync(`"${ffmpegStaticPath}" -version`).toString().split('\n')[0]
-    console.log('   FFmpeg version:', version)
-  } catch (e: any) {
-    console.error('   FFmpeg static ERROR:', e.message)
-    console.log('   Trying system ffmpeg...')
-    try {
-      const version = execSync('ffmpeg -version').toString().split('\n')[0]
-      console.log('   System FFmpeg:', version)
-    } catch {
-      console.error('   NO FFMPEG FOUND AT ALL. MOV conversion will fail!')
-    }
+    const ff = getFFmpeg()
+    const ver = execSync(`"${ff}" -version`, { stdio: ['pipe', 'pipe', 'pipe'] }).toString().split('\n')[0]
+    console.log('FFmpeg OK:', ver)
+  } catch {
+    console.error('FFmpeg NOT FOUND - transcription will fail!')
   }
 })
