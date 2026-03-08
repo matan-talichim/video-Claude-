@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import { Plus, Play, Pencil, Trash2, Circle, Check } from 'lucide-react'
+import { Plus, Play, Pencil, Trash2, Circle, Check, AlertCircle } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import Modal from '../components/Modal'
+import { useApiStatusStore } from '../stores/apiStatusStore'
 
 const myVoices = [
   { name: 'הקול שלי - מקצועי', date: '12/02/2026' },
@@ -30,6 +32,8 @@ export default function Voices() {
   const [langFilter, setLangFilter] = useState('הכל')
   const [genderFilter, setGenderFilter] = useState('הכל')
   const [progress, setProgress] = useState(0)
+  const elevenlabsConnected = useApiStatusStore((s) => s.elevenlabs.connected)
+  const navigate = useNavigate()
 
   const filteredVoices = libraryVoices.filter((v) => {
     if (langFilter !== 'הכל' && v.lang !== langFilter) return false
@@ -121,8 +125,12 @@ export default function Voices() {
                   <span>{voice.gender === 'גבר' ? '♂️' : '♀️'}</span>
                 </div>
                 <div className="flex gap-2">
-                  <button className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors flex items-center justify-center gap-1">
-                    <Play size={12} /> השמע
+                  <button
+                    className={`flex-1 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-center gap-1 ${elevenlabsConnected ? 'bg-white/5 hover:bg-white/10' : 'bg-white/5 opacity-50 cursor-not-allowed'}`}
+                    disabled={!elevenlabsConnected}
+                    title={!elevenlabsConnected ? 'חבר API לשמיעה' : ''}
+                  >
+                    <Play size={12} /> {elevenlabsConnected ? 'השמע' : 'חבר API'}
                   </button>
                   <button className="flex-1 py-1.5 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-lg text-xs transition-colors">בחר</button>
                 </div>
@@ -160,6 +168,16 @@ export default function Voices() {
         )}
         {wizardStep === 2 && (
           <div className="space-y-6 text-center">
+            {!elevenlabsConnected && (
+              <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-300 flex items-start gap-2 text-right">
+                <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium">חבר ElevenLabs API</p>
+                  <p className="mt-1">שיבוט קול דורש חיבור ל-ElevenLabs API.</p>
+                  <button onClick={() => { setShowWizard(false); navigate('/settings') }} className="text-yellow-200 hover:underline mt-1">הגדרות</button>
+                </div>
+              </div>
+            )}
             <button className="w-24 h-24 rounded-full bg-red-500 hover:bg-red-600 mx-auto flex items-center justify-center transition-all hover:scale-110">
               <Circle size={36} fill="white" />
             </button>
@@ -172,7 +190,7 @@ export default function Voices() {
               </div>
             </div>
             <p className="text-sm text-text-muted">או <button className="text-accent-purple hover:underline">העלה קובץ אודיו</button></p>
-            <button onClick={() => { setWizardStep(3); startProgress() }} className="w-full py-3 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-xl font-medium transition-colors">המשך</button>
+            <button onClick={() => { setWizardStep(3); startProgress() }} disabled={!elevenlabsConnected} className="w-full py-3 bg-accent-blue/20 hover:bg-accent-blue/30 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl font-medium transition-colors">המשך</button>
           </div>
         )}
         {wizardStep === 3 && (

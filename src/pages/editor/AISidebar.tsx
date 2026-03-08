@@ -3,6 +3,7 @@ import { Bot, Send, Volume2, Scissors, Subtitles, Languages, Wand2, Film, ImageM
 import { useAIStore } from '../../stores/aiStore'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUsageStore } from '../../stores/usageStore'
+import { useApiStatusStore } from '../../stores/apiStatusStore'
 import { api, ApiError } from '../../services/api'
 
 const quickActions = [
@@ -32,20 +33,13 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
   const { messages, mode, inputValue, setMode, setInputValue, addMessage, updateMessage, setIsProcessing } = useAIStore()
   const editor = useEditorStore()
   const addGptUsage = useUsageStore((s) => s.addGptUsage)
+  const apiConnected = useApiStatusStore((s) => s.openai.connected)
   const [showQuickActions, setShowQuickActions] = useState(false)
-  const [apiConnected, setApiConnected] = useState<boolean | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
-
-  // Check API status on mount
-  useEffect(() => {
-    api.checkApiStatus()
-      .then((status) => setApiConnected(status.openai?.connected || false))
-      .catch(() => setApiConnected(false))
-  }, [])
 
   const getTranscriptText = useCallback(() => {
     return editor.transcript

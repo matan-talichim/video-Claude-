@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { User, CreditCard, Users, Plug, Upload, Check, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { useUIStore } from '../stores/uiStore'
 import { useUsageStore } from '../stores/usageStore'
-import { api } from '../services/api'
+import { useApiStatusStore } from '../stores/apiStatusStore'
 
 const tabs = [
   { id: 'profile', label: 'פרופיל', icon: User },
@@ -39,24 +39,23 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState('profile')
   const { addToast } = useUIStore()
   const usage = useUsageStore()
-  const [apiStatus, setApiStatus] = useState<ApiStatus | null>(null)
-  const [checkingStatus, setCheckingStatus] = useState(false)
+  const apiStatusStore = useApiStatusStore()
+  const checkingStatus = apiStatusStore.loading
+
+  const apiStatus: ApiStatus | null = apiStatusStore.checked ? {
+    openai: { connected: apiStatusStore.openai.connected, model: 'gpt-4o' },
+    elevenlabs: { connected: apiStatusStore.elevenlabs.connected },
+    deepl: { connected: apiStatusStore.deepl.connected },
+  } : null
 
   const checkApiStatus = async () => {
-    setCheckingStatus(true)
-    try {
-      const status = await api.checkApiStatus()
-      setApiStatus(status)
-      addToast('סטטוס API עודכן', 'success')
-    } catch {
-      addToast('לא ניתן להתחבר לשרת. וודא שהשרת רץ.', 'error')
-    }
-    setCheckingStatus(false)
+    await apiStatusStore.checkStatus()
+    addToast('סטטוס API עודכן', 'success')
   }
 
   useEffect(() => {
     if (activeTab === 'integrations') {
-      checkApiStatus()
+      apiStatusStore.checkStatus()
     }
   }, [activeTab])
 
