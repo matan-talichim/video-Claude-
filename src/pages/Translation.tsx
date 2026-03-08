@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Globe, Subtitles, Mic, Smile, Check, Loader2, AlertCircle } from 'lucide-react'
 import { useUIStore } from '../stores/uiStore'
 import { useUsageStore } from '../stores/usageStore'
+import { useApiStatusStore } from '../stores/apiStatusStore'
 import { api, ApiError } from '../services/api'
 
 const targetLanguages = [
@@ -39,6 +40,7 @@ export default function Translation() {
   const [activeResultLang, setActiveResultLang] = useState<string | null>(null)
   const { addToast } = useUIStore()
   const addDeeplUsage = useUsageStore((s) => s.addDeeplUsage)
+  const deeplConnected = useApiStatusStore((s) => s.deepl.connected)
 
   const toggleLang = (code: string) => {
     setSelectedLangs((prev) =>
@@ -204,6 +206,13 @@ export default function Translation() {
               placeholder="הזן טקסט לתרגום, או השאר ריק לשימוש בתמלול..."
             />
           </div>
+
+          {!deeplConnected && (
+            <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+              <AlertCircle size={14} className="text-yellow-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-yellow-300">חבר DeepL API בהגדרות לתרגום אוטומטי. ניתן גם לתרגם ידנית.</p>
+            </div>
+          )}
 
           <button
             onClick={startTranslation}

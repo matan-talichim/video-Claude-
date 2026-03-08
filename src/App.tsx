@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
@@ -10,8 +11,15 @@ import Recording from './pages/Recording'
 import BrandStudio from './pages/BrandStudio'
 import Settings from './pages/Settings'
 import Uploads from './pages/Uploads'
+import { useApiStatusStore } from './stores/apiStatusStore'
 
 export default function App() {
+  const checkStatus = useApiStatusStore((s) => s.checkStatus)
+
+  useEffect(() => {
+    checkStatus()
+  }, [checkStatus])
+
   return (
     <Routes>
       <Route element={<Layout />}>

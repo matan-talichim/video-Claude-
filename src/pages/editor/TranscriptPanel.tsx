@@ -1,9 +1,10 @@
-import { useState, useRef } from 'react'
-import { Search, X, Upload, Settings, Link2, Loader2 } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Search, X, Upload, Settings, Link2, Loader2, Pencil } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useUsageStore } from '../../stores/usageStore'
+import { useApiStatusStore } from '../../stores/apiStatusStore'
 import { api, ApiError } from '../../services/api'
 
 const speakerColors: Record<string, string> = {
@@ -26,13 +27,17 @@ export default function TranscriptPanel() {
   const { transcript, currentTime, setCurrentTime, transcriptMode, setTranscriptMode, isDemo, mediaBlobUrl, mediaFile, setTranscript } = useEditorStore()
   const { addToast } = useUIStore()
   const addWhisperUsage = useUsageStore((s) => s.addWhisperUsage)
+  const openaiConnected = useApiStatusStore((s) => s.openai.connected)
+  const apiChecked = useApiStatusStore((s) => s.checked)
   const totalWords = transcript.reduce((sum, seg) => sum + seg.words.length, 0)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [manualText, setManualText] = useState('')
+  const [showManualInput, setShowManualInput] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [transcribeProgress, setTranscribeProgress] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
+  const autoTranscribeTriggered = useRef(false)
 
   const handleImportTranscript = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -59,6 +64,7 @@ export default function TranscriptPanel() {
       text: w, start: i * 0.5, end: (i + 1) * 0.5, isFiller: false,
     }))
     setTranscript([{ speaker: 'דובר', color: 'border-blue-400', startTime: '00:00', words }])
+    setShowManualInput(false)
   }
 
   const handleAutoTranscribe = async () => {
@@ -68,14 +74,12 @@ export default function TranscriptPanel() {
     }
     setIsTranscribing(true)
 
-    // Show format-aware status messages
     const ext = mediaFile.name.split('.').pop()?.toLowerCase() || ''
     const supportedFormats = ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']
     const needsConversion = !supportedFormats.includes(ext)
     const isLargeFile = mediaFile.size > 25 * 1024 * 1024
 
-    setTranscribeProgress('מעלה קובץ...')
-    // Brief delay so user sees the upload status
+    setTranscribeProgress('מעלה לשרת...')
     await new Promise(r => setTimeout(r, 500))
 
     if (needsConversion) {
@@ -91,14 +95,12 @@ export default function TranscriptPanel() {
 
       setTranscribeProgress('מתמלל...')
 
-      // Track usage
       if (result.duration) {
         addWhisperUsage(result.duration / 60)
       }
 
-      // Convert API response to editor transcript format
       const fillerList = ['אממ', 'אההה', 'כאילו', 'נו', 'בעצם', 'אז', 'סתם', 'יודע', 'יודעת']
-      const speakerColors = ['border-blue-400', 'border-green-400', 'border-purple-400', 'border-orange-400']
+      const colorList = ['border-blue-400', 'border-green-400', 'border-purple-400', 'border-orange-400']
 
       if (result.segments && result.segments.length > 0) {
         const segments = result.segments.map((seg: any, i: number) => {
@@ -111,7 +113,6 @@ export default function TranscriptPanel() {
               isFiller: fillerList.includes(clean),
             }
           })
-          // If segment has no words, create from text
           if (words.length === 0 && seg.text) {
             const textWords = seg.text.split(/\s+/).filter(Boolean)
             const duration = (seg.end || 0) - (seg.start || 0)
@@ -130,16 +131,16 @@ export default function TranscriptPanel() {
           const secs = Math.floor((seg.start || 0) % 60)
           return {
             speaker: seg.speaker || `דובר ${(i % 2) + 1}`,
-            color: speakerColors[i % speakerColors.length],
+            color: colorList[i % colorList.length],
             startTime: `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`,
             words,
           }
         }).filter((s: any) => s.words.length > 0)
 
         setTranscript(segments)
-        addToast(`התמלול הושלם! ${segments.reduce((s: number, seg: any) => s + seg.words.length, 0)} מילים`, 'success')
+        const wordCount = segments.reduce((s: number, seg: any) => s + seg.words.length, 0)
+        addToast(`התמלול הושלם! נמצאו ${wordCount} מילים`, 'success')
       } else if (result.text) {
-        // Fallback: use full text with top-level words
         const words = result.words?.length
           ? result.words.map((w: any) => {
               const clean = (w.word || '').replace(/[.,!?]/g, '')
@@ -152,7 +153,6 @@ export default function TranscriptPanel() {
         addToast('התמלול הושלם!', 'success')
       }
 
-      // Try speaker detection
       setTranscribeProgress('מזהה דוברים...')
       try {
         await api.detectSpeakers(result.text, result.segments)
@@ -170,8 +170,25 @@ export default function TranscriptPanel() {
     setTranscribeProgress('')
   }
 
+  // Auto-transcribe when API is connected and media file is available
+  useEffect(() => {
+    if (
+      apiChecked &&
+      openaiConnected &&
+      mediaFile &&
+      !isDemo &&
+      transcriptMode === 'real' &&
+      transcript.length === 0 &&
+      !isTranscribing &&
+      !autoTranscribeTriggered.current
+    ) {
+      autoTranscribeTriggered.current = true
+      handleAutoTranscribe()
+    }
+  }, [apiChecked, openaiConnected, mediaFile, isDemo, transcriptMode, transcript.length, isTranscribing])
+
   const hasRealMedia = !!mediaBlobUrl && !isDemo
-  const showApiPrompt = transcriptMode === 'real' && transcript.length === 0 && hasRealMedia && !isTranscribing
+  const showApiPrompt = transcriptMode === 'real' && transcript.length === 0 && hasRealMedia && !isTranscribing && !openaiConnected && apiChecked
 
   return (
     <div className="flex flex-col h-full bg-bg-panel rounded-xl border border-white/[0.06] overflow-hidden">
@@ -207,14 +224,16 @@ export default function TranscriptPanel() {
       )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* Loading state while transcribing */}
         {isTranscribing && (
           <div className="text-center py-12 space-y-4">
             <Loader2 size={32} className="mx-auto text-accent-purple animate-spin" />
-            <p className="text-sm text-text-primary font-medium">{transcribeProgress || 'מתמלל...'}</p>
-            <p className="text-xs text-text-muted">זה עלול לקחת כמה דקות</p>
+            <p className="text-sm text-text-primary font-medium">{transcribeProgress || 'מתמלל את הקובץ...'}</p>
+            <p className="text-xs text-text-muted">זה יכול לקחת עד דקה</p>
           </div>
         )}
 
+        {/* API not connected - show connect prompt */}
         {showApiPrompt && (
           <div className="space-y-4">
             <div className="p-4 bg-accent-purple/5 border border-accent-purple/20 rounded-xl text-center space-y-3">
@@ -222,11 +241,14 @@ export default function TranscriptPanel() {
               <p className="text-sm text-text-primary font-medium">חבר API של OpenAI Whisper כדי לקבל תמלול אמיתי</p>
               <p className="text-xs text-text-muted">ממתין לחיבור שירות תמלול...</p>
               <div className="flex items-center justify-center gap-2">
-                {mediaFile && (
-                  <button onClick={handleAutoTranscribe} className="inline-flex items-center gap-1.5 px-4 py-2 bg-accent-purple hover:bg-accent-purple/90 text-white rounded-lg text-sm transition-colors font-medium">
-                    תמלל אוטומטית
-                  </button>
-                )}
+                <button
+                  onClick={handleAutoTranscribe}
+                  disabled
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-accent-purple/30 text-white/50 rounded-lg text-sm font-medium cursor-not-allowed"
+                  title="חבר OpenAI API בהגדרות"
+                >
+                  תמלל אוטומטית
+                </button>
                 <button onClick={() => navigate('/settings')} className="inline-flex items-center gap-1.5 px-4 py-2 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-sm transition-colors">
                   <Settings size={14} /> הגדרות API
                 </button>
@@ -246,6 +268,7 @@ export default function TranscriptPanel() {
           </div>
         )}
 
+        {/* Transcript content */}
         {transcript.map((segment, si) => (
           <div key={si} className="group">
             <div className="flex items-center gap-2 mb-2">
@@ -273,7 +296,28 @@ export default function TranscriptPanel() {
           </div>
         ))}
 
-        {transcript.length === 0 && !showApiPrompt && (
+        {/* Manual edit link when transcript is showing */}
+        {transcript.length > 0 && !showManualInput && (
+          <button
+            onClick={() => setShowManualInput(true)}
+            className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors"
+          >
+            <Pencil size={12} /> ערוך תמלול ידנית
+          </button>
+        )}
+
+        {/* Manual input fallback (shown by link click) */}
+        {showManualInput && transcript.length > 0 && (
+          <div className="space-y-2 border-t border-white/[0.06] pt-4">
+            <textarea value={manualText} onChange={(e) => setManualText(e.target.value)} placeholder="הקלד או הדבק תמלול כאן..." className="w-full h-24 px-3 py-2 bg-bg-card rounded-xl border border-white/[0.06] text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-purple/30 resize-none leading-relaxed" />
+            <div className="flex items-center gap-2">
+              <button onClick={handleManualSave} disabled={!manualText.trim()} className="px-3 py-1.5 bg-accent-purple hover:bg-accent-purple/90 rounded-lg text-xs font-medium transition-all disabled:opacity-50">שמור</button>
+              <button onClick={() => setShowManualInput(false)} className="px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] rounded-lg text-xs text-text-secondary transition-colors">ביטול</button>
+            </div>
+          </div>
+        )}
+
+        {transcript.length === 0 && !showApiPrompt && !isTranscribing && (
           <div className="text-center py-8 text-text-muted text-sm">אין תמלול זמין</div>
         )}
       </div>
