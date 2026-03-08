@@ -5,6 +5,7 @@ import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { execSync } from 'child_process'
+import { createRequire } from 'module'
 import dotenv from 'dotenv'
 
 // Load .env from project root
@@ -64,10 +65,13 @@ app.get('/api/status', async (_req, res) => {
 // Whisper supported formats
 const WHISPER_SUPPORTED_FORMATS = ['.flac', '.m4a', '.mp3', '.mp4', '.mpeg', '.mpga', '.oga', '.ogg', '.wav', '.webm']
 
+// ESM-compatible require for ffmpeg-static
+const esmRequire = createRequire(import.meta.url)
+
 // Get ffmpeg path: prefer ffmpeg-static, fall back to system ffmpeg
 function getFfmpegPath(): string {
   try {
-    const ffmpegStatic = require('ffmpeg-static') as string
+    const ffmpegStatic = esmRequire('ffmpeg-static') as string
     if (ffmpegStatic && fs.existsSync(ffmpegStatic)) return ffmpegStatic
   } catch { /* ffmpeg-static not available */ }
   return 'ffmpeg' // fall back to system ffmpeg
@@ -99,15 +103,15 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     const ext = path.extname(req.file.originalname).toLowerCase()
 
     // Logging
-    console.log('[1] File with extension:', filePath)
-    console.log('[1] Original name:', req.file.originalname, '| MIME:', req.file.mimetype)
-    console.log('[1] File size:', (fileSize / 1024 / 1024).toFixed(1), 'MB')
+    console.log('[TRANSCRIBE 1] Received:', req.file.originalname, 'Format:', ext, 'Size:', (fileSize / 1024 / 1024).toFixed(1) + 'MB')
+    console.log('[TRANSCRIBE 1] Saved to:', filePath, '| MIME:', req.file.mimetype)
 
     const ffmpegPath = getFfmpegPath()
 
     // Step 1: Convert unsupported formats (like .mov, .avi, .mkv, .wmv) to MP3
     if (!WHISPER_SUPPORTED_FORMATS.includes(ext)) {
-      console.log('[2] Format', ext, 'not supported. Converting to MP3...')
+      console.log('[TRANSCRIBE 2] Converting', ext, 'to MP3 using FFmpeg...')
+      console.log('[TRANSCRIBE 2] FFmpeg path:', ffmpegPath)
       const mp3Path = filePath.replace(/\.[^.]+$/, '_converted.mp3')
       tempFiles.push(mp3Path)
       try {
@@ -115,37 +119,39 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
           timeout: 300000,
           stdio: ['pipe', 'pipe', 'pipe'],
         })
-        console.log('[3] Conversion SUCCESS:', mp3Path)
-        console.log('[3] Converted size:', (fs.statSync(mp3Path).size / 1024 / 1024).toFixed(1), 'MB')
+        console.log('[TRANSCRIBE 3] Conversion SUCCESS. New file:', mp3Path, 'Size:', (fs.statSync(mp3Path).size / 1024 / 1024).toFixed(1) + 'MB')
         // Delete original, use converted
         safeUnlink(originalPath)
         filePath = mp3Path
       } catch (convError: any) {
-        console.error('[3] FFmpeg conversion FAILED:', convError.stderr?.toString() || convError.message)
-        // Fallback: try just renaming to .mp4
+        console.error('[TRANSCRIBE 3] FFmpeg FAILED:', convError.stderr?.toString() || convError.message)
+        // Fallback: try copying to .mp4
         const mp4Path = originalPath.replace(/\.[^.]+$/, '.mp4')
         try {
-          fs.renameSync(originalPath, mp4Path)
+          fs.copyFileSync(originalPath, mp4Path)
+          safeUnlink(originalPath)
           filePath = mp4Path
           tempFiles.push(mp4Path)
-          console.log('[3] Fallback: renamed to', mp4Path)
+          console.log('[TRANSCRIBE 3] Fallback: copied to .mp4')
         } catch (renameError: any) {
-          console.error('[3] Rename also failed:', renameError.message)
+          console.error('[TRANSCRIBE 3] Rename also failed:', renameError.message)
           tempFiles.forEach(safeUnlink)
           return res.status(500).json({
             message: 'שגיאה בהמרת הקובץ. וודא שהפורמט תקין ו-ffmpeg מותקן.',
           })
         }
       }
+    } else {
+      console.log('[TRANSCRIBE 2] Format supported, no conversion needed')
     }
 
     // Step 2: Check file size - Whisper max 25MB
     const WHISPER_MAX = 25 * 1024 * 1024
     const currentSize = fs.statSync(filePath).size
-    console.log('[4] File size:', (currentSize / 1024 / 1024).toFixed(1), 'MB')
+    console.log('[TRANSCRIBE 4] File size:', (currentSize / 1024 / 1024).toFixed(1) + 'MB')
 
     if (currentSize > WHISPER_MAX) {
-      console.log('[4] Too large for Whisper. Compressing audio...')
+      console.log('[TRANSCRIBE 4] File too large for Whisper. Compressing audio...')
       const smallPath = filePath.replace(/\.[^.]+$/, '_small.mp3')
       tempFiles.push(smallPath)
       try {
@@ -154,7 +160,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
           stdio: ['pipe', 'pipe', 'pipe'],
         })
         const compressedSize = fs.statSync(smallPath).size
-        console.log('[5] Compression SUCCESS:', (compressedSize / 1024 / 1024).toFixed(1), 'MB')
+        console.log('[TRANSCRIBE 5] Compression SUCCESS:', (compressedSize / 1024 / 1024).toFixed(1) + 'MB')
         safeUnlink(filePath)
         filePath = smallPath
 
@@ -165,7 +171,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
           })
         }
       } catch (audioError: any) {
-        console.error('[5] Compression FAILED:', audioError.message)
+        console.error('[TRANSCRIBE 5] Compression FAILED:', audioError.message)
         tempFiles.forEach(safeUnlink)
         return res.status(500).json({
           message: 'שגיאה בחילוץ אודיו מהקובץ. וודא ש-ffmpeg מותקן.',
@@ -173,7 +179,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       }
     }
 
-    console.log('[6] Sending to Whisper:', filePath)
+    console.log('[TRANSCRIBE 6] Sending to Whisper:', filePath)
 
     const transcription = await ai.audio.transcriptions.create({
       model: 'whisper-1',
@@ -200,8 +206,8 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     // Also use top-level words if available
     const allWords = transcription.words || []
 
-    console.log('[7] Whisper SUCCESS! Text length:', (transcription.text || '').length)
-    console.log('[7] First 100 chars:', (transcription.text || '').substring(0, 100))
+    console.log('[TRANSCRIBE 7] SUCCESS! Text length:', (transcription.text || '').length)
+    console.log('[TRANSCRIBE 7] First 100 chars:', (transcription.text || '').substring(0, 100))
 
     // Clean up ALL temp files
     tempFiles.forEach(safeUnlink)
@@ -227,7 +233,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     if (error.status === 413) {
       return res.status(413).json({ message: 'הקובץ גדול מדי. הגבלה: 25MB לתמלול.' })
     }
-    console.error('Transcription error:', error.message, error.status, error.code)
+    console.error('[TRANSCRIBE ERROR]', error.message, error.status, error.code)
     return res.status(500).json({ message: `שגיאה בתמלול: ${error.message || 'שגיאה לא ידועה'}` })
   }
 })
