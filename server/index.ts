@@ -4,6 +4,7 @@ import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
+import { execSync } from 'child_process'
 import dotenv from 'dotenv'
 
 // Load .env from project root
@@ -60,11 +61,29 @@ app.get('/api/status', async (_req, res) => {
 
 // ==================== TRANSCRIPTION (OpenAI Whisper) ====================
 
+// Whisper supported formats
+const WHISPER_SUPPORTED_FORMATS = ['.flac', '.m4a', '.mp3', '.mp4', '.mpeg', '.mpga', '.oga', '.ogg', '.wav', '.webm']
+
+// Get ffmpeg path: prefer ffmpeg-static, fall back to system ffmpeg
+function getFfmpegPath(): string {
+  try {
+    const ffmpegStatic = require('ffmpeg-static') as string
+    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) return ffmpegStatic
+  } catch { /* ffmpeg-static not available */ }
+  return 'ffmpeg' // fall back to system ffmpeg
+}
+
+// Helper to safely delete a file if it exists
+function safeUnlink(filePath: string) {
+  try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath) } catch { /* ignore */ }
+}
+
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
+  const tempFiles: string[] = [] // Track all temp files for cleanup
+
   try {
     const ai = await getOpenAI()
     if (!ai) {
-      // Clean up uploaded file
       if (req.file) fs.unlinkSync(req.file.path)
       return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר. הגדר אותו בקובץ .env' })
     }
@@ -73,23 +92,74 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       return res.status(400).json({ message: 'לא הועלה קובץ' })
     }
 
-    const filePath = req.file.path
+    let filePath = req.file.path
+    const originalPath = filePath
+    tempFiles.push(originalPath)
     const fileSize = req.file.size
+    const ext = path.extname(req.file.originalname).toLowerCase()
 
     // Logging
-    console.log('Received file:', req.file.originalname, req.file.mimetype, req.file.size)
-    console.log('Saved to:', filePath)
+    console.log('Received file:', req.file.originalname, req.file.mimetype, fileSize)
+    console.log('Original format:', ext)
+    console.log('File size:', (fileSize / 1024 / 1024).toFixed(1) + 'MB')
+    console.log('Needs conversion:', !WHISPER_SUPPORTED_FORMATS.includes(ext))
 
-    // Whisper API max is 25MB
-    const WHISPER_MAX = 25 * 1024 * 1024
-    if (fileSize > WHISPER_MAX) {
-      fs.unlinkSync(filePath)
-      return res.status(413).json({
-        message: 'הקובץ גדול מדי לתמלול. מגבלה: 25MB. נסה לדחוס את הקובץ.'
-      })
+    const ffmpegPath = getFfmpegPath()
+
+    // Step 1: Convert unsupported formats (like .mov, .avi, .mkv) to MP4
+    if (!WHISPER_SUPPORTED_FORMATS.includes(ext)) {
+      console.log('Converting to MP4...')
+      const convertedPath = filePath.replace(/\.[^.]+$/, '.mp4')
+      tempFiles.push(convertedPath)
+      try {
+        execSync(`"${ffmpegPath}" -i "${filePath}" -c copy "${convertedPath}" -y`, {
+          timeout: 300000, // 5 min timeout
+          stdio: 'pipe',
+        })
+        filePath = convertedPath
+        console.log('Conversion complete:', convertedPath)
+      } catch (convError: any) {
+        console.error('FFmpeg conversion error:', convError.message)
+        tempFiles.forEach(safeUnlink)
+        return res.status(500).json({
+          message: 'שגיאה בהמרת הקובץ. וודא שהפורמט תקין ו-ffmpeg מותקן.',
+        })
+      }
     }
 
-    console.log('Sending to Whisper...')
+    // Step 2: Check file size - if > 25MB, extract audio only as MP3
+    const WHISPER_MAX = 25 * 1024 * 1024
+    const currentSize = fs.statSync(filePath).size
+
+    if (currentSize > WHISPER_MAX) {
+      console.log('Extracting audio (file too large)...', (currentSize / 1024 / 1024).toFixed(1) + 'MB')
+      const audioPath = filePath.replace(/\.[^.]+$/, '-audio.mp3')
+      tempFiles.push(audioPath)
+      try {
+        execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -q:a 4 "${audioPath}" -y`, {
+          timeout: 300000,
+          stdio: 'pipe',
+        })
+        filePath = audioPath
+        const audioSize = fs.statSync(filePath).size
+        console.log('Audio extracted:', (audioSize / 1024 / 1024).toFixed(1) + 'MB')
+
+        if (audioSize > WHISPER_MAX) {
+          tempFiles.forEach(safeUnlink)
+          return res.status(413).json({
+            message: 'הקובץ גדול מדי גם אחרי חילוץ אודיו. מגבלה: 25MB. נסה לקצר את הקובץ.',
+          })
+        }
+      } catch (audioError: any) {
+        console.error('Audio extraction error:', audioError.message)
+        tempFiles.forEach(safeUnlink)
+        return res.status(500).json({
+          message: 'שגיאה בחילוץ אודיו מהקובץ. וודא ש-ffmpeg מותקן.',
+        })
+      }
+    }
+
+    console.log('Sending to Whisper...', filePath)
 
     const transcription = await ai.audio.transcriptions.create({
       model: 'whisper-1',
@@ -118,8 +188,8 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
     console.log('Transcription complete:', segments.length, 'segments,', (transcription.text || '').length, 'chars')
 
-    // Clean up temp file
-    fs.unlinkSync(filePath)
+    // Clean up ALL temp files
+    tempFiles.forEach(safeUnlink)
 
     res.json({
       text: transcription.text || '',
@@ -129,8 +199,9 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       words: allWords,
     })
   } catch (error: any) {
-    // Clean up temp file on error
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path)
+    // Clean up all temp files on error
+    tempFiles.forEach(safeUnlink)
+    if (req.file && !tempFiles.includes(req.file.path)) safeUnlink(req.file.path)
 
     if (error.status === 401) {
       return res.status(401).json({ message: 'מפתח ה-API לא תקין. בדוק בהגדרות.' })

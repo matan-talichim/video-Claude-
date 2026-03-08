@@ -67,9 +67,29 @@ export default function TranscriptPanel() {
       return
     }
     setIsTranscribing(true)
-    setTranscribeProgress('מתמלל את הקובץ...')
+
+    // Show format-aware status messages
+    const ext = mediaFile.name.split('.').pop()?.toLowerCase() || ''
+    const supportedFormats = ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']
+    const needsConversion = !supportedFormats.includes(ext)
+    const isLargeFile = mediaFile.size > 25 * 1024 * 1024
+
+    setTranscribeProgress('מעלה קובץ...')
+    // Brief delay so user sees the upload status
+    await new Promise(r => setTimeout(r, 500))
+
+    if (needsConversion) {
+      setTranscribeProgress('ממיר פורמט...')
+    } else if (isLargeFile) {
+      setTranscribeProgress('מחלץ אודיו...')
+    } else {
+      setTranscribeProgress('מתמלל...')
+    }
+
     try {
       const result = await api.transcribe(mediaFile)
+
+      setTranscribeProgress('מתמלל...')
 
       // Track usage
       if (result.duration) {
@@ -139,6 +159,9 @@ export default function TranscriptPanel() {
       } catch {
         // Speaker detection is optional
       }
+
+      setTranscribeProgress('מוכן!')
+      await new Promise(r => setTimeout(r, 800))
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'שגיאה בתמלול. נסה שוב.'
       addToast(message, 'error')
