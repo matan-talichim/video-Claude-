@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "cd server && npx tsx index.ts",
+    "dev:all": "concurrently \"npm run dev\" \"npm run server\""
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",
@@ -17,7 +19,8 @@
     "react-router-dom": "^7.13.1",
     "recharts": "^3.7.0",
     "wavesurfer.js": "^7.12.1",
-    "zustand": "^5.0.11"
+    "zustand": "^5.0.11",
+    "concurrently": "^9.1.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

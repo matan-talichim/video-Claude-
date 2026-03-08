@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import { User, CreditCard, Users, Plug, Upload, Check } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { User, CreditCard, Users, Plug, Upload, Check, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { useUIStore } from '../stores/uiStore'
+import { useUsageStore } from '../stores/usageStore'
+import { api } from '../services/api'
 
 const tabs = [
   { id: 'profile', label: 'פרופיל', icon: User },
@@ -15,13 +17,6 @@ const teamMembers = [
   { name: 'דניאל אברהם', email: 'daniel@example.com', role: 'Viewer', avatar: 'דא' },
 ]
 
-const integrations = [
-  { name: 'YouTube', connected: true, icon: '▶️' },
-  { name: 'Zoom', connected: false, icon: '📹' },
-  { name: 'Slack', connected: false, icon: '💬' },
-  { name: 'Google Drive', connected: false, icon: '📁' },
-]
-
 const billingHistory = [
   { date: '01/03/2026', amount: '$24.00', status: 'שולם' },
   { date: '01/02/2026', amount: '$24.00', status: 'שולם' },
@@ -34,9 +29,60 @@ const roleBadgeColors: Record<string, string> = {
   Viewer: 'bg-gray-500/20 text-gray-300',
 }
 
+interface ApiStatus {
+  openai: { connected: boolean; model: string }
+  elevenlabs: { connected: boolean }
+  deepl: { connected: boolean }
+}
+
 export default function Settings() {
   const [activeTab, setActiveTab] = useState('profile')
   const { addToast } = useUIStore()
+  const usage = useUsageStore()
+  const [apiStatus, setApiStatus] = useState<ApiStatus | null>(null)
+  const [checkingStatus, setCheckingStatus] = useState(false)
+
+  const checkApiStatus = async () => {
+    setCheckingStatus(true)
+    try {
+      const status = await api.checkApiStatus()
+      setApiStatus(status)
+      addToast('סטטוס API עודכן', 'success')
+    } catch {
+      addToast('לא ניתן להתחבר לשרת. וודא שהשרת רץ.', 'error')
+    }
+    setCheckingStatus(false)
+  }
+
+  useEffect(() => {
+    if (activeTab === 'integrations') {
+      checkApiStatus()
+    }
+  }, [activeTab])
+
+  const apiCards = [
+    {
+      name: 'OpenAI',
+      icon: '🤖',
+      key: 'openai' as const,
+      features: ['תמלול (Whisper)', 'עוזר AI (GPT-4o)', 'יצירת תמונות (DALL-E 3)'],
+      description: 'תמלול אוטומטי, עוזר AI חכם ויצירת תמונות',
+    },
+    {
+      name: 'ElevenLabs',
+      icon: '🎙️',
+      key: 'elevenlabs' as const,
+      features: ['שכפול קול', 'המרת טקסט לדיבור', 'דאבינג'],
+      description: 'שכפול קולות ויצירת דיבור מטקסט',
+    },
+    {
+      name: 'DeepL',
+      icon: '🌍',
+      key: 'deepl' as const,
+      features: ['תרגום כתוביות', 'תרגום תוכן', 'תרגום אצווה'],
+      description: 'תרגום אוטומטי באיכות גבוהה',
+    },
+  ]
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -118,6 +164,38 @@ export default function Settings() {
                 </div>
               </div>
             </div>
+
+            {/* API Usage Section */}
+            <div className="bg-white/5 rounded-xl p-5 border border-white/[0.06]">
+              <h3 className="font-medium mb-3">שימוש ב-API החודש</h3>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between items-center">
+                  <span className="text-text-secondary">Whisper (תמלול)</span>
+                  <span>{usage.whisperMinutes.toFixed(1)} דקות</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-text-secondary">GPT-4o (AI)</span>
+                  <span>{usage.gptTokens.toLocaleString()} tokens</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-text-secondary">ElevenLabs (קול)</span>
+                  <span>{usage.elevenLabsCharacters.toLocaleString()} תווים</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-text-secondary">DeepL (תרגום)</span>
+                  <span>{usage.deeplCharacters.toLocaleString()} תווים</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-text-secondary">DALL-E (תמונות)</span>
+                  <span>{usage.dalleImages} תמונות</span>
+                </div>
+                <div className="pt-2 border-t border-white/[0.06] flex justify-between items-center font-medium">
+                  <span>עלות משוערת</span>
+                  <span className="text-accent-purple">${usage.estimatedCost.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
             <button onClick={() => addToast('מעביר לדף שדרוג...', 'info')} className="px-6 py-2.5 bg-accent-blue/20 hover:bg-accent-blue/30 rounded-xl text-sm font-medium transition-colors">שדרג מנוי</button>
             <div>
               <h3 className="font-medium mb-3">היסטוריית חיובים</h3>
@@ -161,23 +239,69 @@ export default function Settings() {
         )}
 
         {activeTab === 'integrations' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {integrations.map((int, i) => (
-              <div key={i} className="flex items-center justify-between p-4 bg-white/5 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{int.icon}</span>
-                  <div>
-                    <p className="font-medium text-sm">{int.name}</p>
-                    <p className="text-xs text-text-muted">{int.connected ? 'מחובר' : 'לא מחובר'}</p>
-                  </div>
-                </div>
-                <button className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                  int.connected ? 'bg-green-500/20 text-green-300' : 'bg-white/10 text-text-secondary hover:bg-white/20'
-                }`}>
-                  {int.connected ? <><Check size={14} /> מחובר</> : <><Plug size={14} /> חבר</>}
-                </button>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-medium">שירותי API</h3>
+              <button
+                onClick={checkApiStatus}
+                disabled={checkingStatus}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={12} className={checkingStatus ? 'animate-spin' : ''} />
+                בדוק חיבור
+              </button>
+            </div>
+
+            {!apiStatus && checkingStatus && (
+              <div className="text-center py-8">
+                <Loader2 size={24} className="animate-spin mx-auto mb-2 text-accent-purple" />
+                <p className="text-sm text-text-muted">בודק חיבור לשרת...</p>
               </div>
-            ))}
+            )}
+
+            {apiStatus && apiCards.map((card) => {
+              const connected = apiStatus[card.key]?.connected
+              return (
+                <div key={card.key} className="p-4 bg-white/5 rounded-xl border border-white/[0.06]">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{card.icon}</span>
+                      <div>
+                        <p className="font-medium text-sm">{card.name}</p>
+                        <p className="text-xs text-text-muted">{card.description}</p>
+                      </div>
+                    </div>
+                    <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ${
+                      connected ? 'bg-green-500/20 text-green-300' : 'bg-white/10 text-text-muted'
+                    }`}>
+                      {connected ? <><Check size={14} /> מחובר</> : <><AlertCircle size={14} /> לא מחובר</>}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {card.features.map((feature) => (
+                      <span key={feature} className={`px-2 py-0.5 rounded-full text-xs ${
+                        connected ? 'bg-accent-purple/10 text-accent-purple' : 'bg-white/5 text-text-muted'
+                      }`}>
+                        {feature}
+                      </span>
+                    ))}
+                  </div>
+                  {!connected && (
+                    <p className="text-xs text-text-muted mt-3">
+                      הוסף מפתח API בקובץ <code className="bg-white/10 px-1 rounded">.env</code> בתיקיית הפרויקט
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+
+            {!apiStatus && !checkingStatus && (
+              <div className="text-center py-8">
+                <AlertCircle size={24} className="mx-auto mb-2 text-text-muted" />
+                <p className="text-sm text-text-muted">לא ניתן להתחבר לשרת.</p>
+                <p className="text-xs text-text-muted mt-1">וודא שהשרת רץ: <code className="bg-white/10 px-1 rounded">npm run server</code></p>
+              </div>
+            )}
           </div>
         )}
       </div>

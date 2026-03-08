@@ -3,6 +3,7 @@ import { Copy, Play, Star, Download, Loader2, Link2, CheckCircle } from 'lucide-
 import Modal from '../../components/Modal'
 import { useUIStore } from '../../stores/uiStore'
 import { useEditorStore } from '../../stores/editorStore'
+import { api } from '../../services/api'
 
 function useAIAction() {
   const [isProcessing, setIsProcessing] = useState(false)
@@ -556,43 +557,92 @@ function PublishContent({ defaultTab = 'web' }: { defaultTab?: 'web' | 'export' 
 
 function GenerateContent() {
   const [activeType, setActiveType] = useState<string | null>(null)
+  const [generatedContent, setGeneratedContent] = useState('')
+  const [isGenerating, setIsGenerating] = useState(false)
   const { addToast } = useUIStore()
+  const transcript = useEditorStore((s) => s.transcript)
+
   const types = [
-    { id: 'social', label: 'פוסט לרשתות חברתיות', content: '🎙️ פרק חדש בפודקאסט!\n\nדיברנו על איך AI משנה את עולם יצירת התוכן.\n\n#AI #פודקאסט #טכנולוגיה' },
-    { id: 'youtube', label: 'תיאור ליוטיוב', content: 'בפרק 47 של הפודקאסט השבועי שלנו, אנחנו צוללים לעומק לנושא עריכת וידאו מבוססת AI.\n\n⏱️ חותמות זמן:\n0:00 פתיחה\n0:35 מהי עריכה מבוססת טקסט?\n1:15 יתרונות הטכנולוגיה' },
-    { id: 'summary', label: 'סיכום', content: '• דיון על עריכה מבוססת טקסט\n• הסבר על הסרת מילות מילוי אוטומטית\n• השוואה בין שיטות עריכה' },
-    { id: 'titles', label: 'כותרות', content: '' },
+    { id: 'social_post', label: 'פוסט לרשתות חברתיות' },
+    { id: 'youtube_description', label: 'תיאור ליוטיוב' },
+    { id: 'summary', label: 'סיכום' },
+    { id: 'titles', label: 'כותרות' },
+    { id: 'blog', label: 'פוסט בלוג' },
   ]
-  const titles = ['AI ועריכת וידאו: למה אתה עדיין עורך בדרך הישנה?', 'עריכת טקסט = עריכת וידאו: המהפכה כבר כאן', 'איך AI חוסך לנו שעות של עריכה']
+
+  // Local fallback content
+  const localContent: Record<string, string> = {
+    social_post: '🎙️ פרק חדש בפודקאסט!\n\nדיברנו על איך AI משנה את עולם יצירת התוכן.\n\n#AI #פודקאסט #טכנולוגיה',
+    youtube_description: 'בפרק הזה אנחנו צוללים לעומק לנושא עריכת וידאו מבוססת AI.\n\n⏱️ חותמות זמן:\n0:00 פתיחה\n0:35 מהי עריכה מבוססת טקסט?\n1:15 יתרונות הטכנולוגיה',
+    summary: '• דיון על עריכה מבוססת טקסט\n• הסבר על הסרת מילות מילוי אוטומטית\n• השוואה בין שיטות עריכה',
+    titles: '1. AI ועריכת וידאו: למה אתה עדיין עורך בדרך הישנה?\n2. עריכת טקסט = עריכת וידאו: המהפכה כבר כאן\n3. איך AI חוסך לנו שעות של עריכה\n4. המדריך המלא לעריכת וידאו עם AI\n5. מה שלא סיפרו לך על עריכה חכמה',
+    blog: 'עריכת וידאו מבוססת AI הפכה מחלום למציאות...',
+  }
+
+  const handleGenerate = async (type: string) => {
+    setActiveType(type)
+    setIsGenerating(true)
+    setGeneratedContent('')
+
+    const transcriptText = transcript.flatMap((s) => s.words).map((w) => w.text).join(' ')
+
+    if (!transcriptText) {
+      setGeneratedContent(localContent[type] || 'אין תמלול זמין.')
+      setIsGenerating(false)
+      return
+    }
+
+    try {
+      const result = await api.generateContent(transcriptText, type)
+      setGeneratedContent(result.content || '')
+    } catch {
+      // Fallback to local content
+      setGeneratedContent(localContent[type] || 'שגיאה ביצירת תוכן. נסה שוב.')
+    }
+    setIsGenerating(false)
+  }
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(generatedContent).catch(() => {})
+    addToast('התוכן הועתק!', 'success')
+  }
+
+  const handleRetry = () => {
+    if (activeType) handleGenerate(activeType)
+  }
 
   return (
     <div className="space-y-4">
       {!activeType ? (
         <div className="grid grid-cols-1 gap-3">
           {types.map((type) => (
-            <button key={type.id} onClick={() => setActiveType(type.id)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-right transition-all border border-white/[0.06] hover:border-accent-purple/40">
+            <button key={type.id} onClick={() => handleGenerate(type.id)} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-right transition-all border border-white/[0.06] hover:border-accent-purple/40">
               <span className="font-medium text-sm text-text-primary">{type.label}</span>
             </button>
           ))}
         </div>
-      ) : activeType === 'titles' ? (
-        <div className="space-y-3">
-          <button onClick={() => setActiveType(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">← חזרה</button>
-          {titles.map((title, i) => (
-            <div key={i} className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
-              <span className="text-sm text-text-primary">{title}</span>
-              <button onClick={() => { navigator.clipboard.writeText(title).catch(() => {}); addToast('הכותרת הועתקה!', 'success') }} className="p-1.5 bg-white/[0.06] rounded-lg hover:bg-white/[0.1] transition-colors text-text-muted"><Copy size={14} /></button>
-            </div>
-          ))}
-        </div>
       ) : (
         <div className="space-y-4">
-          <button onClick={() => setActiveType(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">← חזרה</button>
+          <button onClick={() => { setActiveType(null); setGeneratedContent('') }} className="text-xs text-text-muted hover:text-text-primary transition-colors">← חזרה</button>
           <h3 className="font-medium text-text-primary">{types.find((t) => t.id === activeType)?.label}</h3>
-          <textarea defaultValue={types.find((t) => t.id === activeType)?.content} className="w-full px-4 py-3 bg-white/[0.04] rounded-xl border border-white/[0.06] text-sm text-text-primary h-48 resize-none focus:outline-none focus:border-accent-purple/30" />
-          <button onClick={() => addToast('התוכן הועתק!', 'success')} className="flex items-center gap-2 px-4 py-2 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-xl text-sm transition-colors border border-accent-purple/10">
-            <Copy size={14} /> העתק
-          </button>
+          {isGenerating ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 size={24} className="animate-spin text-accent-purple" />
+              <span className="text-sm text-text-muted mr-2">יוצר תוכן...</span>
+            </div>
+          ) : (
+            <>
+              <textarea value={generatedContent} onChange={(e) => setGeneratedContent(e.target.value)} className="w-full px-4 py-3 bg-white/[0.04] rounded-xl border border-white/[0.06] text-sm text-text-primary h-48 resize-none focus:outline-none focus:border-accent-purple/30" />
+              <div className="flex gap-2">
+                <button onClick={handleCopy} className="flex items-center gap-2 px-4 py-2 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-xl text-sm transition-colors border border-accent-purple/10">
+                  <Copy size={14} /> העתק
+                </button>
+                <button onClick={handleRetry} className="flex items-center gap-2 px-4 py-2 bg-white/[0.06] hover:bg-white/[0.1] text-text-secondary rounded-xl text-sm transition-colors border border-white/[0.06]">
+                  נסה שוב
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
