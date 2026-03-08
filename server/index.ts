@@ -27,8 +27,16 @@ async function getOpenAI() {
 const app = express()
 const PORT = 3001
 
-// CORS
-app.use(cors({ origin: ['http://localhost:5173', 'http://127.0.0.1:5173'] }))
+// CORS - allow any localhost port
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      callback(null, true)
+    } else {
+      callback(new Error('Not allowed by CORS'))
+    }
+  }
+}))
 
 // JSON body parser
 app.use(express.json({ limit: '50mb' }))
@@ -70,11 +78,21 @@ const esmRequire = createRequire(import.meta.url)
 
 // Get ffmpeg path: prefer ffmpeg-static, fall back to system ffmpeg
 function getFfmpegPath(): string {
+  // Try ffmpeg-static first
   try {
-    const ffmpegStatic = esmRequire('ffmpeg-static') as string
-    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) return ffmpegStatic
+    const staticPath = esmRequire('ffmpeg-static') as string
+    if (staticPath && fs.existsSync(staticPath)) {
+      return staticPath
+    }
   } catch { /* ffmpeg-static not available */ }
-  return 'ffmpeg' // fall back to system ffmpeg
+
+  // Try system ffmpeg
+  try {
+    execSync('ffmpeg -version', { stdio: 'pipe' })
+    return 'ffmpeg'
+  } catch { /* system ffmpeg not available */ }
+
+  throw new Error('FFmpeg not found. Install ffmpeg-static or system ffmpeg.')
 }
 
 // Helper to safely delete a file if it exists
@@ -110,21 +128,26 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
     // Step 1: Convert unsupported formats (like .mov, .avi, .mkv, .wmv) to MP3
     if (!WHISPER_SUPPORTED_FORMATS.includes(ext)) {
-      console.log('[TRANSCRIBE 2] Converting', ext, 'to MP3 using FFmpeg...')
-      console.log('[TRANSCRIBE 2] FFmpeg path:', ffmpegPath)
+      console.log('[CONVERT] Input:', filePath)
+      console.log('[CONVERT] Converting', ext, 'to MP3 using FFmpeg...')
+      console.log('[CONVERT] FFmpeg:', ffmpegPath)
       const mp3Path = filePath.replace(/\.[^.]+$/, '_converted.mp3')
+      console.log('[CONVERT] Output:', mp3Path)
       tempFiles.push(mp3Path)
+      const cmd = `"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -ab 128k -ar 16000 -ac 1 "${mp3Path}" -y`
+      console.log('[CONVERT] Command:', cmd)
       try {
-        execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -ab 128k -ar 16000 -ac 1 "${mp3Path}" -y`, {
+        execSync(cmd, {
           timeout: 300000,
           stdio: ['pipe', 'pipe', 'pipe'],
         })
-        console.log('[TRANSCRIBE 3] Conversion SUCCESS. New file:', mp3Path, 'Size:', (fs.statSync(mp3Path).size / 1024 / 1024).toFixed(1) + 'MB')
+        console.log('[CONVERT] Success! Output size:', fs.statSync(mp3Path).size)
         // Delete original, use converted
         safeUnlink(originalPath)
         filePath = mp3Path
       } catch (convError: any) {
-        console.error('[TRANSCRIBE 3] FFmpeg FAILED:', convError.stderr?.toString() || convError.message)
+        console.error('[CONVERT] FFmpeg stderr:', convError.stderr?.toString())
+        console.error('[CONVERT] FFmpeg error:', convError.message)
         // Fallback: try copying to .mp4
         const mp4Path = originalPath.replace(/\.[^.]+$/, '.mp4')
         try {
@@ -818,12 +841,20 @@ app.listen(PORT, () => {
   console.log(`   DeepL:      ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
 
   // Test FFmpeg availability
-  const ffmpegTestPath = getFfmpegPath()
-  console.log('   FFmpeg path:', ffmpegTestPath)
   try {
-    const version = execSync(`"${ffmpegTestPath}" -version`).toString().split('\n')[0]
+    const ffmpegStaticPath = esmRequire('ffmpeg-static') as string
+    console.log('   FFmpeg binary path:', ffmpegStaticPath)
+    console.log('   FFmpeg exists:', fs.existsSync(ffmpegStaticPath))
+    const version = execSync(`"${ffmpegStaticPath}" -version`).toString().split('\n')[0]
     console.log('   FFmpeg version:', version)
-  } catch {
-    console.error('   FFmpeg NOT FOUND! Conversion will fail.')
+  } catch (e: any) {
+    console.error('   FFmpeg static ERROR:', e.message)
+    console.log('   Trying system ffmpeg...')
+    try {
+      const version = execSync('ffmpeg -version').toString().split('\n')[0]
+      console.log('   System FFmpeg:', version)
+    } catch {
+      console.error('   NO FFMPEG FOUND AT ALL. MOV conversion will fail!')
+    }
   }
 })
