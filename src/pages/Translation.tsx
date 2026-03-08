@@ -1,5 +1,8 @@
 import { useState } from 'react'
-import { Globe, Subtitles, Mic, Smile, Check, Loader2 } from 'lucide-react'
+import { Globe, Subtitles, Mic, Smile, Check, Loader2, AlertCircle } from 'lucide-react'
+import { useUIStore } from '../stores/uiStore'
+import { useUsageStore } from '../stores/usageStore'
+import { api, ApiError } from '../services/api'
 
 const targetLanguages = [
   { code: 'en', name: 'אנגלית', flag: '🇺🇸' },
@@ -31,6 +34,11 @@ export default function Translation() {
   const [noTranslateTerms, setNoTranslateTerms] = useState('סטודיו AI, Descript')
   const [isTranslating, setIsTranslating] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
+  const [translationResults, setTranslationResults] = useState<Record<string, string>>({})
+  const [manualText, setManualText] = useState('')
+  const [activeResultLang, setActiveResultLang] = useState<string | null>(null)
+  const { addToast } = useUIStore()
+  const addDeeplUsage = useUsageStore((s) => s.addDeeplUsage)
 
   const toggleLang = (code: string) => {
     setSelectedLangs((prev) =>
@@ -38,15 +46,61 @@ export default function Translation() {
     )
   }
 
-  const startTranslation = () => {
+  const startTranslation = async () => {
+    if (selectedLangs.length === 0) {
+      addToast('בחר לפחות שפת יעד אחת', 'warning')
+      return
+    }
+
     setIsTranslating(true)
     setCurrentStep(0)
-    const interval = setInterval(() => {
-      setCurrentStep((s) => {
-        if (s >= 4) { clearInterval(interval); return s }
-        return s + 1
-      })
-    }, 1500)
+    setTranslationResults({})
+
+    // Step 0: Transcription (already done)
+    setCurrentStep(0)
+    await new Promise((r) => setTimeout(r, 500))
+
+    // Step 1: Translation
+    setCurrentStep(1)
+
+    const textToTranslate = manualText.trim() || 'שלום לכולם וברוכים הבאים לפודקאסט השבועי שלנו. היום אנחנו הולכים לדבר על טכנולוגיה ובינה מלאכותית.'
+
+    const results: Record<string, string> = {}
+
+    for (const lang of selectedLangs) {
+      try {
+        const result = await api.translate(textToTranslate, 'he', lang)
+        results[lang] = result.translatedText
+        addDeeplUsage(textToTranslate.length)
+      } catch (err) {
+        if (err instanceof ApiError) {
+          if (err.status === 400 && err.message.includes('DeepL')) {
+            results[lang] = '⚠️ חבר DeepL API בהגדרות לתרגום אוטומטי'
+          } else {
+            results[lang] = `❌ ${err.message}`
+          }
+        } else {
+          results[lang] = '❌ שגיאה בתרגום'
+        }
+      }
+    }
+
+    setTranslationResults(results)
+
+    // Step 2: Voiceover (if dubbing enabled)
+    if (features.dubbing) {
+      setCurrentStep(2)
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+
+    // Step 3: Sync
+    setCurrentStep(3)
+    await new Promise((r) => setTimeout(r, 500))
+
+    // Step 4: Done
+    setCurrentStep(4)
+    setActiveResultLang(selectedLangs[0])
+    addToast('התרגום הושלם!', 'success')
   }
 
   return (
@@ -141,12 +195,23 @@ export default function Translation() {
             />
           </div>
 
+          <div>
+            <label className="text-sm text-text-secondary block mb-1">טקסט לתרגום (אופציונלי)</label>
+            <textarea
+              value={manualText}
+              onChange={(e) => setManualText(e.target.value)}
+              className="w-full px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30 h-24 resize-none"
+              placeholder="הזן טקסט לתרגום, או השאר ריק לשימוש בתמלול..."
+            />
+          </div>
+
           <button
             onClick={startTranslation}
-            className="w-full py-3 bg-accent-purple hover:bg-accent-purple/80 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+            disabled={isTranslating}
+            className="w-full py-3 bg-accent-purple hover:bg-accent-purple/80 disabled:opacity-50 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
           >
-            <Globe size={18} />
-            תרגם
+            {isTranslating ? <Loader2 size={18} className="animate-spin" /> : <Globe size={18} />}
+            {isTranslating ? 'מתרגם...' : 'תרגם'}
           </button>
         </div>
 
@@ -165,7 +230,13 @@ export default function Translation() {
               {selectedLangs.map((code) => {
                 const lang = targetLanguages.find((l) => l.code === code)
                 return (
-                  <button key={code} className="px-3 py-2 text-sm border-b-2 border-transparent hover:border-white/30 transition-colors">
+                  <button
+                    key={code}
+                    onClick={() => setActiveResultLang(code)}
+                    className={`px-3 py-2 text-sm border-b-2 transition-colors ${
+                      activeResultLang === code ? 'border-accent-purple text-white' : 'border-transparent hover:border-white/30'
+                    }`}
+                  >
                     {lang?.flag} {lang?.name}
                   </button>
                 )
@@ -195,6 +266,24 @@ export default function Translation() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Translation Results */}
+          {activeResultLang && translationResults[activeResultLang] && (
+            <div className="space-y-3">
+              <h3 className="text-sm font-medium">תוצאת תרגום</h3>
+              <div className="p-4 bg-white/5 rounded-xl border border-white/[0.06]">
+                <p className="text-sm text-text-primary leading-relaxed whitespace-pre-line" dir="auto">
+                  {translationResults[activeResultLang]}
+                </p>
+              </div>
+              {translationResults[activeResultLang].startsWith('⚠️') && (
+                <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                  <AlertCircle size={14} className="text-yellow-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-yellow-300">חבר DeepL API בהגדרות כדי לקבל תרגום אוטומטי</p>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -1,7 +1,10 @@
 import { useState, useRef } from 'react'
-import { Search, X, Upload, Settings, Link2 } from 'lucide-react'
+import { Search, X, Upload, Settings, Link2, Loader2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useEditorStore } from '../../stores/editorStore'
+import { useUIStore } from '../../stores/uiStore'
+import { useUsageStore } from '../../stores/usageStore'
+import { api, ApiError } from '../../services/api'
 
 const speakerColors: Record<string, string> = {
   'border-blue-400': 'bg-blue-500',
@@ -20,11 +23,15 @@ function getSpeakerBg(color: string): string {
 
 export default function TranscriptPanel() {
   const navigate = useNavigate()
-  const { transcript, currentTime, setCurrentTime, transcriptMode, setTranscriptMode, isDemo, mediaBlobUrl, setTranscript } = useEditorStore()
+  const { transcript, currentTime, setCurrentTime, transcriptMode, setTranscriptMode, isDemo, mediaBlobUrl, mediaFile, setTranscript } = useEditorStore()
+  const { addToast } = useUIStore()
+  const addWhisperUsage = useUsageStore((s) => s.addWhisperUsage)
   const totalWords = transcript.reduce((sum, seg) => sum + seg.words.length, 0)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [manualText, setManualText] = useState('')
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const [transcribeProgress, setTranscribeProgress] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
 
   const handleImportTranscript = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -54,8 +61,94 @@ export default function TranscriptPanel() {
     setTranscript([{ speaker: 'דובר', color: 'border-blue-400', startTime: '00:00', words }])
   }
 
+  const handleAutoTranscribe = async () => {
+    if (!mediaFile) {
+      addToast('אין קובץ מדיה לתמלול.', 'warning')
+      return
+    }
+    setIsTranscribing(true)
+    setTranscribeProgress('מתמלל את הקובץ...')
+    try {
+      const result = await api.transcribe(mediaFile)
+
+      // Track usage
+      if (result.duration) {
+        addWhisperUsage(result.duration / 60)
+      }
+
+      // Convert API response to editor transcript format
+      const fillerList = ['אממ', 'אההה', 'כאילו', 'נו', 'בעצם', 'אז', 'סתם', 'יודע', 'יודעת']
+      const speakerColors = ['border-blue-400', 'border-green-400', 'border-purple-400', 'border-orange-400']
+
+      if (result.segments && result.segments.length > 0) {
+        const segments = result.segments.map((seg: any, i: number) => {
+          const words = (seg.words || []).map((w: any) => {
+            const clean = (w.word || '').replace(/[.,!?]/g, '')
+            return {
+              text: w.word || '',
+              start: w.start || 0,
+              end: w.end || 0,
+              isFiller: fillerList.includes(clean),
+            }
+          })
+          // If segment has no words, create from text
+          if (words.length === 0 && seg.text) {
+            const textWords = seg.text.split(/\s+/).filter(Boolean)
+            const duration = (seg.end || 0) - (seg.start || 0)
+            const wordDuration = duration / textWords.length
+            textWords.forEach((w: string, wi: number) => {
+              const clean = w.replace(/[.,!?]/g, '')
+              words.push({
+                text: w,
+                start: (seg.start || 0) + wi * wordDuration,
+                end: (seg.start || 0) + (wi + 1) * wordDuration,
+                isFiller: fillerList.includes(clean),
+              })
+            })
+          }
+          const mins = Math.floor((seg.start || 0) / 60)
+          const secs = Math.floor((seg.start || 0) % 60)
+          return {
+            speaker: seg.speaker || `דובר ${(i % 2) + 1}`,
+            color: speakerColors[i % speakerColors.length],
+            startTime: `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`,
+            words,
+          }
+        }).filter((s: any) => s.words.length > 0)
+
+        setTranscript(segments)
+        addToast(`התמלול הושלם! ${segments.reduce((s: number, seg: any) => s + seg.words.length, 0)} מילים`, 'success')
+      } else if (result.text) {
+        // Fallback: use full text with top-level words
+        const words = result.words?.length
+          ? result.words.map((w: any) => {
+              const clean = (w.word || '').replace(/[.,!?]/g, '')
+              return { text: w.word, start: w.start || 0, end: w.end || 0, isFiller: fillerList.includes(clean) }
+            })
+          : result.text.split(/\s+/).map((w: string, i: number) => ({
+              text: w, start: i * 0.5, end: (i + 1) * 0.5, isFiller: fillerList.includes(w.replace(/[.,!?]/g, '')),
+            }))
+        setTranscript([{ speaker: 'דובר 1', color: 'border-blue-400', startTime: '00:00', words }])
+        addToast('התמלול הושלם!', 'success')
+      }
+
+      // Try speaker detection
+      setTranscribeProgress('מזהה דוברים...')
+      try {
+        await api.detectSpeakers(result.text, result.segments)
+      } catch {
+        // Speaker detection is optional
+      }
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'שגיאה בתמלול. נסה שוב.'
+      addToast(message, 'error')
+    }
+    setIsTranscribing(false)
+    setTranscribeProgress('')
+  }
+
   const hasRealMedia = !!mediaBlobUrl && !isDemo
-  const showApiPrompt = transcriptMode === 'real' && transcript.length === 0 && hasRealMedia
+  const showApiPrompt = transcriptMode === 'real' && transcript.length === 0 && hasRealMedia && !isTranscribing
 
   return (
     <div className="flex flex-col h-full bg-bg-panel rounded-xl border border-white/[0.06] overflow-hidden">
@@ -91,15 +184,30 @@ export default function TranscriptPanel() {
       )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {isTranscribing && (
+          <div className="text-center py-12 space-y-4">
+            <Loader2 size={32} className="mx-auto text-accent-purple animate-spin" />
+            <p className="text-sm text-text-primary font-medium">{transcribeProgress || 'מתמלל...'}</p>
+            <p className="text-xs text-text-muted">זה עלול לקחת כמה דקות</p>
+          </div>
+        )}
+
         {showApiPrompt && (
           <div className="space-y-4">
             <div className="p-4 bg-accent-purple/5 border border-accent-purple/20 rounded-xl text-center space-y-3">
               <Link2 size={24} className="mx-auto text-accent-purple" />
               <p className="text-sm text-text-primary font-medium">חבר API של OpenAI Whisper כדי לקבל תמלול אמיתי</p>
               <p className="text-xs text-text-muted">ממתין לחיבור שירות תמלול...</p>
-              <button onClick={() => navigate('/settings')} className="inline-flex items-center gap-1.5 px-4 py-2 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-sm transition-colors">
-                <Settings size={14} /> הגדרות API
-              </button>
+              <div className="flex items-center justify-center gap-2">
+                {mediaFile && (
+                  <button onClick={handleAutoTranscribe} className="inline-flex items-center gap-1.5 px-4 py-2 bg-accent-purple hover:bg-accent-purple/90 text-white rounded-lg text-sm transition-colors font-medium">
+                    תמלל אוטומטית
+                  </button>
+                )}
+                <button onClick={() => navigate('/settings')} className="inline-flex items-center gap-1.5 px-4 py-2 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-sm transition-colors">
+                  <Settings size={14} /> הגדרות API
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               <p className="text-xs text-text-muted">או הזן תמלול ידנית:</p>
