@@ -106,24 +106,36 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
     const ffmpegPath = getFfmpegPath()
 
-    // Step 1: Convert unsupported formats (like .mov, .avi, .mkv) to MP4
+    // Step 1: Convert unsupported formats (like .mov, .avi, .mkv) to MP3
     if (!WHISPER_SUPPORTED_FORMATS.includes(ext)) {
-      console.log('Converting to MP4...')
-      const convertedPath = filePath.replace(/\.[^.]+$/, '.mp4')
-      tempFiles.push(convertedPath)
+      console.log('Format not supported by Whisper. Converting to MP3...')
+      const mp3Path = filePath.replace(/\.[^.]+$/, '.mp3')
+      tempFiles.push(mp3Path)
       try {
-        execSync(`"${ffmpegPath}" -i "${filePath}" -c copy "${convertedPath}" -y`, {
-          timeout: 300000, // 5 min timeout
+        execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -q:a 4 "${mp3Path}" -y`, {
+          timeout: 120000,
           stdio: 'pipe',
         })
-        filePath = convertedPath
-        console.log('Conversion complete:', convertedPath)
+        console.log('Conversion done:', mp3Path)
+        filePath = mp3Path
+        // Delete original
+        safeUnlink(originalPath)
       } catch (convError: any) {
-        console.error('FFmpeg conversion error:', convError.message)
-        tempFiles.forEach(safeUnlink)
-        return res.status(500).json({
-          message: 'שגיאה בהמרת הקובץ. וודא שהפורמט תקין ו-ffmpeg מותקן.',
-        })
+        console.error('FFmpeg conversion failed:', convError.message)
+        // Try alternative: rename to .mp4 (MOV is often compatible)
+        const mp4Path = originalPath.replace(/\.[^.]+$/, '.mp4')
+        try {
+          fs.renameSync(originalPath, mp4Path)
+          filePath = mp4Path
+          tempFiles.push(mp4Path)
+          console.log('Renamed to mp4:', mp4Path)
+        } catch (renameError: any) {
+          console.error('Rename also failed:', renameError.message)
+          tempFiles.forEach(safeUnlink)
+          return res.status(500).json({
+            message: 'שגיאה בהמרת הקובץ. וודא שהפורמט תקין ו-ffmpeg מותקן.',
+          })
+        }
       }
     }
 
@@ -132,17 +144,18 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     const currentSize = fs.statSync(filePath).size
 
     if (currentSize > WHISPER_MAX) {
-      console.log('Extracting audio (file too large)...', (currentSize / 1024 / 1024).toFixed(1) + 'MB')
-      const audioPath = filePath.replace(/\.[^.]+$/, '-audio.mp3')
-      tempFiles.push(audioPath)
+      console.log('File too large (' + (currentSize / 1024 / 1024).toFixed(1) + 'MB). Extracting audio...')
+      const smallPath = filePath.replace(/\.[^.]+$/, '_small.mp3')
+      tempFiles.push(smallPath)
       try {
-        execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -q:a 4 "${audioPath}" -y`, {
-          timeout: 300000,
+        execSync(`"${ffmpegPath}" -i "${filePath}" -vn -acodec libmp3lame -ab 64k -ar 16000 -ac 1 "${smallPath}" -y`, {
+          timeout: 120000,
           stdio: 'pipe',
         })
-        filePath = audioPath
+        safeUnlink(filePath)
+        filePath = smallPath
         const audioSize = fs.statSync(filePath).size
-        console.log('Audio extracted:', (audioSize / 1024 / 1024).toFixed(1) + 'MB')
+        console.log('Audio extracted:', smallPath, (audioSize / 1024 / 1024).toFixed(1) + 'MB')
 
         if (audioSize > WHISPER_MAX) {
           tempFiles.forEach(safeUnlink)
@@ -151,7 +164,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
           })
         }
       } catch (audioError: any) {
-        console.error('Audio extraction error:', audioError.message)
+        console.error('Audio extraction failed:', audioError.message)
         tempFiles.forEach(safeUnlink)
         return res.status(500).json({
           message: 'שגיאה בחילוץ אודיו מהקובץ. וודא ש-ffmpeg מותקן.',
@@ -159,7 +172,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       }
     }
 
-    console.log('Sending to Whisper...', filePath)
+    console.log('Sending to Whisper:', filePath)
 
     const transcription = await ai.audio.transcriptions.create({
       model: 'whisper-1',
@@ -186,7 +199,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     // Also use top-level words if available
     const allWords = transcription.words || []
 
-    console.log('Transcription complete:', segments.length, 'segments,', (transcription.text || '').length, 'chars')
+    console.log('Transcription success! Length:', (transcription.text || '').length)
 
     // Clean up ALL temp files
     tempFiles.forEach(safeUnlink)
