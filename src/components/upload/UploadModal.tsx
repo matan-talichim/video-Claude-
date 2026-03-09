@@ -50,7 +50,6 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [nameError, setNameError] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [completedProjects, setCompletedProjects] = useState<Array<{ id: string; name: string }>>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addUploadFile = useUploadsStore((s) => s.addFile)
   const simulateUpload = useUploadsStore((s) => s.simulateUpload)
@@ -126,78 +125,42 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
     setIsUploading(true)
     setUploadProgress(0)
 
-    const projectIds: string[] = []
+    // Always create ONE project with ALL files
+    const videosData = files.map((file) => ({
+      file: file.nativeFile,
+      blobUrl: URL.createObjectURL(file.nativeFile),
+      mediaType: file.type,
+    }))
 
-    if (mergeEnabled || files.length === 1) {
-      // Single project from first file (or merged)
-      const primaryFile = files[0]
-      const blobUrl = URL.createObjectURL(primaryFile.nativeFile)
-      const mediaType = primaryFile.type
+    const projectId = addProject({
+      name: projectName.trim(),
+      mediaFile: files[0]?.nativeFile,
+      mediaBlobUrl: videosData[0]?.blobUrl,
+      mediaType: files[0]?.type,
+      source: 'upload',
+      videos: videosData,
+    })
 
-      const projectId = addProject({
-        name: projectName.trim(),
-        mediaFile: primaryFile.nativeFile,
-        mediaBlobUrl: blobUrl,
-        mediaType,
-        source: 'upload',
-      })
-      projectIds.push(projectId)
-
+    // Track uploads
+    files.forEach((file) => {
       const uploadId = addUploadFile({
-        name: primaryFile.name,
-        size: primaryFile.size,
-        sizeBytes: primaryFile.sizeBytes,
-        type: primaryFile.type,
+        name: file.name,
+        size: file.size,
+        sizeBytes: file.sizeBytes,
+        type: file.type,
         source: 'upload',
         status: 'waiting',
         progress: 0,
         thumbnailGradient: '',
         projectId,
-        file: primaryFile.nativeFile,
-        blobUrl,
+        file: file.nativeFile,
+        blobUrl: URL.createObjectURL(file.nativeFile),
       })
       simulateUpload(uploadId)
-    } else {
-      // Create separate project for EACH file
-      files.forEach((file, idx) => {
-        const blobUrl = URL.createObjectURL(file.nativeFile)
-        const mediaType = file.type
-        const name = files.length > 1
-          ? `${projectName.trim()} (${idx + 1})`
-          : projectName.trim()
-
-        const projectId = addProject({
-          name,
-          mediaFile: file.nativeFile,
-          mediaBlobUrl: blobUrl,
-          mediaType,
-          source: 'upload',
-        })
-        projectIds.push(projectId)
-
-        const uploadId = addUploadFile({
-          name: file.name,
-          size: file.size,
-          sizeBytes: file.sizeBytes,
-          type: file.type,
-          source: 'upload',
-          status: 'waiting',
-          progress: 0,
-          thumbnailGradient: '',
-          projectId,
-          file: file.nativeFile,
-          blobUrl,
-        })
-        simulateUpload(uploadId)
-      })
-    }
+    })
 
     // Simulate upload progress with visual feedback
     let progress = 0
-    const projectNames = files.map((_f, i) => {
-      if (mergeEnabled || files.length === 1) return projectName.trim()
-      return files.length > 1 ? `${projectName.trim()} (${i + 1})` : projectName.trim()
-    })
     const progressInterval = setInterval(() => {
       progress += 8
       setUploadProgress(Math.min(progress, 100))
@@ -206,17 +169,12 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
         setTimeout(() => {
           setIsUploading(false)
           setUploadProgress(0)
-          // If multiple separate projects, show completion dialog
-          if (!mergeEnabled && files.length > 1) {
-            const projects = projectIds.map((id, i) => ({ id, name: projectNames[i] || `פרויקט ${i + 1}` }))
-            setCompletedProjects(projects)
-          } else {
-            // Single project - navigate directly
-            setFiles([])
-            setProjectName('')
-            onClose()
-            if (projectIds.length > 0) navigate(`/editor/${projectIds[0]}`)
-          }
+          setFiles([])
+          setProjectName('')
+          setMergeEnabled(false)
+          setTransition('none')
+          onClose()
+          navigate(`/editor/${projectId}`)
         }, 500)
       }
     }, 200)
@@ -243,7 +201,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
               <h3 className="text-lg font-medium text-text-primary mb-2">
                 {uploadProgress < 100 ? 'מעלה...' : 'מעבד...'}
               </h3>
-              <p className="text-sm text-text-muted mb-4">{projectName}</p>
+              <p className="text-sm text-text-muted mb-4">{projectName} ({files.length} קבצים)</p>
               <div className="max-w-md mx-auto">
                 <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden">
                   <div
@@ -257,41 +215,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
           </div>
         )}
 
-        {/* Completion dialog for multiple projects */}
-        {completedProjects.length > 0 && !isUploading && (
-          <div className="space-y-4">
-            <div className="text-center py-4">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-success/10 flex items-center justify-center">
-                <CloudUpload size={32} className="text-success" />
-              </div>
-              <h3 className="text-lg font-medium text-text-primary mb-1">
-                הועלו {completedProjects.length} פרויקטים בהצלחה!
-              </h3>
-            </div>
-            <div className="space-y-2">
-              {completedProjects.map((proj, i) => (
-                <div key={proj.id} className="flex items-center gap-3 p-3 rounded-xl border border-white/[0.06] bg-bg-card hover:border-white/[0.12] transition-all">
-                  <span className="w-6 h-6 rounded-full bg-accent-purple/10 flex items-center justify-center text-xs text-accent-purple font-mono">{i + 1}</span>
-                  <span className="flex-1 text-sm text-text-primary">{proj.name}</span>
-                  <button
-                    onClick={() => { setCompletedProjects([]); setFiles([]); setProjectName(''); onClose(); navigate(`/editor/${proj.id}`) }}
-                    className="px-3 py-1.5 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-xs transition-colors"
-                  >
-                    פתח
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button
-              onClick={() => { setCompletedProjects([]); setFiles([]); setProjectName(''); onClose(); navigate(`/editor/${completedProjects[0].id}`) }}
-              className="w-full py-3 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20"
-            >
-              פתח את הראשון
-            </button>
-          </div>
-        )}
-
-        {!isUploading && completedProjects.length === 0 && (
+        {!isUploading && (
           <>
             {/* Drop zone */}
             <div
@@ -379,9 +303,13 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
               </div>
             )}
 
-            {/* Merge options */}
+            {/* Merge options - informational: toggle controls merge behavior, not project creation */}
             {files.length >= 2 && (
               <div className="bg-bg-card rounded-xl p-4 border border-white/[0.06] space-y-3">
+                <div className="flex items-center gap-2 text-xs text-accent-blue">
+                  <Merge size={14} />
+                  <span>כל הקבצים ייכנסו לפרויקט אחד</span>
+                </div>
                 <label className="flex items-center gap-3 cursor-pointer">
                   <button
                     onClick={() => setMergeEnabled(!mergeEnabled)}
@@ -419,9 +347,10 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
                         <option value="crossDissolve">Cross dissolve</option>
                       </select>
                     </div>
+                    <p className="text-xs text-text-muted">האיחוד יתבצע בעורך לאחר ההעלאה</p>
                   </div>
                 ) : (
-                  <p className="text-xs text-text-muted pr-6">כל קובץ ייפתח כפרויקט נפרד</p>
+                  <p className="text-xs text-text-muted pr-6">כל קובץ יופיע בנפרד בסרגל המדיה של הפרויקט</p>
                 )}
               </div>
             )}
