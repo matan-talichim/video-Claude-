@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Minimize, Subtitles, Music, Film, ChevronsRight, ChevronsLeft } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import type { CaptionStyle, BRollItem } from '../../stores/editorStore'
@@ -15,6 +15,7 @@ export default function VideoPanel() {
   } = useEditorStore()
 
   const trackStates = useEditorStore((s) => s.trackStates)
+  const effects = useEditorStore((s) => s.editorEffects)
   const videoRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -264,6 +265,28 @@ export default function VideoPanel() {
   const hasMedia = !!mediaBlobUrl
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0
 
+  // Reframe aspect ratio style
+  const getAspectStyle = useMemo((): React.CSSProperties => {
+    const ratio = effects?.reframe?.ratio || '16:9'
+    switch (ratio) {
+      case '9:16': return { maxWidth: '280px', margin: '0 auto' }
+      case '1:1': return { maxWidth: '400px', aspectRatio: '1/1', margin: '0 auto' }
+      case '4:5': return { maxWidth: '360px', aspectRatio: '4/5', margin: '0 auto' }
+      case '4:3': return { aspectRatio: '4/3' }
+      case '21:9': return { aspectRatio: '21/9' }
+      default: return {}
+    }
+  }, [effects?.reframe?.ratio])
+
+  // Glass blur filter for video
+  const videoFilterStyle = useMemo((): React.CSSProperties => {
+    const blur = effects?.glassBlur
+    if (blur?.enabled) {
+      return { filter: `blur(${blur.intensity || 5}px)` }
+    }
+    return {}
+  }, [effects?.glassBlur])
+
   return (
     <div
       ref={containerRef}
@@ -272,19 +295,22 @@ export default function VideoPanel() {
     >
       <div className="flex-1 bg-bg-deepest flex items-center justify-center relative overflow-hidden">
         {hasMedia && mediaType === 'video' && (
-          <video
-            ref={videoRef}
-            src={mediaBlobUrl!}
-            className="w-full h-full object-contain"
-            style={{
-              opacity: trackStates.video.visible ? 1 : 0,
-            }}
-            onTimeUpdate={handleTimeUpdate}
-            onLoadedMetadata={handleLoadedMetadata}
-            onEnded={handleEnded}
-            playsInline
-            muted={trackStates.audio.muted}
-          />
+          <div className="relative w-full h-full flex items-center justify-center" style={getAspectStyle}>
+            <video
+              ref={videoRef}
+              src={mediaBlobUrl!}
+              className="w-full h-full object-contain"
+              style={{
+                opacity: trackStates.video.visible ? 1 : 0,
+                ...videoFilterStyle,
+              }}
+              onTimeUpdate={handleTimeUpdate}
+              onLoadedMetadata={handleLoadedMetadata}
+              onEnded={handleEnded}
+              playsInline
+              muted={trackStates.audio.muted}
+            />
+          </div>
         )}
         {hasMedia && mediaType === 'audio' && (
           <>
@@ -301,6 +327,28 @@ export default function VideoPanel() {
           <BRollOverlay key={broll.id} item={broll} currentTime={currentTime}
             isSelected={selectedBRollId === broll.id} onSelect={() => setSelectedBRollId(broll.id)} />
         ))}
+
+        {/* Effect badges - top left */}
+        <div className="absolute top-3 left-3 flex flex-col gap-1 z-20 pointer-events-none">
+          {effects?.audioEnhanced && (
+            <span className="bg-teal-500/80 text-white text-[10px] px-2 py-0.5 rounded">🎵 אודיו משופר</span>
+          )}
+          {effects?.eyeContact && (
+            <span className="bg-green-500/80 text-white text-[10px] px-2 py-0.5 rounded">👁 קשר עין</span>
+          )}
+          {effects?.greenScreen?.enabled && (
+            <span className="bg-blue-500/80 text-white text-[10px] px-2 py-0.5 rounded">🟢 {effects.greenScreen.background}</span>
+          )}
+          {effects?.centerSpeaker && (
+            <span className="bg-purple-500/80 text-white text-[10px] px-2 py-0.5 rounded">🎯 מרכוז דובר</span>
+          )}
+          {effects?.reframe?.ratio && effects.reframe.ratio !== '16:9' && (
+            <span className="bg-orange-500/80 text-white text-[10px] px-2 py-0.5 rounded">📐 {effects.reframe.ratio}</span>
+          )}
+          {effects?.glassBlur?.enabled && (
+            <span className="bg-pink-500/80 text-white text-[10px] px-2 py-0.5 rounded">🌀 טשטוש</span>
+          )}
+        </div>
 
         <div ref={skipFadeRef} className="absolute inset-0 bg-black pointer-events-none z-30 transition-opacity duration-100" style={{ opacity: 0 }} />
 

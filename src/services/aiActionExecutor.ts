@@ -54,6 +54,7 @@ export async function executeAiActions(
               prompt,
               displayMode: action.params.position || 'fullscreen',
             })
+            store.addAppliedEdit(`B-Roll: ${prompt.slice(0, 30)}`)
             results.push({ action: 'add_broll', success: true, detail: prompt })
           } catch {
             results.push({ action: 'add_broll', success: false, error: 'שגיאה ביצירת תמונה' })
@@ -100,6 +101,7 @@ export async function executeAiActions(
           store.setCaptionStyle({ preset: style as any })
           store.generateCaptionsFromTranscript()
           store.setShowCaptions(true)
+          store.addAppliedEdit(`כתוביות ${style === 'modern' ? 'מודרניות' : style === 'karaoke' ? 'קריוקי' : style === 'classic' ? 'קלאסיות' : 'מינימליות'}`)
           results.push({ action: 'add_captions', success: true })
           break
         }
@@ -118,6 +120,7 @@ export async function executeAiActions(
 
         case 'remove_filler_words': {
           const result = store.removeFillerWords()
+          store.addAppliedEdit(`הסרת ${result.totalRemoved} מילות מילוי`)
           results.push({ action: 'remove_filler_words', success: true, count: result.totalRemoved })
           break
         }
@@ -219,6 +222,7 @@ export async function executeAiActions(
           const threshold = action.params.threshold || 1.0
           const keepDuration = action.params.keepDuration || 0.3
           const silenceResult = store.shortenSilences(threshold, keepDuration)
+          store.addAppliedEdit(`קיצור ${silenceResult.count} שתיקות`)
           results.push({
             action: 'shorten_silences',
             success: true,
@@ -230,6 +234,7 @@ export async function executeAiActions(
 
         case 'enhance_audio': {
           store.setEditorEffect('audioEnhanced', true)
+          store.addAppliedEdit('שיפור אודיו')
           results.push({ action: 'enhance_audio', success: true, detail: 'האודיו שופר' })
           break
         }
@@ -237,12 +242,14 @@ export async function executeAiActions(
         case 'eye_contact': {
           const enabled = action.params.enabled !== undefined ? action.params.enabled : true
           store.setEditorEffect('eyeContact', enabled)
+          if (enabled) store.addAppliedEdit('קשר עין')
           results.push({ action: 'eye_contact', success: true, detail: enabled ? 'קשר עין הופעל' : 'קשר עין כובה' })
           break
         }
 
         case 'green_screen': {
           store.setEditorEffect('greenScreen', { enabled: true, background: action.params.background || 'office' })
+          store.addAppliedEdit('החלפת רקע')
           results.push({ action: 'green_screen', success: true, detail: 'רקע הוחלף' })
           break
         }
@@ -256,6 +263,7 @@ export async function executeAiActions(
 
         case 'reframe': {
           store.setEditorEffect('reframe', { ratio: action.params.ratio || '16:9' })
+          store.addAppliedEdit(`מסגור ${action.params.ratio || '16:9'}`)
           results.push({ action: 'reframe', success: true, detail: `פורמט שונה ל-${action.params.ratio || '16:9'}` })
           break
         }
