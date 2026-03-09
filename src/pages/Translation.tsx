@@ -65,7 +65,12 @@ export default function Translation() {
     // Step 1: Translation
     setCurrentStep(1)
 
-    const textToTranslate = manualText.trim() || 'שלום לכולם וברוכים הבאים לפודקאסט השבועי שלנו. היום אנחנו הולכים לדבר על טכנולוגיה ובינה מלאכותית.'
+    const textToTranslate = manualText.trim()
+    if (!textToTranslate) {
+      addToast('הזן טקסט לתרגום', 'warning')
+      setIsTranslating(false)
+      return
+    }
 
     const results: Record<string, string> = {}
 

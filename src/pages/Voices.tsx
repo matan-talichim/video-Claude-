@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Play, Pencil, Trash2, Circle, Check, AlertCircle, Mic } from 'lucide-react'
+import { Plus, Play, Circle, Check, AlertCircle, Mic } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import Modal from '../components/Modal'
 import { useApiStatusStore } from '../stores/apiStatusStore'

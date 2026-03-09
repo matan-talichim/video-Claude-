@@ -11,17 +11,9 @@ const tabs = [
   { id: 'integrations', label: 'אינטגרציות', icon: Plug },
 ]
 
-const teamMembers = [
-  { name: 'מתן כהן', email: 'matan@example.com', role: 'Admin', avatar: 'מכ' },
-  { name: 'שירה לוי', email: 'shira@example.com', role: 'Editor', avatar: 'של' },
-  { name: 'דניאל אברהם', email: 'daniel@example.com', role: 'Viewer', avatar: 'דא' },
-]
+const teamMembers: { name: string; email: string; role: string; avatar: string }[] = []
 
-const billingHistory = [
-  { date: '01/03/2026', amount: '$24.00', status: 'שולם' },
-  { date: '01/02/2026', amount: '$24.00', status: 'שולם' },
-  { date: '01/01/2026', amount: '$24.00', status: 'שולם' },
-]
+const billingHistory: { date: string; amount: string; status: string }[] = []
 
 const roleBadgeColors: Record<string, string> = {
   Admin: 'bg-purple-500/20 text-purple-300',
@@ -201,7 +193,9 @@ export default function Settings() {
               <table className="w-full text-sm">
                 <thead><tr className="text-text-muted border-b border-white/[0.06]"><th className="text-right p-2">תאריך</th><th className="text-right p-2">סכום</th><th className="text-right p-2">סטטוס</th></tr></thead>
                 <tbody>
-                  {billingHistory.map((item, i) => (
+                  {billingHistory.length === 0 ? (
+                    <tr><td colSpan={3} className="p-4 text-center text-text-muted text-xs">אין היסטוריית חיובים</td></tr>
+                  ) : billingHistory.map((item, i) => (
                     <tr key={i} className="border-b border-white/[0.06]"><td className="p-2">{item.date}</td><td className="p-2">{item.amount}</td><td className="p-2 text-green-400">{item.status}</td></tr>
                   ))}
                 </tbody>
@@ -213,7 +207,13 @@ export default function Settings() {
         {activeTab === 'team' && (
           <div className="space-y-6">
             <div className="space-y-3">
-              {teamMembers.map((member, i) => (
+              {teamMembers.length === 0 ? (
+                <div className="text-center py-8 space-y-2">
+                  <Users size={32} className="mx-auto text-text-muted opacity-30" />
+                  <p className="text-sm text-text-muted">אין חברי צוות</p>
+                  <p className="text-xs text-text-muted">הוסף חברי צוות לעבודה משותפת</p>
+                </div>
+              ) : teamMembers.map((member, i) => (
                 <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent-purple to-accent-blue flex items-center justify-center text-xs font-bold">{member.avatar}</div>

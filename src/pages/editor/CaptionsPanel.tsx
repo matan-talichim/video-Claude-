@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Subtitles, Type, Palette, AlignCenter, AlignRight, AlignLeft, Bold, Italic, ChevronDown, Sparkles } from 'lucide-react'
-import { useEditorStore, CaptionStyle } from '../../stores/editorStore'
+import { Subtitles, AlignCenter, AlignRight, AlignLeft, Bold, Italic, Sparkles } from 'lucide-react'
+import { useEditorStore } from '../../stores/editorStore'
+import type { CaptionStyle } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 
 const presets: Array<{ id: CaptionStyle['preset']; label: string; desc: string }> = [

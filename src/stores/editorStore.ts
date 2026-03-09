@@ -54,11 +54,18 @@ export interface BRollItem {
   prompt?: string
 }
 
+export interface DeletedRegion {
+  startTime: number
+  endTime: number
+  description?: string
+}
+
 export interface EditHistoryEntry {
   action: string
   description: string
   timestamp: number
   previousTranscript?: Segment[]
+  previousDeletedRegions?: DeletedRegion[]
 }
 
 export interface SpeakerInfo {
@@ -91,6 +98,7 @@ interface EditorState {
   lastSavedAt: number | null
   isDirty: boolean
   speakers: SpeakerInfo[]
+  deletedRegions: DeletedRegion[]
   // Editor tool settings
   editorEffects: Record<string, any>
 
@@ -118,6 +126,9 @@ interface EditorState {
   markSaved: () => void
   setIsDirty: (dirty: boolean) => void
   setSpeakers: (speakers: SpeakerInfo[]) => void
+  addDeletedRegion: (region: DeletedRegion) => void
+  removeDeletedRegion: (startTime: number, endTime: number) => void
+  clearDeletedRegions: () => void
   setEditorEffect: (key: string, value: any) => void
   loadProject: (opts: {
     id: string
@@ -129,6 +140,7 @@ interface EditorState {
     transcript?: Segment[]
     duration?: number
     editHistory?: EditHistoryEntry[]
+    deletedRegions?: DeletedRegion[]
   }) => void
   resetEditor: () => void
   removeFillerWords: () => { removed: Record<string, number>; totalRemoved: number; timeSaved: number }
@@ -161,7 +173,6 @@ const defaultCaptionStyle: CaptionStyle = {
 }
 
 const SPEAKER_COLORS = ['border-blue-400', 'border-green-400', 'border-purple-400', 'border-orange-400']
-const SPEAKER_HEX_COLORS = ['#5C8AFF', '#4ADE80', '#FBBF24', '#F472B6']
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   projectId: null,
@@ -186,6 +197,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   lastSavedAt: null,
   isDirty: false,
   speakers: [],
+  deletedRegions: [],
   editorEffects: {},
 
   setProjectId: (id) => set({ projectId: id }),
@@ -219,6 +231,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   markSaved: () => set({ lastSavedAt: Date.now(), isDirty: false }),
   setIsDirty: (dirty) => set({ isDirty: dirty }),
   setSpeakers: (speakers) => set({ speakers }),
+  addDeletedRegion: (region) => set((s) => ({
+    deletedRegions: [...s.deletedRegions, region].sort((a, b) => a.startTime - b.startTime),
+  })),
+  removeDeletedRegion: (startTime, endTime) => set((s) => ({
+    deletedRegions: s.deletedRegions.filter(r => !(r.startTime === startTime && r.endTime === endTime)),
+  })),
+  clearDeletedRegions: () => set({ deletedRegions: [] }),
   setEditorEffect: (key, value) => set((s) => ({
     editorEffects: { ...s.editorEffects, [key]: value },
     isDirty: true,
@@ -250,6 +269,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       waveformData: null,
       speakers: [],
       editorEffects: {},
+      deletedRegions: opts.deletedRegions ?? [],
     })
   },
 
@@ -259,15 +279,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     currentTime: 0, duration: 0, isPlaying: false, playbackSpeed: 1, volume: 80,
     transcript: [], showCaptions: false, captions: [], captionStyle: { ...defaultCaptionStyle },
     bRollItems: [], editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
-    speakers: [], editorEffects: {},
+    speakers: [], editorEffects: {}, deletedRegions: [],
   }),
 
   removeFillerWords: () => {
-    const { transcript, editHistory } = get()
+    const { transcript, editHistory, deletedRegions } = get()
     const fillerList = ['אממ', 'אההה', 'כאילו', 'נו', 'בעצם', 'אז', 'סתם', 'יודע', 'יודעת']
     const removed: Record<string, number> = {}
     let timeSaved = 0
     const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    const previousDeletedRegions = JSON.parse(JSON.stringify(deletedRegions))
+    const newDeletedRegions = [...deletedRegions]
 
     const newTranscript = transcript.map((seg) => ({
       ...seg,
@@ -276,6 +298,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           const word = w.text.replace(/[.,!?]/g, '')
           removed[word] = (removed[word] || 0) + 1
           timeSaved += w.end - w.start
+          newDeletedRegions.push({ startTime: w.start, endTime: w.end, description: `מילת מילוי: ${word}` })
           return false
         }
         return true
@@ -284,8 +307,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     const totalRemoved = Object.values(removed).reduce((s, c) => s + c, 0)
     set({
-      transcript: newTranscript, isDirty: true, redoHistory: [],
-      editHistory: [...editHistory, { action: 'removeFillerWords', description: `הוסרו ${totalRemoved} מילות מילוי`, timestamp: Date.now(), previousTranscript }],
+      transcript: newTranscript,
+      deletedRegions: newDeletedRegions.sort((a, b) => a.startTime - b.startTime),
+      isDirty: true, redoHistory: [],
+      editHistory: [...editHistory, { action: 'removeFillerWords', description: `הוסרו ${totalRemoved} מילות מילוי`, timestamp: Date.now(), previousTranscript, previousDeletedRegions }],
     })
     return { removed, totalRemoved, timeSaved }
   },
@@ -316,43 +341,75 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   removeTimeRange: (startTime, endTime) => {
-    const { transcript, editHistory } = get()
+    const { transcript, editHistory, deletedRegions } = get()
     const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    const previousDeletedRegions = JSON.parse(JSON.stringify(deletedRegions))
     const newTranscript = transcript.map((seg) => ({
       ...seg,
       words: seg.words.filter((w) => w.start < startTime || w.end > endTime),
     })).filter((seg) => seg.words.length > 0)
     set({
-      transcript: newTranscript, isDirty: true, redoHistory: [],
-      editHistory: [...editHistory, { action: 'removeTimeRange', description: `נמחק קטע מ-${startTime.toFixed(1)} עד ${endTime.toFixed(1)}`, timestamp: Date.now(), previousTranscript }],
+      transcript: newTranscript,
+      deletedRegions: [...deletedRegions, { startTime, endTime, description: `נמחק קטע` }].sort((a, b) => a.startTime - b.startTime),
+      isDirty: true, redoHistory: [],
+      editHistory: [...editHistory, { action: 'removeTimeRange', description: `נמחק קטע מ-${startTime.toFixed(1)} עד ${endTime.toFixed(1)}`, timestamp: Date.now(), previousTranscript, previousDeletedRegions }],
     })
   },
 
   deleteWords: (segIdx, wordIndices) => {
-    const { transcript, editHistory } = get()
+    const { transcript, editHistory, deletedRegions } = get()
     const previousTranscript = JSON.parse(JSON.stringify(transcript))
-    const newTranscript = transcript.map((seg, si) => {
-      if (si !== segIdx) return seg
-      return {
-        ...seg,
-        words: seg.words.filter((_, wi) => !wordIndices.includes(wi)),
+    const previousDeletedRegions = JSON.parse(JSON.stringify(deletedRegions))
+
+    // Collect time ranges of deleted words for video edit points
+    const seg = transcript[segIdx]
+    const deletedWords = wordIndices.map(wi => seg.words[wi]).filter(Boolean)
+    const newDeletedRegions = [...deletedRegions]
+
+    if (deletedWords.length > 0) {
+      // Group consecutive words into contiguous regions
+      const sorted = [...deletedWords].sort((a, b) => a.start - b.start)
+      let regionStart = sorted[0].start
+      let regionEnd = sorted[0].end
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i].start - regionEnd < 0.15) {
+          regionEnd = sorted[i].end
+        } else {
+          newDeletedRegions.push({ startTime: regionStart, endTime: regionEnd, description: `נמחקו מילים` })
+          regionStart = sorted[i].start
+          regionEnd = sorted[i].end
+        }
       }
-    }).filter((seg) => seg.words.length > 0)
+      newDeletedRegions.push({ startTime: regionStart, endTime: regionEnd, description: `נמחקו מילים` })
+    }
+
+    const newTranscript = transcript.map((s, si) => {
+      if (si !== segIdx) return s
+      return {
+        ...s,
+        words: s.words.filter((_, wi) => !wordIndices.includes(wi)),
+      }
+    }).filter((s) => s.words.length > 0)
+
     set({
-      transcript: newTranscript, isDirty: true, redoHistory: [],
-      editHistory: [...editHistory, { action: 'deleteWords', description: `נמחקו ${wordIndices.length} מילים`, timestamp: Date.now(), previousTranscript }],
+      transcript: newTranscript,
+      deletedRegions: newDeletedRegions.sort((a, b) => a.startTime - b.startTime),
+      isDirty: true,
+      redoHistory: [],
+      editHistory: [...editHistory, { action: 'deleteWords', description: `נמחקו ${wordIndices.length} מילים`, timestamp: Date.now(), previousTranscript, previousDeletedRegions }],
     })
   },
 
   undoLastEdit: () => {
-    const { editHistory, transcript, redoHistory } = get()
+    const { editHistory, transcript, redoHistory, deletedRegions } = get()
     if (editHistory.length === 0) return null
     const lastEdit = editHistory[editHistory.length - 1]
     if (lastEdit.previousTranscript) {
       set({
         transcript: lastEdit.previousTranscript,
+        deletedRegions: lastEdit.previousDeletedRegions ?? deletedRegions,
         editHistory: editHistory.slice(0, -1),
-        redoHistory: [...redoHistory, { ...lastEdit, previousTranscript: JSON.parse(JSON.stringify(transcript)) }],
+        redoHistory: [...redoHistory, { ...lastEdit, previousTranscript: JSON.parse(JSON.stringify(transcript)), previousDeletedRegions: JSON.parse(JSON.stringify(deletedRegions)) }],
         isDirty: true,
       })
     }
@@ -360,14 +417,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   redoLastEdit: () => {
-    const { redoHistory, transcript, editHistory } = get()
+    const { redoHistory, transcript, editHistory, deletedRegions } = get()
     if (redoHistory.length === 0) return null
     const lastRedo = redoHistory[redoHistory.length - 1]
     if (lastRedo.previousTranscript) {
       set({
         transcript: lastRedo.previousTranscript,
+        deletedRegions: lastRedo.previousDeletedRegions ?? deletedRegions,
         redoHistory: redoHistory.slice(0, -1),
-        editHistory: [...editHistory, { ...lastRedo, previousTranscript: JSON.parse(JSON.stringify(transcript)) }],
+        editHistory: [...editHistory, { ...lastRedo, previousTranscript: JSON.parse(JSON.stringify(transcript)), previousDeletedRegions: JSON.parse(JSON.stringify(deletedRegions)) }],
         isDirty: true,
       })
     }
@@ -378,7 +436,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { transcript, captionStyle } = get()
     const captions: Caption[] = []
     const MAX_CHARS = 42
-    const MAX_LINES = 2
 
     for (const seg of transcript) {
       let currentWords: Word[] = []

@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Subtitles, Music, Film } from 'lucide-react'
-import { useEditorStore, CaptionStyle } from '../../stores/editorStore'
+import { useEditorStore } from '../../stores/editorStore'
+import type { CaptionStyle } from '../../stores/editorStore'
+import { getDeletedRegionEnd } from '../../services/videoEditor'
 
 const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
@@ -51,13 +53,30 @@ export default function VideoPanel() {
     if (el) el.volume = volume / 100
   }, [volume, mediaType])
 
-  // Time update from media element
+  const deletedRegions = useEditorStore((s) => s.deletedRegions)
+  const skipFadeRef = useRef<HTMLDivElement>(null)
+
+  // Time update from media element — skip deleted segments
   const handleTimeUpdate = useCallback(() => {
     const el = mediaType === 'video' ? videoRef.current : audioRef.current
-    if (el) {
-      setCurrentTime(el.currentTime)
+    if (!el) return
+
+    const ct = el.currentTime
+    const skipTo = getDeletedRegionEnd(ct, deletedRegions)
+    if (skipTo !== null) {
+      // Brief fade effect
+      if (skipFadeRef.current) {
+        skipFadeRef.current.style.opacity = '1'
+        setTimeout(() => {
+          if (skipFadeRef.current) skipFadeRef.current.style.opacity = '0'
+        }, 100)
+      }
+      el.currentTime = skipTo + 0.05
+      setCurrentTime(skipTo + 0.05)
+    } else {
+      setCurrentTime(ct)
     }
-  }, [mediaType, setCurrentTime])
+  }, [mediaType, setCurrentTime, deletedRegions])
 
   // Duration loaded
   const handleLoadedMetadata = useCallback(() => {
@@ -184,8 +203,6 @@ export default function VideoPanel() {
 
   const hasMedia = !!mediaBlobUrl
 
-  const captionPositionClass = captionStyle.position === 'top' ? 'top-4' : captionStyle.position === 'center' ? 'top-1/2 -translate-y-1/2' : 'bottom-16'
-
   return (
     <div
       className="flex flex-col h-full bg-bg-deepest rounded-xl border border-white/[0.06] overflow-hidden"
@@ -230,6 +247,13 @@ export default function VideoPanel() {
             <img src={activeBRoll.imageUrl} alt="B-Roll" className="w-full h-full object-cover" />
           </div>
         )}
+
+        {/* Crossfade overlay for smooth deleted segment transitions */}
+        <div
+          ref={skipFadeRef}
+          className="absolute inset-0 bg-black pointer-events-none z-30 transition-opacity duration-100"
+          style={{ opacity: 0 }}
+        />
 
         {/* No media placeholder */}
         {!hasMedia && (
