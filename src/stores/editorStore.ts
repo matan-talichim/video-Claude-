@@ -146,6 +146,12 @@ export interface TrackState {
   visible: boolean
 }
 
+export interface ChapterMarker {
+  title: string
+  startTime: number
+  endTime?: number
+}
+
 interface EditorState {
   projectId: string | null
   projectName: string
@@ -173,6 +179,10 @@ interface EditorState {
   deletedRegions: DeletedRegion[]
   // Editor tool settings
   editorEffects: Record<string, any>
+  // Chapters
+  chapters: ChapterMarker[]
+  // Enhanced audio buffer (after processing)
+  enhancedAudioBuffer: AudioBuffer | null
   // Track states
   trackStates: {
     video: TrackState
@@ -260,6 +270,15 @@ interface EditorState {
   toggleTrackMute: (track: 'video' | 'audio' | 'captions' | 'broll') => void
   toggleTrackLock: (track: 'video' | 'audio' | 'captions' | 'broll') => void
   toggleTrackVisibility: (track: 'video' | 'audio' | 'captions' | 'broll') => void
+  // Chapters
+  setChapters: (chapters: ChapterMarker[]) => void
+  // Enhanced audio
+  setEnhancedAudioBuffer: (buffer: AudioBuffer | null) => void
+  // Silence shortening - creates deleted regions for silences
+  shortenSilences: (threshold: number, keepDuration?: number) => { count: number; timeSaved: number }
+  // Count helpers
+  countFillerWords: () => Record<string, number>
+  countSilences: (threshold: number) => { count: number; totalDuration: number; gaps: Array<{ start: number; end: number; duration: number }> }
 }
 
 const defaultCaptionStyle: CaptionStyle = {
@@ -317,6 +336,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   speakers: [],
   deletedRegions: [],
   editorEffects: {},
+  chapters: [],
+  enhancedAudioBuffer: null,
 
   setProjectId: (id) => set({ projectId: id }),
   setProjectName: (name) => set({ projectName: name, isDirty: true }),
@@ -439,6 +460,76 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     trackStates: { ...s.trackStates, [track]: { ...s.trackStates[track], visible: !s.trackStates[track].visible } },
   })),
 
+  setChapters: (chapters) => set({ chapters, isDirty: true }),
+  setEnhancedAudioBuffer: (buffer) => set({ enhancedAudioBuffer: buffer }),
+
+  shortenSilences: (threshold, keepDuration = 0.3) => {
+    const { transcript, editHistory, deletedRegions } = get()
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    const previousDeletedRegions = JSON.parse(JSON.stringify(deletedRegions))
+    const allWords = transcript.flatMap((s) => s.words)
+    const newDeletedRegions = [...deletedRegions]
+    let count = 0
+    let timeSaved = 0
+
+    for (let i = 1; i < allWords.length; i++) {
+      const gap = allWords[i].start - allWords[i - 1].end
+      if (gap > threshold) {
+        const trimStart = allWords[i - 1].end + keepDuration
+        const trimEnd = allWords[i].start
+        if (trimEnd > trimStart) {
+          newDeletedRegions.push({ startTime: trimStart, endTime: trimEnd, description: `קיצור שתיקה (${gap.toFixed(1)}s)` })
+          count++
+          timeSaved += trimEnd - trimStart
+        }
+      }
+    }
+
+    set({
+      deletedRegions: newDeletedRegions.sort((a, b) => a.startTime - b.startTime),
+      isDirty: true,
+      redoHistory: [],
+      editHistory: [...editHistory, {
+        action: 'shortenSilences',
+        description: `קוצרו ${count} שתיקות, נחסכו ${timeSaved.toFixed(1)} שניות`,
+        timestamp: Date.now(),
+        previousTranscript,
+        previousDeletedRegions,
+      }],
+    })
+    return { count, timeSaved }
+  },
+
+  countFillerWords: () => {
+    const { transcript } = get()
+    const fillerList = ['אממ', 'אההה', 'כאילו', 'נו', 'בעצם', 'אז', 'סתם', 'יודע', 'יודעת', 'אה', 'אמ', 'כזה', 'פשוט']
+    const counts: Record<string, number> = {}
+    for (const seg of transcript) {
+      for (const w of seg.words) {
+        const clean = w.text.replace(/[.,!?]/g, '')
+        if (w.isFiller || fillerList.includes(clean)) {
+          counts[clean] = (counts[clean] || 0) + 1
+        }
+      }
+    }
+    return counts
+  },
+
+  countSilences: (threshold) => {
+    const { transcript } = get()
+    const allWords = transcript.flatMap((s) => s.words)
+    const gaps: Array<{ start: number; end: number; duration: number }> = []
+    let totalDuration = 0
+    for (let i = 1; i < allWords.length; i++) {
+      const gap = allWords[i].start - allWords[i - 1].end
+      if (gap > threshold) {
+        gaps.push({ start: allWords[i - 1].end, end: allWords[i].start, duration: gap })
+        totalDuration += gap
+      }
+    }
+    return { count: gaps.length, totalDuration, gaps }
+  },
+
   loadProject: (opts) => {
     const isDemo = opts.isDemo ?? false
     const hasTranscript = opts.transcript && opts.transcript.length > 0
@@ -476,7 +567,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     transcript: [], showCaptions: false, captions: [], captionStyle: { ...defaultCaptionStyle },
     bRollItems: [], bRollHistory: [], selectedBRollId: null, mutedRegions: [], translatedCaptions: [],
     rangeStart: null, rangeEnd: null, editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
-    speakers: [], editorEffects: {}, deletedRegions: [],
+    speakers: [], editorEffects: {}, deletedRegions: [], chapters: [], enhancedAudioBuffer: null,
   }),
 
   removeFillerWords: () => {
