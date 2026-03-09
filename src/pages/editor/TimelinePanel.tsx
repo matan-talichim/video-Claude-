@@ -4,7 +4,7 @@ import { useEditorStore } from '../../stores/editorStore'
 
 export default function TimelinePanel() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { currentTime, duration, setCurrentTime, mediaFile, waveformData, setWaveformData } = useEditorStore()
+  const { currentTime, duration, setCurrentTime, mediaFile, waveformData, setWaveformData, deletedRegions, bRollItems } = useEditorStore()
   const [zoom, setZoom] = useState(1)
   const [isDragging, setIsDragging] = useState(false)
   const waveformRef = useRef<number[]>([])
@@ -92,6 +92,26 @@ export default function TimelinePanel() {
       ctx.fillRect(x, y, 2, barH)
     }
 
+    // Draw deleted regions as red overlay
+    if (duration > 0) {
+      for (const region of deletedRegions) {
+        const x1 = (region.startTime / duration) * w
+        const x2 = (region.endTime / duration) * w
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.25)'
+        ctx.fillRect(x1, 0, x2 - x1, h)
+        // Scissors icon marker at start of deleted region
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.6)'
+        ctx.fillRect(x1, 0, 1.5, h)
+        // Small triangle marker
+        ctx.beginPath()
+        ctx.moveTo(x1 - 4, 0)
+        ctx.lineTo(x1 + 4, 0)
+        ctx.lineTo(x1, 6)
+        ctx.closePath()
+        ctx.fill()
+      }
+    }
+
     // Playhead
     const playheadX = playedRatio * w
     ctx.strokeStyle = '#FF6B8A'
@@ -108,7 +128,7 @@ export default function TimelinePanel() {
     ctx.lineTo(playheadX, 7)
     ctx.closePath()
     ctx.fill()
-  }, [currentTime, duration, zoom, waveformData])
+  }, [currentTime, duration, zoom, waveformData, deletedRegions])
 
   const seekFromCanvas = useCallback((clientX: number) => {
     const canvas = canvasRef.current
@@ -151,6 +171,10 @@ export default function TimelinePanel() {
     { icon: '🎵', label: 'אודיו', color: 'bg-success', trackColor: 'bg-success/20', fillColor: 'bg-success/40' },
     { icon: '💬', label: 'כתוביות', color: 'bg-warning', trackColor: 'bg-warning/20', fillColor: 'bg-warning/40' },
   ]
+
+  if (bRollItems.length > 0) {
+    tracks.push({ icon: '🖼️', label: 'B-Roll', color: 'bg-pink-500', trackColor: 'bg-pink-500/20', fillColor: 'bg-pink-500/40' })
+  }
 
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0
 

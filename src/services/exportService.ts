@@ -1,5 +1,6 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg'
 import { fetchFile, toBlobURL } from '@ffmpeg/util'
+import { computeEditPoints } from './videoEditor'
 
 let ffmpeg: FFmpeg | null = null
 
@@ -19,7 +20,9 @@ async function getFFmpeg(): Promise<FFmpeg> {
 export async function exportVideo(
   inputBlobUrl: string,
   format: 'mp4-720' | 'mp4-1080' | 'mp4-4k' | 'webm',
-  onProgress: (progress: number) => void
+  onProgress: (progress: number) => void,
+  deletedRegions?: { startTime: number; endTime: number }[],
+  totalDuration?: number
 ): Promise<Blob> {
   const ff = await getFFmpeg()
 
@@ -30,31 +33,87 @@ export async function exportVideo(
   const inputData = await fetchFile(inputBlobUrl)
   await ff.writeFile('input.mp4', inputData)
 
+  const scaleMap: Record<string, string> = {
+    'mp4-720': 'scale=-2:720',
+    'mp4-1080': 'scale=-2:1080',
+    'mp4-4k': 'scale=-2:2160',
+  }
+
+  const crfMap: Record<string, string> = {
+    'mp4-720': '28',
+    'mp4-1080': '23',
+    'mp4-4k': '18',
+    'webm': '30',
+  }
+
   let args: string[]
   let outputName: string
 
-  switch (format) {
-    case 'mp4-720':
-      args = ['-i', 'input.mp4', '-vf', 'scale=-2:720', '-c:v', 'libx264', '-preset', 'fast', '-crf', '28', '-c:a', 'aac', 'output.mp4']
+  // If there are deleted regions, use trim+concat filter
+  const hasEdits = deletedRegions && deletedRegions.length > 0 && totalDuration && totalDuration > 0
+  if (hasEdits) {
+    const editPoints = computeEditPoints(totalDuration!, deletedRegions!)
+    const keeps = editPoints.filter(e => e.type === 'keep')
+
+    if (keeps.length > 0 && format !== 'webm') {
+      const scale = scaleMap[format] || 'scale=-2:720'
+      const filterParts: string[] = []
+      const concatInputs: string[] = []
+
+      keeps.forEach((k, i) => {
+        filterParts.push(
+          `[0:v]trim=start=${k.startTime.toFixed(3)}:end=${k.endTime.toFixed(3)},setpts=PTS-STARTPTS,${scale}[v${i}]`
+        )
+        filterParts.push(
+          `[0:a]atrim=start=${k.startTime.toFixed(3)}:end=${k.endTime.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`
+        )
+        concatInputs.push(`[v${i}][a${i}]`)
+      })
+
+      const filterComplex = filterParts.join(';') +
+        `;${concatInputs.join('')}concat=n=${keeps.length}:v=1:a=1[outv][outa]`
+
       outputName = 'output.mp4'
-      break
-    case 'mp4-1080':
-      args = ['-i', 'input.mp4', '-vf', 'scale=-2:1080', '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', 'output.mp4']
-      outputName = 'output.mp4'
-      break
-    case 'mp4-4k':
-      args = ['-i', 'input.mp4', '-vf', 'scale=-2:2160', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac', 'output.mp4']
-      outputName = 'output.mp4'
-      break
-    case 'webm':
-      args = ['-i', 'input.mp4', '-c:v', 'libvpx-vp9', '-crf', '30', '-c:a', 'libopus', 'output.webm']
-      outputName = 'output.webm'
-      break
+      args = [
+        '-i', 'input.mp4',
+        '-filter_complex', filterComplex,
+        '-map', '[outv]', '-map', '[outa]',
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', crfMap[format] || '23',
+        '-c:a', 'aac',
+        outputName,
+      ]
+    } else {
+      // Fallback: no edits or webm
+      outputName = format === 'webm' ? 'output.webm' : 'output.mp4'
+      args = format === 'webm'
+        ? ['-i', 'input.mp4', '-c:v', 'libvpx-vp9', '-crf', '30', '-c:a', 'libopus', outputName]
+        : ['-i', 'input.mp4', '-vf', scaleMap[format] || 'scale=-2:720', '-c:v', 'libx264', '-preset', 'fast', '-crf', crfMap[format] || '23', '-c:a', 'aac', outputName]
+    }
+  } else {
+    // No edits - standard export
+    switch (format) {
+      case 'mp4-720':
+        args = ['-i', 'input.mp4', '-vf', 'scale=-2:720', '-c:v', 'libx264', '-preset', 'fast', '-crf', '28', '-c:a', 'aac', 'output.mp4']
+        outputName = 'output.mp4'
+        break
+      case 'mp4-1080':
+        args = ['-i', 'input.mp4', '-vf', 'scale=-2:1080', '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', 'output.mp4']
+        outputName = 'output.mp4'
+        break
+      case 'mp4-4k':
+        args = ['-i', 'input.mp4', '-vf', 'scale=-2:2160', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac', 'output.mp4']
+        outputName = 'output.mp4'
+        break
+      case 'webm':
+        args = ['-i', 'input.mp4', '-c:v', 'libvpx-vp9', '-crf', '30', '-c:a', 'libopus', 'output.webm']
+        outputName = 'output.webm'
+        break
+    }
   }
 
   await ff.exec(args)
   const data = await ff.readFile(outputName)
-  return new Blob([data], { type: format === 'webm' ? 'video/webm' : 'video/mp4' })
+  return new Blob([data as BlobPart], { type: format === 'webm' ? 'video/webm' : 'video/mp4' })
 }
 
 export async function exportAudio(
@@ -100,7 +159,7 @@ export async function exportAudio(
 
   await ff.exec(args)
   const data = await ff.readFile(outputName)
-  return new Blob([data], { type: mimeType })
+  return new Blob([data as BlobPart], { type: mimeType })
 }
 
 export function exportSubtitles(

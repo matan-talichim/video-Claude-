@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Segment, EditHistoryEntry } from './editorStore'
+import type { Segment, EditHistoryEntry, DeletedRegion } from './editorStore'
 
 export interface Project {
   id: string
@@ -15,10 +15,11 @@ export interface Project {
   transcript?: Segment[]
   transcriptMode?: 'real'
   editHistory?: EditHistoryEntry[]
+  deletedRegions?: DeletedRegion[]
   createdAt?: number
   updatedAtTimestamp?: number
   isDemo?: boolean
-  source?: 'upload' | 'recording' | 'prompt' | 'script' | 'demo'
+  source?: 'upload' | 'recording' | 'prompt' | 'script'
 }
 
 const gradients = [
@@ -88,6 +89,7 @@ interface ProjectsState {
     name?: string
     transcript?: Segment[]
     editHistory?: EditHistoryEntry[]
+    deletedRegions?: DeletedRegion[]
     mediaBlobUrl?: string
     mediaFile?: File
   }) => void
@@ -170,6 +172,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
             ...(data.name !== undefined && { name: data.name }),
             ...(data.transcript !== undefined && { transcript: data.transcript }),
             ...(data.editHistory !== undefined && { editHistory: data.editHistory }),
+            ...(data.deletedRegions !== undefined && { deletedRegions: data.deletedRegions }),
             ...(data.mediaBlobUrl !== undefined && { mediaBlobUrl: data.mediaBlobUrl }),
             ...(data.mediaFile !== undefined && { mediaFile: data.mediaFile }),
             updatedAtTimestamp: now,

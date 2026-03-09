@@ -125,34 +125,71 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
     setIsUploading(true)
     setUploadProgress(0)
 
-    // Use first file for the project
-    const primaryFile = files[0]
-    const blobUrl = URL.createObjectURL(primaryFile.nativeFile)
-    const mediaType = primaryFile.type
+    const projectIds: string[] = []
 
-    // Create project in projects store
-    const projectId = addProject({
-      name: projectName.trim(),
-      mediaFile: primaryFile.nativeFile,
-      mediaBlobUrl: blobUrl,
-      mediaType,
-      source: 'upload',
-    })
+    if (mergeEnabled || files.length === 1) {
+      // Single project from first file (or merged)
+      const primaryFile = files[0]
+      const blobUrl = URL.createObjectURL(primaryFile.nativeFile)
+      const mediaType = primaryFile.type
 
-    // Add to uploads store
-    const uploadId = addUploadFile({
-      name: primaryFile.name,
-      size: primaryFile.size,
-      sizeBytes: primaryFile.sizeBytes,
-      type: primaryFile.type,
-      source: 'upload',
-      status: 'waiting',
-      progress: 0,
-      thumbnailGradient: '',
-      projectId,
-      file: primaryFile.nativeFile,
-      blobUrl,
-    })
+      const projectId = addProject({
+        name: projectName.trim(),
+        mediaFile: primaryFile.nativeFile,
+        mediaBlobUrl: blobUrl,
+        mediaType,
+        source: 'upload',
+      })
+      projectIds.push(projectId)
+
+      const uploadId = addUploadFile({
+        name: primaryFile.name,
+        size: primaryFile.size,
+        sizeBytes: primaryFile.sizeBytes,
+        type: primaryFile.type,
+        source: 'upload',
+        status: 'waiting',
+        progress: 0,
+        thumbnailGradient: '',
+        projectId,
+        file: primaryFile.nativeFile,
+        blobUrl,
+      })
+      simulateUpload(uploadId)
+    } else {
+      // Create separate project for EACH file
+      files.forEach((file, idx) => {
+        const blobUrl = URL.createObjectURL(file.nativeFile)
+        const mediaType = file.type
+        const name = files.length > 1
+          ? `${projectName.trim()} (${idx + 1})`
+          : projectName.trim()
+
+        const projectId = addProject({
+          name,
+          mediaFile: file.nativeFile,
+          mediaBlobUrl: blobUrl,
+          mediaType,
+          source: 'upload',
+        })
+        projectIds.push(projectId)
+
+        const uploadId = addUploadFile({
+          name: file.name,
+          size: file.size,
+          sizeBytes: file.sizeBytes,
+          type: file.type,
+          source: 'upload',
+          status: 'waiting',
+          progress: 0,
+          thumbnailGradient: '',
+          projectId,
+          file: file.nativeFile,
+          blobUrl,
+        })
+        simulateUpload(uploadId)
+      })
+    }
 
     // Simulate upload progress with visual feedback
     let progress = 0
@@ -161,20 +198,19 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
       setUploadProgress(Math.min(progress, 100))
       if (progress >= 100) {
         clearInterval(progressInterval)
-        // Navigate to editor
         setTimeout(() => {
           setIsUploading(false)
           setFiles([])
           setProjectName('')
           setUploadProgress(0)
           onClose()
-          navigate(`/editor/${projectId}`)
+          // Navigate to first project
+          if (projectIds.length > 0) {
+            navigate(`/editor/${projectIds[0]}`)
+          }
         }, 500)
       }
     }, 200)
-
-    // Also run the upload simulation for the uploads page
-    simulateUpload(uploadId)
   }
 
   const handleClose = () => {

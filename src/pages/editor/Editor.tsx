@@ -24,7 +24,7 @@ export default function Editor() {
   const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved'>('idle')
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const { loadProject, projectId, projectName, isDirty, markSaved, mediaBlobUrl, transcript, editHistory } = useEditorStore()
+  const { loadProject, projectId, projectName, isDirty, markSaved, mediaBlobUrl, transcript, editHistory, deletedRegions } = useEditorStore()
   const getProject = useProjectsStore((s) => s.getProject)
   const saveEditorState = useProjectsStore((s) => s.saveEditorState)
 
@@ -43,6 +43,7 @@ export default function Editor() {
         mediaType: project.mediaType,
         transcript: project.transcript,
         editHistory: project.editHistory,
+        deletedRegions: project.deletedRegions,
       })
     } else {
       loadProject({
@@ -64,6 +65,7 @@ export default function Editor() {
       name: projectName,
       transcript,
       editHistory,
+      deletedRegions,
       mediaBlobUrl: mediaBlobUrl ?? undefined,
     })
     markSaved()
@@ -71,7 +73,7 @@ export default function Editor() {
       setSaveIndicator('saved')
       setTimeout(() => setSaveIndicator('idle'), 2000)
     }, 300)
-  }, [projectId, isDirty, projectName, transcript, editHistory, mediaBlobUrl, saveEditorState, markSaved])
+  }, [projectId, isDirty, projectName, transcript, editHistory, deletedRegions, mediaBlobUrl, saveEditorState, markSaved])
 
   useEffect(() => {
     autoSaveRef.current = setInterval(doSave, 30000)

@@ -150,7 +150,7 @@ export default function TranscriptPanel() {
       const colorList = ['border-blue-400', 'border-green-400', 'border-purple-400', 'border-orange-400']
 
       if (result.segments && result.segments.length > 0) {
-        const segments = result.segments.map((seg: any, i: number) => {
+        const segments = result.segments.map((seg: any) => {
           const words = (seg.words || []).map((w: any) => {
             const clean = (w.word || '').replace(/[.,!?]/g, '')
             return { text: w.word || '', start: w.start || 0, end: w.end || 0, isFiller: fillerList.includes(clean) }
@@ -241,11 +241,14 @@ export default function TranscriptPanel() {
   }
 
   const handleFillerClick = (segIdx: number, wordIdx: number) => {
-    const { transcript: t, editHistory } = useEditorStore.getState()
+    const { transcript: t, editHistory, deletedRegions } = useEditorStore.getState()
     const prev = JSON.parse(JSON.stringify(t))
+    const prevDeleted = JSON.parse(JSON.stringify(deletedRegions))
+    const word = t[segIdx].words[wordIdx]
     const nt = [...t]; const seg = { ...nt[segIdx] }
     seg.words = seg.words.filter((_, i) => i !== wordIdx); nt[segIdx] = seg
-    useEditorStore.setState({ transcript: nt.filter(s => s.words.length > 0), isDirty: true, editHistory: [...editHistory, { action: 'deleteFiller', description: 'נמחקה מילת מילוי', timestamp: Date.now(), previousTranscript: prev }], redoHistory: [] })
+    const newDeletedRegions = word ? [...deletedRegions, { startTime: word.start, endTime: word.end, description: `מילת מילוי: ${word.text}` }].sort((a, b) => a.startTime - b.startTime) : deletedRegions
+    useEditorStore.setState({ transcript: nt.filter(s => s.words.length > 0), deletedRegions: newDeletedRegions, isDirty: true, editHistory: [...editHistory, { action: 'deleteFiller', description: 'נמחקה מילת מילוי', timestamp: Date.now(), previousTranscript: prev, previousDeletedRegions: prevDeleted }], redoHistory: [] })
   }
 
   const handleDeleteSelected = () => {

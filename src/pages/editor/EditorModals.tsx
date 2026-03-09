@@ -169,11 +169,8 @@ function ToggleOption({ label, defaultOn = false }: { label: string; defaultOn?:
 }
 
 function RetakesContent() {
-  const [isProcessing, setIsProcessing] = useState(false)
   const [retakes, setRetakes] = useState<Array<{ title: string; range: string; startTime: number; endTime: number }>>([])
-  const [error, setError] = useState<string | null>(null)
   const transcript = useEditorStore((s) => s.transcript)
-  const { addToast, closeModal } = useUIStore()
 
   // Detect retakes from transcript (find similar consecutive segments)
   useState(() => {
@@ -479,7 +476,7 @@ function ShareContent() {
 
 function ExportContent() {
   const { addToast } = useUIStore()
-  const { mediaBlobUrl, projectName, transcript } = useEditorStore()
+  const { mediaBlobUrl, projectName, transcript, deletedRegions, duration } = useEditorStore()
   const [exporting, setExporting] = useState<string | null>(null)
   const [exportProgress, setExportProgress] = useState(0)
   const [exportStatus, setExportStatus] = useState('')
@@ -507,7 +504,7 @@ function ExportContent() {
       const blob = await exportVideo(mediaBlobUrl, format, (p) => {
         setExportProgress(p)
         setExportStatus(`מייצא... ${p}%`)
-      })
+      }, deletedRegions.length > 0 ? deletedRegions : undefined, duration > 0 ? duration : undefined)
       const ext = format === 'webm' ? 'webm' : 'mp4'
       triggerExportDownload(blob, `${projectName || 'export'}.${ext}`)
       addToast('הייצוא הושלם! הקובץ הורד למחשב', 'success')
