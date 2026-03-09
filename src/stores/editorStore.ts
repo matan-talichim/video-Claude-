@@ -152,6 +152,17 @@ export interface ChapterMarker {
   endTime?: number
 }
 
+export interface EditedFile {
+  id: string
+  name: string
+  format: string
+  duration: number
+  blob: Blob
+  blobUrl: string
+  createdAt: Date
+  appliedEdits: string[]
+}
+
 interface EditorState {
   projectId: string | null
   projectName: string
@@ -183,6 +194,10 @@ interface EditorState {
   chapters: ChapterMarker[]
   // Enhanced audio buffer (after processing)
   enhancedAudioBuffer: AudioBuffer | null
+  // Applied edits tracking
+  appliedEdits: string[]
+  // Edited/exported files
+  editedFiles: EditedFile[]
   // Track states
   trackStates: {
     video: TrackState
@@ -274,6 +289,13 @@ interface EditorState {
   setChapters: (chapters: ChapterMarker[]) => void
   // Enhanced audio
   setEnhancedAudioBuffer: (buffer: AudioBuffer | null) => void
+  // Applied edits
+  addAppliedEdit: (desc: string) => void
+  clearAppliedEdits: () => void
+  // Edited files
+  addEditedFile: (file: EditedFile) => void
+  removeEditedFile: (id: string) => void
+  clearEditedFiles: () => void
   // Silence shortening - creates deleted regions for silences
   shortenSilences: (threshold: number, keepDuration?: number) => { count: number; timeSaved: number }
   // Count helpers
@@ -338,6 +360,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   editorEffects: {},
   chapters: [],
   enhancedAudioBuffer: null,
+  appliedEdits: [],
+  editedFiles: [],
 
   setProjectId: (id) => set({ projectId: id }),
   setProjectName: (name) => set({ projectName: name, isDirty: true }),
@@ -462,6 +486,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setChapters: (chapters) => set({ chapters, isDirty: true }),
   setEnhancedAudioBuffer: (buffer) => set({ enhancedAudioBuffer: buffer }),
+  addAppliedEdit: (desc) => set((s) => ({ appliedEdits: [...s.appliedEdits, desc] })),
+  clearAppliedEdits: () => set({ appliedEdits: [] }),
+  addEditedFile: (file) => set((s) => ({ editedFiles: [...s.editedFiles, file] })),
+  removeEditedFile: (id) => set((s) => ({
+    editedFiles: s.editedFiles.filter((f) => {
+      if (f.id === id && f.blobUrl) URL.revokeObjectURL(f.blobUrl)
+      return f.id !== id
+    }),
+  })),
+  clearEditedFiles: () => set((s) => {
+    s.editedFiles.forEach((f) => { if (f.blobUrl) URL.revokeObjectURL(f.blobUrl) })
+    return { editedFiles: [] }
+  }),
 
   shortenSilences: (threshold, keepDuration = 0.3) => {
     const { transcript, editHistory, deletedRegions } = get()
@@ -568,6 +605,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     bRollItems: [], bRollHistory: [], selectedBRollId: null, mutedRegions: [], translatedCaptions: [],
     rangeStart: null, rangeEnd: null, editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
     speakers: [], editorEffects: {}, deletedRegions: [], chapters: [], enhancedAudioBuffer: null,
+    appliedEdits: [],
   }),
 
   removeFillerWords: () => {

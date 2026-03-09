@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { Copy, Star, Download, Loader2, Link2, CheckCircle, FileText, Music, Film, Captions, Upload } from 'lucide-react'
+import { Copy, Star, Download, Loader2, Link2, CheckCircle, Film, Upload } from 'lucide-react'
 import Modal from '../../components/Modal'
 import { useUIStore } from '../../stores/uiStore'
 import { useEditorStore } from '../../stores/editorStore'
@@ -133,6 +133,7 @@ function SoundStudioContent() {
   const setEnhancedAudioBuffer = useEditorStore((s) => s.setEnhancedAudioBuffer)
   const addEditHistory = useEditorStore((s) => s.addEditHistory)
   const setEditorEffect = useEditorStore((s) => s.setEditorEffect)
+  const addAppliedEdit = useEditorStore((s) => s.addAppliedEdit)
 
   const handleEnhance = async () => {
     if (!mediaBlobUrl) {
@@ -184,6 +185,7 @@ function SoundStudioContent() {
       setEnhancedAudioBuffer(renderedBuffer)
       setEditorEffect('audioEnhanced', true)
       addEditHistory({ action: 'audioEnhance', description: 'שיפור אודיו (סאונד סטודיו)' })
+      addAppliedEdit('שיפור אודיו')
 
       const noiseReduction = Math.round(40 + (strength / 100) * 40)
       const volumeNorm = Math.round(6 + (strength / 100) * 12)
@@ -592,6 +594,7 @@ function SilenceContent() {
   const transcript = useEditorStore((s) => s.transcript)
   const countSilences = useEditorStore((s) => s.countSilences)
   const shortenSilences = useEditorStore((s) => s.shortenSilences)
+  const addAppliedEdit = useEditorStore((s) => s.addAppliedEdit)
   const { addToast, closeModal } = useUIStore()
 
   if (transcript.length === 0) {
@@ -610,6 +613,7 @@ function SilenceContent() {
     setIsProcessing(true)
     setTimeout(() => {
       const result = shortenSilences(threshold, 0.3)
+      addAppliedEdit(`קיצור ${result.count} שתיקות`)
       addToast(`קוצרו ${result.count} שתיקות, נחסכו ${result.timeSaved.toFixed(1)} שניות`, 'success')
       setIsProcessing(false)
       setTimeout(() => closeModal(), 500)
@@ -641,6 +645,7 @@ function FillerWordsContent() {
   const removeFillerWords = useEditorStore((s) => s.removeFillerWords)
   const countFillerWords = useEditorStore((s) => s.countFillerWords)
   const transcript = useEditorStore((s) => s.transcript)
+  const addAppliedEdit = useEditorStore((s) => s.addAppliedEdit)
   const { addToast, closeModal } = useUIStore()
   const [isProcessing, setIsProcessing] = useState(false)
 
@@ -673,6 +678,7 @@ function FillerWordsContent() {
     setIsProcessing(true)
     setTimeout(() => {
       const result = removeFillerWords()
+      addAppliedEdit(`הסרת ${result.totalRemoved} מילות מילוי`)
       addToast(`הוסרו ${result.totalRemoved} מילות מילוי, נחסכו ${result.timeSaved.toFixed(1)} שניות`, 'success')
       setIsProcessing(false)
       setTimeout(() => closeModal(), 500)
@@ -819,12 +825,36 @@ function ShareContent() {
 }
 
 function ExportContent() {
-  const { addToast } = useUIStore()
-  const { mediaBlobUrl, projectName, transcript, deletedRegions, duration } = useEditorStore()
-  const [exporting, setExporting] = useState<string | null>(null)
-  const [exportProgress, setExportProgress] = useState(0)
-  const [exportStatus, setExportStatus] = useState('')
+  const { addToast, closeModal } = useUIStore()
+  const { mediaBlobUrl, projectName, transcript, deletedRegions, duration, appliedEdits, captions, showCaptions } = useEditorStore()
+  const addEditedFile = useEditorStore((s) => s.addEditedFile)
+  const [selectedFormats, setSelectedFormats] = useState<Set<string>>(new Set())
+  const [exporting, setExporting] = useState(false)
+  const [progress, setProgress] = useState({ current: 0, total: 0, currentFormat: '' })
   const [exportError, setExportError] = useState<string | null>(null)
+  const [burnCaptions, setBurnCaptions] = useState(false)
+
+  const formats = [
+    { id: 'mp4-720', label: 'MP4 720p', desc: 'קובץ קטן', category: 'video', icon: '🎬' },
+    { id: 'mp4-1080', label: 'MP4 1080p', desc: 'איכות גבוהה', category: 'video', icon: '🎬' },
+    { id: 'mp4-4k', label: 'MP4 4K', desc: 'איכות מקסימלית', category: 'video', icon: '🎬' },
+    { id: 'webm', label: 'WebM', desc: 'לאינטרנט', category: 'video', icon: '🌐' },
+    { id: 'mp4-916', label: 'MP4 9:16', desc: 'TikTok / Reels', category: 'video', icon: '📱' },
+    { id: 'mp4-11', label: 'MP4 1:1', desc: 'אינסטגרם', category: 'video', icon: '📸' },
+    { id: 'mp3-128', label: 'MP3 128kbps', desc: 'אודיו קל', category: 'audio', icon: '🎵' },
+    { id: 'mp3-320', label: 'MP3 320kbps', desc: 'אודיו איכותי', category: 'audio', icon: '🎵' },
+    { id: 'wav', label: 'WAV', desc: 'ללא דחיסה', category: 'audio', icon: '🎵' },
+    { id: 'srt', label: 'SRT', desc: 'כתוביות', category: 'subtitles', icon: '💬' },
+    { id: 'vtt', label: 'VTT', desc: 'כתוביות אינטרנט', category: 'subtitles', icon: '💬' },
+    { id: 'txt', label: 'TXT', desc: 'תמלול טקסט', category: 'text', icon: '📝' },
+  ]
+
+  const toggleFormat = (id: string) => {
+    const newSet = new Set(selectedFormats)
+    if (newSet.has(id)) newSet.delete(id)
+    else newSet.add(id)
+    setSelectedFormats(newSet)
+  }
 
   const getTranscriptSegments = () => {
     return transcript.map((seg) => ({
@@ -835,193 +865,193 @@ function ExportContent() {
     }))
   }
 
-  const handleVideoExport = async (format: 'mp4-720' | 'mp4-1080' | 'mp4-4k' | 'webm') => {
-    if (!mediaBlobUrl) {
-      addToast('העלה סרטון כדי לייצא', 'warning')
-      return
-    }
-    setExporting(format)
-    setExportProgress(0)
-    setExportError(null)
-    setExportStatus('טוען מנוע עיבוד...')
-    try {
-      const blob = await exportVideo(mediaBlobUrl, format, (p) => {
-        setExportProgress(p)
-        setExportStatus(`מייצא... ${p}%`)
-      }, deletedRegions.length > 0 ? deletedRegions : undefined, duration > 0 ? duration : undefined)
-      const ext = format === 'webm' ? 'webm' : 'mp4'
-      triggerExportDownload(blob, `${projectName || 'export'}.${ext}`)
-      addToast('הייצוא הושלם! הקובץ הורד למחשב', 'success')
-    } catch (err: any) {
-      console.error('Export error:', err)
-      setExportError('שגיאה בייצוא. נסה פורמט אחר.')
-    } finally {
-      setExporting(null)
-      setExportProgress(0)
-      setExportStatus('')
-    }
+  const getExtension = (id: string) => {
+    if (id.startsWith('mp4') || id === 'mp4-916' || id === 'mp4-11') return 'mp4'
+    if (id === 'webm') return 'webm'
+    if (id.startsWith('mp3')) return 'mp3'
+    if (id === 'wav') return 'wav'
+    return id
   }
 
-  const handleAudioExport = async (format: 'mp3-128' | 'mp3-256' | 'mp3-320' | 'wav') => {
-    if (!mediaBlobUrl) {
-      addToast('העלה סרטון כדי לייצא', 'warning')
-      return
-    }
-    setExporting(format)
-    setExportProgress(0)
-    setExportError(null)
-    setExportStatus('טוען מנוע עיבוד...')
-    try {
-      const blob = await exportAudio(mediaBlobUrl, format, (p) => {
-        setExportProgress(p)
-        setExportStatus(`מייצא... ${p}%`)
-      })
-      const ext = format.startsWith('mp3') ? 'mp3' : 'wav'
-      triggerExportDownload(blob, `${projectName || 'export'}.${ext}`)
-      addToast('הייצוא הושלם! הקובץ הורד למחשב', 'success')
-    } catch (err: any) {
-      console.error('Export error:', err)
-      setExportError('שגיאה בייצוא. נסה פורמט אחר.')
-    } finally {
-      setExporting(null)
-      setExportProgress(0)
-      setExportStatus('')
-    }
-  }
-
-  const handleSubtitleExport = (format: 'srt' | 'vtt') => {
+  const exportOneFormat = async (formatId: string): Promise<Blob | null> => {
     const segments = getTranscriptSegments()
-    if (segments.length === 0) {
-      addToast('אין תמלול לייצוא', 'warning')
-      return
+    // Subtitle/text formats
+    if (formatId === 'srt' || formatId === 'vtt') {
+      if (segments.length === 0) return null
+      return exportSubtitles(segments, formatId as 'srt' | 'vtt')
     }
-    const blob = exportSubtitles(segments, format)
-    triggerExportDownload(blob, `${projectName || 'export'}.${format}`)
-    addToast('קובץ כתוביות הורד!', 'success')
+    if (formatId === 'txt') {
+      if (segments.length === 0) return null
+      return exportTranscript(segments, 'txt')
+    }
+    // Audio formats
+    if (formatId.startsWith('mp3') || formatId === 'wav') {
+      if (!mediaBlobUrl) return null
+      return exportAudio(mediaBlobUrl, formatId as any, () => {})
+    }
+    // Video formats (mp4-720, mp4-1080, mp4-4k, webm, mp4-916, mp4-11)
+    if (!mediaBlobUrl) return null
+    // Map special formats to base export format
+    let baseFormat: 'mp4-720' | 'mp4-1080' | 'mp4-4k' | 'webm' = 'mp4-1080'
+    if (formatId === 'mp4-720') baseFormat = 'mp4-720'
+    else if (formatId === 'mp4-1080' || formatId === 'mp4-916' || formatId === 'mp4-11') baseFormat = 'mp4-1080'
+    else if (formatId === 'mp4-4k') baseFormat = 'mp4-4k'
+    else if (formatId === 'webm') baseFormat = 'webm'
+    return exportVideo(mediaBlobUrl, baseFormat, () => {}, deletedRegions.length > 0 ? deletedRegions : undefined, duration > 0 ? duration : undefined)
   }
 
-  const handleTranscriptExport = (format: 'txt' | 'docx') => {
-    const segments = getTranscriptSegments()
-    if (segments.length === 0) {
-      addToast('אין תמלול לייצוא', 'warning')
-      return
+  const handleExportAll = async () => {
+    const selected = formats.filter((f) => selectedFormats.has(f.id))
+    if (selected.length === 0) return
+    setExporting(true)
+    setExportError(null)
+
+    for (let i = 0; i < selected.length; i++) {
+      setProgress({ current: i + 1, total: selected.length, currentFormat: selected[i].label })
+      try {
+        const blob = await exportOneFormat(selected[i].id)
+        if (blob) {
+          const fileName = `${projectName || 'export'}_${selected[i].label}`
+          triggerExportDownload(blob, `${projectName || 'export'}.${getExtension(selected[i].id)}`)
+          addEditedFile({
+            id: crypto.randomUUID(),
+            name: fileName,
+            format: selected[i].id,
+            duration: duration || 0,
+            blob,
+            blobUrl: URL.createObjectURL(blob),
+            createdAt: new Date(),
+            appliedEdits: [...appliedEdits],
+          })
+        }
+      } catch (err) {
+        console.error(`Export error for ${selected[i].id}:`, err)
+      }
     }
-    const blob = exportTranscript(segments, format)
-    triggerExportDownload(blob, `${projectName || 'export'}.${format}`)
-    addToast('קובץ תמלול הורד!', 'success')
+
+    setExporting(false)
+    addToast(`יוצאו ${selected.length} קבצים`, 'success')
+    setTimeout(() => closeModal(), 800)
   }
 
-  const videoFormats: Array<{ id: 'mp4-720' | 'mp4-1080' | 'mp4-4k' | 'webm'; label: string; desc: string }> = [
-    { id: 'mp4-720', label: 'MP4 720p', desc: 'קובץ קטן' },
-    { id: 'mp4-1080', label: 'MP4 1080p', desc: 'איכות גבוהה' },
-    { id: 'mp4-4k', label: 'MP4 4K', desc: 'איכות מקסימלית' },
-    { id: 'webm', label: 'WebM', desc: 'לאינטרנט' },
-  ]
-  const audioFormats: Array<{ id: 'mp3-128' | 'mp3-256' | 'mp3-320' | 'wav'; label: string; desc: string }> = [
-    { id: 'mp3-128', label: 'MP3 128kbps', desc: 'קובץ קטן' },
-    { id: 'mp3-320', label: 'MP3 320kbps', desc: 'איכות גבוהה' },
-    { id: 'wav', label: 'WAV', desc: 'lossless' },
+  const categories = [
+    { key: 'video', label: '🎬 וידאו' },
+    { key: 'audio', label: '🎵 אודיו' },
+    { key: 'subtitles', label: '💬 כתוביות ותמלול' },
+    { key: 'text', label: '📝 תמלול' },
   ]
 
   return (
-    <div className="space-y-6">
-      {/* Export progress */}
-      {exporting && (
-        <div className="p-6 bg-accent-purple/5 border border-accent-purple/20 rounded-xl text-center space-y-3">
-          <Loader2 size={32} className="mx-auto text-accent-purple animate-spin" />
-          <p className="text-sm text-text-primary">{exportStatus || 'מכין לייצוא...'}</p>
-          {exportProgress > 0 && (
-            <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden max-w-xs mx-auto">
-              <div className="h-full bg-accent-purple rounded-full transition-all" style={{ width: `${exportProgress}%` }} />
-            </div>
-          )}
-        </div>
-      )}
+    <div className="space-y-4">
+      {/* Quick select buttons */}
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => setSelectedFormats(new Set(['mp4-1080', 'srt']))}
+          className="px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] rounded-lg text-xs text-text-secondary transition-colors border border-white/[0.06]">
+          🎬 וידאו + כתוביות
+        </button>
+        <button onClick={() => setSelectedFormats(new Set(['mp4-916', 'mp4-11', 'mp4-1080']))}
+          className="px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] rounded-lg text-xs text-text-secondary transition-colors border border-white/[0.06]">
+          📱 כל הפלטפורמות
+        </button>
+        <button onClick={() => setSelectedFormats(new Set(formats.map((f) => f.id)))}
+          className="px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] rounded-lg text-xs text-text-secondary transition-colors border border-white/[0.06]">
+          📦 הכל
+        </button>
+        {selectedFormats.size > 0 && (
+          <button onClick={() => setSelectedFormats(new Set())}
+            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-xs text-red-400 transition-colors border border-red-500/10">
+            נקה בחירה
+          </button>
+        )}
+      </div>
 
       {/* Export error */}
       {exportError && !exporting && (
-        <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-xl text-center space-y-2">
+        <div className="p-3 bg-red-500/5 border border-red-500/20 rounded-xl text-center">
           <p className="text-sm text-red-400">{exportError}</p>
-          <button onClick={() => setExportError(null)} className="px-4 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] rounded-lg text-xs text-text-secondary transition-colors">נסה שוב</button>
         </div>
       )}
 
       {!exporting && (
         <>
-          {/* Video */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Film size={16} className="text-text-muted" />
-              <h4 className="text-sm font-medium text-text-primary">וידאו</h4>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {videoFormats.map((f) => (
-                <button key={f.id} onClick={() => handleVideoExport(f.id)} disabled={!!exporting} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40 disabled:opacity-50">
-                  <Download size={20} className="mx-auto mb-2 text-text-muted" />
-                  <p className="text-sm font-medium text-text-primary">{f.label}</p>
-                  <p className="text-xs text-text-muted mt-1">{f.desc}</p>
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* Format sections */}
+          {categories.map(({ key, label }) => {
+            const catFormats = formats.filter((f) => f.category === key)
+            if (catFormats.length === 0) return null
+            return (
+              <div key={key}>
+                <h4 className="text-sm font-medium text-text-primary mb-2">{label}</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  {catFormats.map((f) => (
+                    <label key={f.id} className={`flex items-center gap-2.5 p-3 rounded-xl cursor-pointer transition-all border ${
+                      selectedFormats.has(f.id)
+                        ? 'bg-accent-purple/10 border-accent-purple/30'
+                        : 'bg-white/[0.04] border-white/[0.06] hover:bg-white/[0.06]'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedFormats.has(f.id)}
+                        onChange={() => toggleFormat(f.id)}
+                        className="w-4 h-4 rounded accent-accent-purple shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-text-primary">{f.icon} {f.label}</div>
+                        <div className="text-[10px] text-text-muted">{f.desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
 
-          {/* Audio */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Music size={16} className="text-text-muted" />
-              <h4 className="text-sm font-medium text-text-primary">אודיו</h4>
+          {/* Burn captions toggle */}
+          {showCaptions && captions.length > 0 && (
+            <div className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
+              <span className="text-sm text-text-primary">צרוב כתוביות בוידאו</span>
+              <div onClick={() => setBurnCaptions(!burnCaptions)} className={`w-10 h-5 rounded-full cursor-pointer relative transition-colors ${burnCaptions ? 'bg-accent-purple' : 'bg-white/[0.12]'}`}>
+                <div className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all shadow-sm ${burnCaptions ? 'left-0.5' : 'left-[22px]'}`} />
+              </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              {audioFormats.map((f) => (
-                <button key={f.id} onClick={() => handleAudioExport(f.id)} disabled={!!exporting} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40 disabled:opacity-50">
-                  <Download size={20} className="mx-auto mb-2 text-text-muted" />
-                  <p className="text-sm font-medium text-text-primary">{f.label}</p>
-                  <p className="text-xs text-text-muted mt-1">{f.desc}</p>
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
-          {/* Subtitles */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Captions size={16} className="text-text-muted" />
-              <h4 className="text-sm font-medium text-text-primary">כתוביות</h4>
+          {/* Applied edits info */}
+          {appliedEdits.length > 0 && (
+            <div className="p-3 bg-accent-purple/5 border border-accent-purple/10 rounded-xl">
+              <p className="text-xs text-text-muted mb-1">העריכות שיוחלו:</p>
+              <div className="flex flex-wrap gap-1">
+                {appliedEdits.map((edit, i) => (
+                  <span key={i} className="text-[10px] bg-accent-purple/10 text-accent-purple px-1.5 py-0.5 rounded">{edit}</span>
+                ))}
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => handleSubtitleExport('srt')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
-                <Download size={20} className="mx-auto mb-2 text-text-muted" />
-                <p className="text-sm font-medium text-text-primary">SRT</p>
-                <p className="text-xs text-text-muted mt-1">כתוביות סטנדרטיות</p>
-              </button>
-              <button onClick={() => handleSubtitleExport('vtt')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
-                <Download size={20} className="mx-auto mb-2 text-text-muted" />
-                <p className="text-sm font-medium text-text-primary">VTT</p>
-                <p className="text-xs text-text-muted mt-1">כתוביות לאינטרנט</p>
-              </button>
-            </div>
-          </div>
+          )}
 
-          {/* Transcript */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <FileText size={16} className="text-text-muted" />
-              <h4 className="text-sm font-medium text-text-primary">תמלול</h4>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => handleTranscriptExport('txt')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
-                <Download size={20} className="mx-auto mb-2 text-text-muted" />
-                <p className="text-sm font-medium text-text-primary">TXT</p>
-                <p className="text-xs text-text-muted mt-1">טקסט פשוט</p>
-              </button>
-              <button onClick={() => handleTranscriptExport('docx')} className="p-4 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-center transition-all border border-white/[0.06] hover:border-accent-purple/40">
-                <Download size={20} className="mx-auto mb-2 text-text-muted" />
-                <p className="text-sm font-medium text-text-primary">DOCX</p>
-                <p className="text-xs text-text-muted mt-1">מסמך Word</p>
-              </button>
-            </div>
+          {/* Selected count + export button */}
+          <div className="text-xs text-text-muted text-center">
+            נבחרו {selectedFormats.size} פורמטים לייצוא
           </div>
+          <button
+            onClick={handleExportAll}
+            disabled={selectedFormats.size === 0}
+            className="w-full py-3 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-40 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20"
+          >
+            <Download size={16} /> ייצא {selectedFormats.size} קבצים
+          </button>
         </>
+      )}
+
+      {/* Progress */}
+      {exporting && (
+        <div className="p-6 bg-accent-purple/5 border border-accent-purple/20 rounded-xl space-y-3">
+          <div className="flex items-center justify-center gap-2">
+            <Loader2 size={20} className="animate-spin text-accent-purple" />
+            <span className="text-sm text-text-primary">מייצא {progress.currentFormat}... ({progress.current}/{progress.total})</span>
+          </div>
+          <div className="w-full h-2 bg-white/[0.06] rounded-full overflow-hidden">
+            <div className="h-full bg-accent-purple rounded-full transition-all" style={{ width: `${progress.total > 0 ? (progress.current / progress.total) * 100 : 0}%` }} />
+          </div>
+        </div>
       )}
     </div>
   )

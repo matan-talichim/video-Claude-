@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowRight, Save, Check, FileText, Bot, FolderOpen, Image, Subtitles, Volume2, Settings } from 'lucide-react'
+import { ArrowRight, Save, Check, FileText, Bot, FolderOpen, Image, Subtitles, Volume2, Settings, Package } from 'lucide-react'
 import EditorToolbar from './EditorToolbar'
 import TranscriptPanel from './TranscriptPanel'
 import VideoPanel from './VideoPanel'
@@ -11,13 +11,14 @@ import BRollPanel from './BRollPanel'
 import MediaSidebar from './MediaSidebar'
 import AudioPanel from './AudioPanel'
 import ProjectSettingsPanel from './ProjectSettingsPanel'
+import ExportsPanel from './ExportsPanel'
 import EditorModals from './EditorModals'
 import ToastContainer from '../../components/Toast'
 import { useEditorStore } from '../../stores/editorStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
 
-type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'settings'
+type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'exports' | 'settings'
 
 const panelTabs: { id: PanelId; icon: typeof FileText; label: string; tooltip: string }[] = [
   { id: 'transcript', icon: FileText, label: 'תמלול', tooltip: 'תמלול - עריכת טקסט' },
@@ -26,6 +27,7 @@ const panelTabs: { id: PanelId; icon: typeof FileText; label: string; tooltip: s
   { id: 'broll', icon: Image, label: 'B-Roll', tooltip: 'B-Roll - קטעי וידאו משלימים' },
   { id: 'captions', icon: Subtitles, label: 'כתוביות', tooltip: 'כתוביות - עריכת כתוביות' },
   { id: 'audio', icon: Volume2, label: 'אודיו', tooltip: 'אודיו - עריכת שמע' },
+  { id: 'exports', icon: Package, label: 'ערוכים', tooltip: 'ערוכים - קבצים מיוצאים' },
   { id: 'settings', icon: Settings, label: 'הגדרות', tooltip: 'הגדרות - הגדרות הפרויקט' },
 ]
 
@@ -248,6 +250,7 @@ export default function Editor() {
             {activePanel === 'broll' && <BRollPanel onClose={() => setActivePanel(null)} />}
             {activePanel === 'captions' && <CaptionsPanel onClose={() => setActivePanel(null)} />}
             {activePanel === 'audio' && <AudioPanel onClose={() => setActivePanel(null)} />}
+            {activePanel === 'exports' && <ExportsPanel onClose={() => setActivePanel(null)} />}
             {activePanel === 'settings' && <ProjectSettingsPanel onClose={() => setActivePanel(null)} />}
           </div>
         )}

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { executeAiActions, formatActionResults } from '../../services/aiActionExecutor'
+import { executeAiActions } from '../../services/aiActionExecutor'
 import { useUIStore } from '../../stores/uiStore'
 import type { AISuggestion } from '../../stores/aiStore'
 
@@ -43,7 +43,7 @@ export default function AIRecommendations({ suggestions }: AIRecommendationsProp
         currentAction: sug.text,
       })
 
-      await executeAiActions([sug.action], (step, total, desc) => {
+      await executeAiActions([sug.action], (_step, _total, desc) => {
         setProgress(prev => ({ ...prev, currentAction: desc }))
       })
 
