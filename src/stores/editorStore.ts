@@ -50,32 +50,73 @@ export interface BRollItem {
   imageUrl: string
   startTime: number
   duration: number
-  source: 'ai' | 'stock' | 'upload'
+  source: 'ai' | 'stock' | 'upload' | 'video'
   prompt?: string
+  mediaType?: 'image' | 'video'
+  provider?: string
   // Position
-  displayMode: 'fullscreen' | 'pip' | 'halfLeft' | 'halfRight'
+  displayMode: 'fullscreen' | 'pip' | 'halfLeft' | 'halfRight' | 'halfTop' | 'halfBottom' | 'topRight' | 'topLeft' | 'bottomRight' | 'bottomLeft' | 'pipSmall' | 'pipMedium'
   x: number
   y: number
   width: number
   height: number
   lockAspectRatio: boolean
+  rotation: number
+  flipH: boolean
+  flipV: boolean
   // Animation
-  entranceAnimation: 'none' | 'fadeIn' | 'slideRight' | 'slideLeft' | 'slideUp' | 'zoomIn'
-  exitAnimation: 'none' | 'fadeOut' | 'slideRight' | 'slideLeft' | 'slideUp' | 'zoomOut'
+  entranceAnimation: 'none' | 'fadeIn' | 'slideRight' | 'slideLeft' | 'slideUp' | 'slideDown' | 'zoomIn' | 'rotate' | 'bounce'
+  stayingAnimation: 'none' | 'gentleFloat' | 'pulse' | 'hover' | 'slowRotate' | 'blink'
+  exitAnimation: 'none' | 'fadeOut' | 'slideRight' | 'slideLeft' | 'slideUp' | 'slideDown' | 'zoomOut'
   animationDuration: number
+  animationEasing: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'bounce' | 'elastic'
+  animationDelay: number
+  stayingSpeed: 'slow' | 'medium' | 'fast'
   // Visual
   opacity: number
   borderRadius: number
   shadowEnabled: boolean
   shadowIntensity: number
+  shadowColor: string
+  shadowBlur: number
+  shadowX: number
+  shadowY: number
   borderEnabled: boolean
   borderColor: string
   borderWidth: number
   blurBackground: boolean
+  // Filters
+  brightness: number
+  contrast: number
+  saturation: number
+  blur: number
+  grayscale: boolean
+  sepia: boolean
+  blendMode: 'normal' | 'multiply' | 'screen' | 'overlay' | 'soft-light'
   // Fit
   objectFit: 'cover' | 'contain' | 'fill'
   // Layer
   zIndex: number
+  // Group
+  groupId?: string
+}
+
+export interface BRollHistoryItem {
+  id: string
+  imageUrl: string
+  prompt?: string
+  source: 'ai' | 'stock' | 'upload' | 'video'
+  provider?: string
+  createdAt: number
+  aspectRatio?: string
+  style?: string
+}
+
+export interface BRollTemplate {
+  id: string
+  name: string
+  description: string
+  positions: Partial<BRollItem>[]
 }
 
 export interface DeletedRegion {
@@ -117,6 +158,7 @@ interface EditorState {
   captions: Caption[]
   captionStyle: CaptionStyle
   bRollItems: BRollItem[]
+  bRollHistory: BRollHistoryItem[]
   editHistory: EditHistoryEntry[]
   redoHistory: EditHistoryEntry[]
   lastSavedAt: number | null
@@ -132,6 +174,7 @@ interface EditorState {
   setMediaFile: (file: File | null) => void
   setMediaBlobUrl: (url: string | null) => void
   setMediaType: (type: 'video' | 'audio' | null) => void
+  loadMedia: (file: File, blobUrl: string, type: 'video' | 'audio') => void
   setWaveformData: (data: number[] | null) => void
   setCurrentTime: (time: number) => void
   setDuration: (duration: number) => void
@@ -145,11 +188,23 @@ interface EditorState {
   setCaptionStyle: (style: Partial<CaptionStyle>) => void
   addBRollItem: (item: Partial<BRollItem> & Pick<BRollItem, 'id' | 'imageUrl' | 'startTime' | 'duration' | 'source'>) => void
   removeBRollItem: (id: string) => void
+  removeAllBRollItems: () => void
   updateBRollItem: (id: string, updates: Partial<BRollItem>) => void
   duplicateBRollItem: (id: string) => void
   moveBRollLayer: (id: string, direction: 'up' | 'down') => void
+  bringToFront: (id: string) => void
+  sendToBack: (id: string) => void
   selectedBRollId: string | null
   setSelectedBRollId: (id: string | null) => void
+  addBRollHistoryItem: (item: BRollHistoryItem) => void
+  clearBRollHistory: () => void
+  removeBRollHistoryItem: (id: string) => void
+  // Muted regions for AI
+  mutedRegions: Array<{ start: number; end: number }>
+  addMutedRegion: (start: number, end: number) => void
+  // Translated captions
+  translatedCaptions: Array<{ text: string; startTime: number; endTime: number; language: string }>
+  setTranslatedCaptions: (captions: Array<{ text: string; startTime: number; endTime: number }>, lang: string) => void
   addEditHistory: (entry: Omit<EditHistoryEntry, 'timestamp'>) => void
   markSaved: () => void
   setIsDirty: (dirty: boolean) => void
@@ -227,7 +282,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   captions: [],
   captionStyle: { ...defaultCaptionStyle },
   bRollItems: [],
+  bRollHistory: [],
   selectedBRollId: null,
+  mutedRegions: [],
+  translatedCaptions: [],
   rangeStart: null,
   rangeEnd: null,
   editHistory: [],
@@ -244,6 +302,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setMediaFile: (file) => set({ mediaFile: file }),
   setMediaBlobUrl: (url) => set({ mediaBlobUrl: url }),
   setMediaType: (type) => set({ mediaType: type }),
+  loadMedia: (file, blobUrl, type) => set({ mediaFile: file, mediaBlobUrl: blobUrl, mediaType: type, currentTime: 0, isPlaying: false, waveformData: null }),
   setWaveformData: (data) => set({ waveformData: data }),
   setCurrentTime: (time) => set({ currentTime: time }),
   setDuration: (duration) => set({ duration }),
@@ -263,13 +322,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const maxZ = s.bRollItems.reduce((m, b) => Math.max(m, b.zIndex || 0), 0)
     const full: BRollItem = {
       displayMode: 'fullscreen', x: 0, y: 0, width: 100, height: 100, lockAspectRatio: true,
-      entranceAnimation: 'fadeIn', exitAnimation: 'fadeOut', animationDuration: 0.5,
-      opacity: 100, borderRadius: 0, shadowEnabled: false, shadowIntensity: 50,
+      rotation: 0, flipH: false, flipV: false,
+      entranceAnimation: 'fadeIn', stayingAnimation: 'none', exitAnimation: 'fadeOut',
+      animationDuration: 0.5, animationEasing: 'ease-in-out', animationDelay: 0, stayingSpeed: 'medium',
+      opacity: 100, borderRadius: 0,
+      shadowEnabled: false, shadowIntensity: 50, shadowColor: '#000000', shadowBlur: 10, shadowX: 0, shadowY: 4,
       borderEnabled: false, borderColor: '#FFFFFF', borderWidth: 2, blurBackground: false,
+      brightness: 100, contrast: 100, saturation: 100, blur: 0, grayscale: false, sepia: false, blendMode: 'normal',
       objectFit: 'cover', zIndex: maxZ + 1,
       ...item,
     }
-    return { bRollItems: [...s.bRollItems, full], isDirty: true }
+    // Also add to history
+    const historyItem: BRollHistoryItem = {
+      id: `hist-${Date.now()}`,
+      imageUrl: item.imageUrl,
+      prompt: item.prompt,
+      source: item.source,
+      provider: item.provider,
+      createdAt: Date.now(),
+    }
+    const newHistory = [historyItem, ...s.bRollHistory].slice(0, 50)
+    return { bRollItems: [...s.bRollItems, full], bRollHistory: newHistory, isDirty: true }
   }),
   removeBRollItem: (id) => set((s) => ({
     bRollItems: s.bRollItems.filter((b) => b.id !== id),
@@ -300,6 +373,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
     return { bRollItems: items, isDirty: true }
   }),
+  removeAllBRollItems: () => set({ bRollItems: [], selectedBRollId: null, isDirty: true }),
+  bringToFront: (id) => set((s) => {
+    const maxZ = s.bRollItems.reduce((m, b) => Math.max(m, b.zIndex || 0), 0)
+    return { bRollItems: s.bRollItems.map((b) => b.id === id ? { ...b, zIndex: maxZ + 1 } : b), isDirty: true }
+  }),
+  sendToBack: (id) => set((s) => {
+    const minZ = s.bRollItems.reduce((m, b) => Math.min(m, b.zIndex || 0), Infinity)
+    return { bRollItems: s.bRollItems.map((b) => b.id === id ? { ...b, zIndex: minZ - 1 } : b), isDirty: true }
+  }),
+  addBRollHistoryItem: (item) => set((s) => ({ bRollHistory: [item, ...s.bRollHistory].slice(0, 50) })),
+  clearBRollHistory: () => set({ bRollHistory: [] }),
+  removeBRollHistoryItem: (id) => set((s) => ({ bRollHistory: s.bRollHistory.filter((h) => h.id !== id) })),
+  addMutedRegion: (start, end) => set((s) => ({ mutedRegions: [...s.mutedRegions, { start, end }] })),
+  setTranslatedCaptions: (captions, lang) => set({ translatedCaptions: captions.map((c) => ({ ...c, language: lang })) }),
   addEditHistory: (entry) => set((s) => ({
     editHistory: [...s.editHistory, { ...entry, timestamp: Date.now() }],
     redoHistory: [],
@@ -355,7 +442,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     mediaFile: null, mediaBlobUrl: null, mediaType: null, waveformData: null,
     currentTime: 0, duration: 0, isPlaying: false, playbackSpeed: 1, volume: 80,
     transcript: [], showCaptions: false, captions: [], captionStyle: { ...defaultCaptionStyle },
-    bRollItems: [], selectedBRollId: null, rangeStart: null, rangeEnd: null, editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
+    bRollItems: [], bRollHistory: [], selectedBRollId: null, mutedRegions: [], translatedCaptions: [],
+    rangeStart: null, rangeEnd: null, editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
     speakers: [], editorEffects: {}, deletedRegions: [],
   }),
 

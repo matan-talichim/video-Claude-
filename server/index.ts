@@ -579,6 +579,343 @@ app.post('/api/generate-image', async (req, res) => {
   }
 })
 
+// ==================== MERGE VIDEOS (FFmpeg) ====================
+
+app.post('/api/merge', upload.array('files', 10), async (req, res) => {
+  const filePaths: string[] = []
+  try {
+    const files = req.files as Express.Multer.File[]
+    if (!files || files.length < 2) {
+      if (files) files.forEach(f => fs.unlinkSync(f.path))
+      return res.status(400).json({ message: 'נדרשים לפחות 2 קבצים למיזוג.' })
+    }
+
+    const ffmpeg = getFFmpeg()
+
+    // Create a concat list file
+    const listPath = path.join(uploadsDir, `concat-${Date.now()}.txt`)
+    const outputPath = path.join(uploadsDir, `merged-${Date.now()}.mp4`)
+
+    // Convert all files to same format first
+    for (let i = 0; i < files.length; i++) {
+      const normalizedPath = path.join(uploadsDir, `norm-${Date.now()}-${i}.mp4`)
+      execSync(
+        `"${ffmpeg}" -i "${files[i].path}" -c:v libx264 -c:a aac -ar 44100 -r 30 -preset fast "${normalizedPath}" -y`,
+        { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      filePaths.push(normalizedPath)
+      // Remove original upload
+      try { fs.unlinkSync(files[i].path) } catch {}
+    }
+
+    // Write concat list
+    const listContent = filePaths.map(p => `file '${p}'`).join('\n')
+    fs.writeFileSync(listPath, listContent)
+
+    // Merge using concat demuxer
+    execSync(
+      `"${ffmpeg}" -f concat -safe 0 -i "${listPath}" -c copy "${outputPath}" -y`,
+      { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+
+    // Cleanup temp files
+    try { fs.unlinkSync(listPath) } catch {}
+    filePaths.forEach(p => { try { fs.unlinkSync(p) } catch {} })
+
+    const outputFilename = path.basename(outputPath)
+    res.json({
+      url: `/api/audio/${outputFilename}`,
+      filename: outputFilename,
+      size: fs.statSync(outputPath).size,
+    })
+  } catch (error: any) {
+    // Cleanup on error
+    filePaths.forEach(p => { try { fs.unlinkSync(p) } catch {} })
+    console.error('Merge error:', error.message)
+    return res.status(500).json({ message: 'שגיאה במיזוג הסרטונים. נסה שוב.' })
+  }
+})
+
+// ==================== VIDEO GENERATION (Veo / Seedance placeholder) ====================
+
+app.post('/api/generate-video', async (req, res) => {
+  try {
+    const { prompt, provider, duration, style, motion, camera } = req.body
+    if (!prompt) return res.status(400).json({ message: 'לא התקבל תיאור לסרטון.' })
+
+    // Check for provider-specific API keys
+    if (provider === 'veo' && !process.env.VEO_API_KEY) {
+      // Fallback to DALL-E image generation with a toast message
+      const ai = await getOpenAI()
+      if (!ai) return res.status(400).json({ message: 'חבר API של Google Veo בהגדרות, או הגדר OpenAI כחלופה.' })
+
+      const image = await ai.images.generate({
+        model: 'dall-e-3',
+        prompt: `Cinematic ${style || 'realistic'} scene: ${prompt}`,
+        n: 1,
+        size: '1792x1024',
+        quality: 'standard',
+      })
+
+      return res.json({
+        url: image.data[0]?.url,
+        revisedPrompt: image.data[0]?.revised_prompt,
+        type: 'image_fallback',
+        message: 'יצירת סרטון Veo תהיה זמינה בקרוב. בינתיים נוצרה תמונה.',
+      })
+    }
+
+    if (provider === 'seedance' && !process.env.SEEDANCE_API_KEY) {
+      const ai = await getOpenAI()
+      if (!ai) return res.status(400).json({ message: 'חבר API של Seedance בהגדרות, או הגדר OpenAI כחלופה.' })
+
+      const image = await ai.images.generate({
+        model: 'dall-e-3',
+        prompt: `Dynamic animated scene: ${prompt}`,
+        n: 1,
+        size: '1792x1024',
+        quality: 'standard',
+      })
+
+      return res.json({
+        url: image.data[0]?.url,
+        revisedPrompt: image.data[0]?.revised_prompt,
+        type: 'image_fallback',
+        message: 'יצירת סרטון Seedance תהיה זמינה בקרוב. בינתיים נוצרה תמונה.',
+      })
+    }
+
+    // If API keys exist, placeholder for future real implementation
+    return res.status(400).json({ message: `חבר API של ${provider} בהגדרות` })
+  } catch (error: any) {
+    if (error.status === 401) return res.status(401).json({ message: 'מפתח ה-API לא תקין.' })
+    if (error.status === 429) return res.status(429).json({ message: 'הגעת למגבלת השימוש.' })
+    console.error('Video generation error:', error.message)
+    return res.status(500).json({ message: 'שגיאה ביצירת סרטון. נסה שוב.' })
+  }
+})
+
+// ==================== STOCK MEDIA SEARCH ====================
+
+app.get('/api/stock/search', async (req, res) => {
+  try {
+    const { q, source, page } = req.query
+    if (!q) return res.status(400).json({ message: 'חסרה שאילתת חיפוש.' })
+
+    const query = String(q)
+    const pageNum = Number(page) || 1
+    const src = String(source || 'unsplash')
+
+    if (src === 'unsplash') {
+      const apiKey = process.env.UNSPLASH_API_KEY
+      if (!apiKey) {
+        // Return placeholder results
+        return res.json({ results: generatePlaceholderResults(query, 'unsplash'), source: 'unsplash', placeholder: true })
+      }
+      const response = await fetch(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${pageNum}&per_page=12`, {
+        headers: { Authorization: `Client-ID ${apiKey}` },
+      })
+      if (!response.ok) return res.json({ results: generatePlaceholderResults(query, 'unsplash'), source: 'unsplash', placeholder: true })
+      const data = await response.json()
+      const results = data.results.map((img: any) => ({
+        id: img.id,
+        url: img.urls.regular,
+        thumbUrl: img.urls.small,
+        photographer: img.user.name,
+        resolution: `${img.width}x${img.height}`,
+        type: 'image',
+        source: 'unsplash',
+      }))
+      return res.json({ results, source: 'unsplash', total: data.total })
+    }
+
+    if (src === 'pexels') {
+      const apiKey = process.env.PEXELS_API_KEY
+      if (!apiKey) return res.json({ results: generatePlaceholderResults(query, 'pexels'), source: 'pexels', placeholder: true })
+      const response = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&page=${pageNum}&per_page=12`, {
+        headers: { Authorization: apiKey },
+      })
+      if (!response.ok) return res.json({ results: generatePlaceholderResults(query, 'pexels'), source: 'pexels', placeholder: true })
+      const data = await response.json()
+      const results = data.photos.map((img: any) => ({
+        id: img.id.toString(),
+        url: img.src.large2x,
+        thumbUrl: img.src.medium,
+        photographer: img.photographer,
+        resolution: `${img.width}x${img.height}`,
+        type: 'image',
+        source: 'pexels',
+      }))
+      return res.json({ results, source: 'pexels', total: data.total_results })
+    }
+
+    if (src === 'pixabay') {
+      const apiKey = process.env.PIXABAY_API_KEY
+      if (!apiKey) return res.json({ results: generatePlaceholderResults(query, 'pixabay'), source: 'pixabay', placeholder: true })
+      const response = await fetch(`https://pixabay.com/api/?key=${apiKey}&q=${encodeURIComponent(query)}&page=${pageNum}&per_page=12&lang=he`)
+      if (!response.ok) return res.json({ results: generatePlaceholderResults(query, 'pixabay'), source: 'pixabay', placeholder: true })
+      const data = await response.json()
+      const results = data.hits.map((img: any) => ({
+        id: img.id.toString(),
+        url: img.largeImageURL,
+        thumbUrl: img.previewURL,
+        photographer: img.user,
+        resolution: `${img.imageWidth}x${img.imageHeight}`,
+        type: img.type === 'photo' ? 'image' : img.type,
+        source: 'pixabay',
+      }))
+      return res.json({ results, source: 'pixabay', total: data.totalHits })
+    }
+
+    return res.status(400).json({ message: 'מקור לא תקין.' })
+  } catch (error: any) {
+    console.error('Stock search error:', error.message)
+    return res.status(500).json({ message: 'שגיאה בחיפוש. נסה שוב.' })
+  }
+})
+
+function generatePlaceholderResults(query: string, source: string) {
+  return Array.from({ length: 6 }, (_, i) => ({
+    id: `placeholder-${source}-${i}`,
+    url: `https://placehold.co/800x450/1A1A2E/E94560?text=${encodeURIComponent(query)}+${i + 1}`,
+    thumbUrl: `https://placehold.co/400x225/1A1A2E/E94560?text=${encodeURIComponent(query)}+${i + 1}`,
+    photographer: 'Stock Photo',
+    resolution: '800x450',
+    type: 'image',
+    source,
+    placeholder: true,
+  }))
+}
+
+// ==================== B-ROLL SUGGESTIONS (AI) ====================
+
+app.post('/api/suggest-broll', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר.' })
+
+    const { transcript, segments } = req.body
+    if (!transcript) return res.status(400).json({ message: 'לא התקבל תמלול.' })
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a professional video editor. Analyze this Hebrew transcript and suggest 5-8 B-Roll images that would enhance the video. For each suggestion provide:
+- timestamp: when to show the B-Roll (in seconds)
+- prompt: DALL-E prompt in English for generating the image
+- duration: how long to show (3-8 seconds)
+- position: "fullscreen" or "pip"
+- reason: explanation in Hebrew why this B-Roll is needed
+
+Return ONLY valid JSON: {"suggestions": [{"timestamp": 5, "prompt": "...", "duration": 5, "position": "fullscreen", "reason": "..."}]}`,
+        },
+        { role: 'user', content: `Transcript:\n${transcript}\n\nSegments:\n${JSON.stringify(segments || [])}` },
+      ],
+      temperature: 0.7,
+      response_format: { type: 'json_object' },
+    })
+
+    const content = response.choices[0]?.message?.content || '{}'
+    const parsed = JSON.parse(content)
+    res.json({ suggestions: parsed.suggestions || [] })
+  } catch (error: any) {
+    if (error.status === 401) return res.status(401).json({ message: 'מפתח ה-API לא תקין.' })
+    if (error.status === 429) return res.status(429).json({ message: 'הגעת למגבלת השימוש.' })
+    console.error('B-Roll suggestion error:', error.message)
+    return res.status(500).json({ message: 'שגיאה ביצירת הצעות B-Roll. נסה שוב.' })
+  }
+})
+
+// ==================== ENHANCED AI CHAT (with full context) ====================
+
+app.post('/api/chat/enhanced', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר.' })
+
+    const { message, context } = req.body
+    if (!message) return res.status(400).json({ message: 'לא התקבלה הודעה' })
+
+    const systemPrompt = `אתה עוזר AI מקצועי לעריכת וידאו. יש לך שליטה מלאה על:
+- תמלול: עריכה, מחיקה, החלפת מילים
+- B-Roll: יצירה עם DALL-E, מיקום, גודל, אנימציה
+- כתוביות: הוספה, סגנון, צבע, אנימציה
+- חיתוך: מחיקת קטעים, פיצול, השתקה
+- תרגום: תרגום כתוביות ודאבינג
+- יצירת תוכן: תיאורים, פוסטים, כותרות
+
+מצב הפרויקט הנוכחי:
+- שם: ${context?.projectName || 'ללא שם'}
+- משך: ${context?.duration || 0} שניות
+- דוברים: ${context?.speakers?.join(', ') || 'לא זוהו'}
+- פריטי B-Roll: ${context?.brollItems?.length || 0}
+- כתוביות: ${context?.captions?.enabled ? 'פעילות' : 'כבויות'}
+- קטעים שנמחקו: ${context?.editPoints?.length || 0}
+
+כשמבקשים ממך לבצע פעולה, החזר JSON עם:
+{
+  "type": "action",
+  "actions": [
+    { "action": "add_broll", "params": { "prompt": "description", "start": 5, "end": 10, "position": "fullscreen" } },
+    { "action": "add_captions", "params": { "style": "modern", "language": "he" } },
+    { "action": "delete_range", "params": { "start": 30, "end": 35 } },
+    { "action": "remove_filler_words", "params": {} },
+    { "action": "generate_content", "params": { "type": "youtube_description" } },
+    { "action": "translate", "params": { "targetLang": "en" } },
+    { "action": "change_caption_style", "params": { "style": "karaoke" } },
+    { "action": "mute_range", "params": { "start": 5, "end": 8 } },
+    { "action": "suggest_clips", "params": { "count": 3, "format": "9:16" } },
+    { "action": "move_broll", "params": { "fromTime": 5, "toTime": 20 } },
+    { "action": "resize_broll", "params": { "time": 10, "position": "fullscreen" } },
+    { "action": "delete_all_broll", "params": {} },
+    { "action": "add_animation", "params": { "type": "fadeIn", "target": "broll" } },
+    { "action": "auto_broll", "params": {} }
+  ],
+  "summary": "תיאור בעברית של מה שנעשה",
+  "steps": ["שלב 1...", "שלב 2..."]
+}
+
+אתה יכול להחזיר מספר פעולות ברשימה אחת - הן יבוצעו לפי הסדר.
+תמיד תסביר בעברית מה אתה עושה ולמה.
+אם לא בטוח, שאל שאלה לפני שמבצע.
+החזר תמיד JSON תקין בלבד.`
+
+    const transcriptText = context?.transcript || ''
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: message + (transcriptText ? `\n\nTranscript:\n${transcriptText}` : '') },
+      ],
+      temperature: 0.7,
+      response_format: { type: 'json_object' },
+    })
+
+    const content = response.choices[0]?.message?.content || '{}'
+    const usage = response.usage
+    let parsed: any
+    try {
+      parsed = JSON.parse(content)
+    } catch {
+      parsed = { type: 'text', content, summary: content }
+    }
+
+    res.json({
+      response: parsed,
+      rawContent: content,
+      usage: usage ? { promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, totalTokens: usage.total_tokens } : null,
+    })
+  } catch (error: any) {
+    if (error.status === 401) return res.status(401).json({ message: 'מפתח ה-API לא תקין.' })
+    if (error.status === 429) return res.status(429).json({ message: 'הגעת למגבלת השימוש.' })
+    console.error('Enhanced chat error:', error.message)
+    return res.status(500).json({ message: 'שגיאה בשרת. נסה שוב.' })
+  }
+})
+
 // ==================== ELEVENLABS - VOICE CLONING & TTS ====================
 
 app.post('/api/voices/clone', upload.single('file'), async (req, res) => {
@@ -907,6 +1244,11 @@ app.listen(PORT, () => {
   console.log(`   OpenAI:     ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   ElevenLabs: ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   DeepL:      ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Unsplash:   ${process.env.UNSPLASH_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Pexels:     ${process.env.PEXELS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Pixabay:    ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Veo:        ${process.env.VEO_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Seedance:   ${process.env.SEEDANCE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
 
   // Check FFmpeg availability
   console.log('Checking FFmpeg...')

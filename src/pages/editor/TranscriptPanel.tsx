@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Search, X, Upload, Link2, Loader2, Pencil, Download, RefreshCw, Clock, Trash2, Scissors, Copy, FileText, ChevronDown, Merge, SplitSquareVertical, Replace, MessageSquare } from 'lucide-react'
+import { Search, X, Upload, Link2, Loader2, Pencil, Download, RefreshCw, Clock, Trash2, Copy, FileText, ChevronDown, Merge, SplitSquareVertical, Replace, MessageSquare } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useUsageStore } from '../../stores/usageStore'
@@ -57,7 +57,6 @@ export default function TranscriptPanel() {
   const [commentDialog, setCommentDialog] = useState<{ segIdx: number; wordIdx: number } | null>(null)
   const [commentText, setCommentText] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
-  const autoTranscribeTriggered = useRef(false)
   const transcriptContainerRef = useRef<HTMLDivElement>(null)
 
   const activeSegmentIdx = transcript.findIndex((seg, i) => {
@@ -165,11 +164,7 @@ export default function TranscriptPanel() {
     setIsTranscribing(false); setTranscribeProgress('')
   }
 
-  useEffect(() => {
-    if (apiChecked && openaiConnected && mediaFile && transcript.length === 0 && !isTranscribing && !autoTranscribeTriggered.current) {
-      autoTranscribeTriggered.current = true; handleAutoTranscribe()
-    }
-  }, [apiChecked, openaiConnected, mediaFile, transcript.length, isTranscribing])
+  // Transcription is manual only - user clicks the button
 
   const handleSpeakerRename = (segIdx: number) => {
     if (!speakerEditValue.trim()) { setEditingSpeaker(null); return }
@@ -263,7 +258,7 @@ export default function TranscriptPanel() {
   const handleReplaceWithAudio = async () => {
     if (!replaceDialog || !replaceText.trim()) return
     setIsReplacingAudio(true); handleReplaceTextOnly()
-    try { await api.tts(replaceText.trim()); addToast('המילה הוחלפה בתמלול ובסרטון!', 'success') }
+    try { await api.textToSpeech(replaceText.trim(), 'default'); addToast('המילה הוחלפה בתמלול ובסרטון!', 'success') }
     catch { addToast('הטקסט הוחלף אך שגיאה בהחלפת האודיו', 'warning') }
     setIsReplacingAudio(false); setReplaceDialog(null); setSelectedWords(null)
   }
@@ -420,7 +415,17 @@ export default function TranscriptPanel() {
                 <div contentEditable suppressContentEditableWarning
                   className="text-body leading-[1.8] segment-text outline-none focus:bg-white/[0.02] rounded px-1 -mx-1" dir="rtl"
                   onInput={(e) => handleSegmentInput(si, e)}
-                  onKeyDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    // Allow normal character-by-character deletion
+                    if (e.key === 'Backspace' || e.key === 'Delete') {
+                      // Let the browser handle single-character deletion natively
+                      // Only prevent if Ctrl/Cmd is held (which would delete whole word)
+                      if (e.metaKey || e.ctrlKey) {
+                        e.preventDefault()
+                      }
+                    }
+                  }}
                   onMouseUp={() => handleTextSelection(si)}>
                   {segment.words.map((word, wi) => {
                     const isPlaying = currentTime >= word.start && currentTime < word.end

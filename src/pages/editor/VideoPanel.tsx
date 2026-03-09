@@ -110,7 +110,7 @@ export default function VideoPanel() {
   const bRollItems = useEditorStore((s) => s.bRollItems)
   const selectedBRollId = useEditorStore((s) => s.selectedBRollId)
   const setSelectedBRollId = useEditorStore((s) => s.setSelectedBRollId)
-  const updateBRollItem = useEditorStore((s) => s.updateBRollItem)
+
 
   const activeBRollItems = bRollItems
     .filter(b => currentTime >= b.startTime && currentTime < b.startTime + b.duration)
@@ -237,58 +237,109 @@ function BRollOverlay({ item, currentTime, isSelected, onSelect }: {
   const elapsed = currentTime - item.startTime
   const remaining = (item.startTime + item.duration) - currentTime
   const animDur = item.animationDuration || 0.5
+  const delay = item.animationDelay || 0
 
-  let animStyle: React.CSSProperties = {}
-  if (elapsed < animDur && item.entranceAnimation !== 'none') {
-    const p = elapsed / animDur
+  let animOpacity = item.opacity / 100
+  let animTransform = ''
+
+  // Entrance animation
+  if (elapsed - delay < animDur && elapsed >= delay && item.entranceAnimation !== 'none') {
+    const p = Math.max(0, (elapsed - delay) / animDur)
     switch (item.entranceAnimation) {
-      case 'fadeIn': animStyle = { opacity: p * (item.opacity / 100) }; break
-      case 'slideRight': animStyle = { transform: `translateX(${(1 - p) * 100}%)`, opacity: item.opacity / 100 }; break
-      case 'slideLeft': animStyle = { transform: `translateX(${-(1 - p) * 100}%)`, opacity: item.opacity / 100 }; break
-      case 'slideUp': animStyle = { transform: `translateY(${(1 - p) * 100}%)`, opacity: item.opacity / 100 }; break
-      case 'zoomIn': animStyle = { transform: `scale(${0.3 + p * 0.7})`, opacity: p * (item.opacity / 100) }; break
+      case 'fadeIn': animOpacity = p * (item.opacity / 100); break
+      case 'slideRight': animTransform = `translateX(${(1 - p) * 100}%)`; break
+      case 'slideLeft': animTransform = `translateX(${-(1 - p) * 100}%)`; break
+      case 'slideUp': animTransform = `translateY(${(1 - p) * 100}%)`; break
+      case 'slideDown': animTransform = `translateY(${-(1 - p) * 100}%)`; break
+      case 'zoomIn': animTransform = `scale(${0.3 + p * 0.7})`; animOpacity = p * (item.opacity / 100); break
+      case 'rotate': animTransform = `rotate(${(1 - p) * 360}deg)`; animOpacity = p * (item.opacity / 100); break
+      case 'bounce': { const bp = p < 0.6 ? p / 0.6 : 1 - ((p - 0.6) / 0.4) * 0.2 + 0.2; animTransform = `translateY(${(1 - bp) * 50}px)`; break }
     }
-  } else if (remaining < animDur && item.exitAnimation !== 'none') {
+  }
+  // Exit animation
+  else if (remaining < animDur && item.exitAnimation !== 'none') {
     const p = remaining / animDur
     switch (item.exitAnimation) {
-      case 'fadeOut': animStyle = { opacity: p * (item.opacity / 100) }; break
-      case 'slideRight': animStyle = { transform: `translateX(${(1 - p) * 100}%)`, opacity: item.opacity / 100 }; break
-      case 'slideLeft': animStyle = { transform: `translateX(${-(1 - p) * 100}%)`, opacity: item.opacity / 100 }; break
-      case 'slideUp': animStyle = { transform: `translateY(${-(1 - p) * 100}%)`, opacity: item.opacity / 100 }; break
-      case 'zoomOut': animStyle = { transform: `scale(${0.3 + p * 0.7})`, opacity: p * (item.opacity / 100) }; break
+      case 'fadeOut': animOpacity = p * (item.opacity / 100); break
+      case 'slideRight': animTransform = `translateX(${(1 - p) * 100}%)`; break
+      case 'slideLeft': animTransform = `translateX(${-(1 - p) * 100}%)`; break
+      case 'slideUp': animTransform = `translateY(${-(1 - p) * 100}%)`; break
+      case 'slideDown': animTransform = `translateY(${(1 - p) * 100}%)`; break
+      case 'zoomOut': animTransform = `scale(${0.3 + p * 0.7})`; animOpacity = p * (item.opacity / 100); break
     }
-  } else {
-    animStyle = { opacity: item.opacity / 100 }
   }
+  // Staying animation
+  else if (item.stayingAnimation && item.stayingAnimation !== 'none') {
+    const speedMap = { slow: 0.5, medium: 1, fast: 2 }
+    const speed = speedMap[item.stayingSpeed || 'medium'] || 1
+    const t = elapsed * speed
+    switch (item.stayingAnimation) {
+      case 'gentleFloat': animTransform = `translateY(${Math.sin(t * 2) * 3}px)`; break
+      case 'pulse': { const s = 1 + Math.sin(t * 3) * 0.03; animTransform = `scale(${s})`; break }
+      case 'hover': animTransform = `translateY(${Math.sin(t * 1.5) * 5}px)`; break
+      case 'slowRotate': animTransform = `rotate(${t * 10}deg)`; break
+      case 'blink': animOpacity = (item.opacity / 100) * (0.6 + Math.sin(t * 4) * 0.4); break
+    }
+  }
+
+  // Base transform (rotation + flip)
+  const baseTransforms: string[] = []
+  if (item.rotation) baseTransforms.push(`rotate(${item.rotation}deg)`)
+  if (item.flipH) baseTransforms.push('scaleX(-1)')
+  if (item.flipV) baseTransforms.push('scaleY(-1)')
+  if (animTransform) baseTransforms.push(animTransform)
 
   let posStyle: React.CSSProperties = {}
   switch (item.displayMode) {
     case 'fullscreen': posStyle = { position: 'absolute', inset: 0 }; break
-    case 'pip': posStyle = { position: 'absolute', left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%` }; break
+    case 'pip': case 'pipSmall': posStyle = { position: 'absolute', right: '5%', bottom: '5%', width: '20%', height: '20%' }; break
+    case 'pipMedium': posStyle = { position: 'absolute', right: '5%', bottom: '5%', width: '35%', height: '35%' }; break
     case 'halfLeft': posStyle = { position: 'absolute', left: 0, top: 0, width: '50%', height: '100%' }; break
     case 'halfRight': posStyle = { position: 'absolute', right: 0, top: 0, width: '50%', height: '100%' }; break
+    case 'halfTop': posStyle = { position: 'absolute', left: 0, top: 0, width: '100%', height: '50%' }; break
+    case 'halfBottom': posStyle = { position: 'absolute', left: 0, bottom: 0, width: '100%', height: '50%' }; break
+    case 'topRight': posStyle = { position: 'absolute', right: '3%', top: '3%', width: '25%', height: '25%' }; break
+    case 'topLeft': posStyle = { position: 'absolute', left: '3%', top: '3%', width: '25%', height: '25%' }; break
+    case 'bottomRight': posStyle = { position: 'absolute', right: '3%', bottom: '3%', width: '25%', height: '25%' }; break
+    case 'bottomLeft': posStyle = { position: 'absolute', left: '3%', bottom: '3%', width: '25%', height: '25%' }; break
+    default: posStyle = { position: 'absolute', left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%` }
   }
+
+  // Filters
+  const filterParts: string[] = []
+  if (item.brightness !== undefined && item.brightness !== 100) filterParts.push(`brightness(${item.brightness}%)`)
+  if (item.contrast !== undefined && item.contrast !== 100) filterParts.push(`contrast(${item.contrast}%)`)
+  if (item.saturation !== undefined && item.saturation !== 100) filterParts.push(`saturate(${item.saturation}%)`)
+  if (item.blur && item.blur > 0) filterParts.push(`blur(${item.blur}px)`)
+  if (item.grayscale) filterParts.push('grayscale(100%)')
+  if (item.sepia) filterParts.push('sepia(100%)')
 
   const imgStyle: React.CSSProperties = {
     width: '100%', height: '100%',
     objectFit: item.objectFit || 'cover',
     borderRadius: `${item.borderRadius || 0}px`,
+    filter: filterParts.length > 0 ? filterParts.join(' ') : undefined,
+    mixBlendMode: item.blendMode !== 'normal' ? item.blendMode as any : undefined,
     ...(item.borderEnabled ? { border: `${item.borderWidth}px solid ${item.borderColor}` } : {}),
-    ...(item.shadowEnabled ? { boxShadow: `0 4px ${item.shadowIntensity / 2}px rgba(0,0,0,${item.shadowIntensity / 100})` } : {}),
+    ...(item.shadowEnabled ? { boxShadow: `${item.shadowX || 0}px ${item.shadowY || 4}px ${item.shadowBlur || 10}px ${item.shadowColor || 'rgba(0,0,0,0.5)'}` } : {}),
   }
 
   return (
-    <div style={{ ...posStyle, zIndex: (item.zIndex || 1) + 10, ...animStyle, cursor: item.displayMode === 'pip' ? 'move' : 'pointer' }}
+    <div style={{ ...posStyle, zIndex: (item.zIndex || 1) + 10, opacity: animOpacity, transform: baseTransforms.join(' ') || undefined, cursor: 'pointer', transition: 'opacity 0.05s' }}
       onClick={(e) => { e.stopPropagation(); onSelect() }}
       className={isSelected ? 'ring-2 ring-accent-purple ring-offset-1' : ''}>
       {item.blurBackground && <div className="absolute inset-0 backdrop-blur-md bg-black/30 z-[-1]" style={{ borderRadius: `${item.borderRadius || 0}px` }} />}
       <img src={item.imageUrl} alt="B-Roll" style={imgStyle} draggable={false} />
-      {isSelected && item.displayMode === 'pip' && (
+      {isSelected && (
         <>
-          <div className="absolute -top-1 -left-1 w-3 h-3 bg-accent-purple rounded-full cursor-nw-resize" />
-          <div className="absolute -top-1 -right-1 w-3 h-3 bg-accent-purple rounded-full cursor-ne-resize" />
-          <div className="absolute -bottom-1 -left-1 w-3 h-3 bg-accent-purple rounded-full cursor-sw-resize" />
-          <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-accent-purple rounded-full cursor-se-resize" />
+          <div className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-accent-purple rounded-sm cursor-nw-resize" />
+          <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-accent-purple rounded-sm cursor-ne-resize" />
+          <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 bg-accent-purple rounded-sm cursor-sw-resize" />
+          <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-accent-purple rounded-sm cursor-se-resize" />
+          <div className="absolute top-1/2 -left-1 -translate-y-1/2 w-2 h-4 bg-accent-purple/70 rounded-sm cursor-w-resize" />
+          <div className="absolute top-1/2 -right-1 -translate-y-1/2 w-2 h-4 bg-accent-purple/70 rounded-sm cursor-e-resize" />
+          <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-4 h-2 bg-accent-purple/70 rounded-sm cursor-n-resize" />
+          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-4 h-2 bg-accent-purple/70 rounded-sm cursor-s-resize" />
         </>
       )}
     </div>

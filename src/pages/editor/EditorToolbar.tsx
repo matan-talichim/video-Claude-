@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Mic, Scissors, RotateCcw, Clock, List, Eye, Image, Wand2, Users, Maximize2, Droplets, Share2, Upload, Download, Undo2, Redo2, SplitSquareHorizontal, Trash2, VolumeX, Copy, ClipboardPaste } from 'lucide-react'
+import { Mic, Scissors, RotateCcw, Clock, List, Eye, Image, Wand2, Users, Maximize2, Droplets, Share2, Upload, Download, Undo2, Redo2, SplitSquareHorizontal, Trash2, VolumeX } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 

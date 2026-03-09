@@ -1,12 +1,16 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { ZoomIn, ZoomOut, Volume2, Lock } from 'lucide-react'
+import { ZoomIn, ZoomOut, Volume2, Lock, Scissors, VolumeX, Trash2 } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
+import { useUIStore } from '../../stores/uiStore'
 
 export default function TimelinePanel() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { currentTime, duration, setCurrentTime, mediaFile, waveformData, setWaveformData, deletedRegions, bRollItems, rangeStart, rangeEnd } = useEditorStore()
+  const { currentTime, duration, setCurrentTime, mediaFile, waveformData, setWaveformData, deletedRegions, bRollItems, rangeStart, rangeEnd, splitAtPlayhead, muteTimeRange, removeTimeRange, selectedBRollId, setSelectedBRollId } = useEditorStore()
+  const { addToast } = useUIStore()
   const [zoom, setZoom] = useState(1)
   const [isDragging, setIsDragging] = useState(false)
+  const [selectionStart, setSelectionStart] = useState<number | null>(null)
+  const [selectionEnd, setSelectionEnd] = useState<number | null>(null)
   const waveformRef = useRef<number[]>([])
 
   // Generate real waveform from audio file
@@ -196,6 +200,51 @@ export default function TimelinePanel() {
 
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0
 
+  const getTimeFromX = (clientX: number) => {
+    const canvas = canvasRef.current
+    if (!canvas || duration <= 0) return 0
+    const rect = canvas.getBoundingClientRect()
+    return Math.max(0, Math.min(duration, ((clientX - rect.left) / rect.width) * duration))
+  }
+
+  const handleSelectionStart = (e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      setSelectionStart(getTimeFromX(e.clientX))
+      setSelectionEnd(null)
+    }
+  }
+
+  const handleSelectionMove = (e: React.MouseEvent) => {
+    if (selectionStart !== null && e.buttons === 1) {
+      setSelectionEnd(getTimeFromX(e.clientX))
+    }
+  }
+
+  const handleSplit = () => {
+    splitAtPlayhead()
+    addToast(`פוצל ב-${Math.floor(currentTime / 60)}:${Math.floor(currentTime % 60).toString().padStart(2, '0')}`, 'info')
+  }
+
+  const handleMuteSelection = () => {
+    if (selectionStart !== null && selectionEnd !== null) {
+      const s = Math.min(selectionStart, selectionEnd)
+      const e = Math.max(selectionStart, selectionEnd)
+      muteTimeRange(s, e)
+      addToast(`הושתק ${(e - s).toFixed(1)} שניות`, 'info')
+      setSelectionStart(null); setSelectionEnd(null)
+    }
+  }
+
+  const handleDeleteSelection = () => {
+    if (selectionStart !== null && selectionEnd !== null) {
+      const s = Math.min(selectionStart, selectionEnd)
+      const e = Math.max(selectionStart, selectionEnd)
+      removeTimeRange(s, e)
+      addToast(`נמחק ${(e - s).toFixed(1)} שניות`, 'info')
+      setSelectionStart(null); setSelectionEnd(null)
+    }
+  }
+
   return (
     <div className="bg-bg-deepest rounded-xl border border-white/[0.06] overflow-hidden h-full flex flex-col">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.06] shrink-0">
@@ -204,7 +253,22 @@ export default function TimelinePanel() {
             <span key={i} className="shrink-0">{marker}</span>
           ))}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 mr-2">
+        <div className="flex items-center gap-2 shrink-0 mr-2">
+          {/* Timeline tools */}
+          <button onClick={handleSplit} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-accent-purple" title="פצל בנקודה הנוכחית">
+            <Scissors size={12} />
+          </button>
+          {selectionStart !== null && selectionEnd !== null && (
+            <>
+              <button onClick={handleMuteSelection} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-yellow-400" title="השתק בחירה">
+                <VolumeX size={12} />
+              </button>
+              <button onClick={handleDeleteSelection} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-red-400" title="מחק בחירה">
+                <Trash2 size={12} />
+              </button>
+            </>
+          )}
+          <div className="w-px h-4 bg-white/[0.06]" />
           <button onClick={() => setZoom(Math.max(0.5, zoom - 0.25))} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-text-primary">
             <ZoomOut size={13} />
           </button>
@@ -218,15 +282,26 @@ export default function TimelinePanel() {
         </div>
       </div>
 
-      <canvas
-        ref={canvasRef}
-        className="w-full flex-1 cursor-pointer min-h-[60px]"
-        onClick={handleCanvasClick}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-      />
+      <div className="relative flex-1 min-h-[60px]"
+        onMouseDown={handleSelectionStart} onMouseMove={handleSelectionMove}>
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full cursor-pointer"
+          onClick={handleCanvasClick}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        />
+        {/* Selection overlay */}
+        {selectionStart !== null && selectionEnd !== null && duration > 0 && (
+          <div className="absolute top-0 bottom-0 bg-accent-purple/10 border-x border-accent-purple/40 pointer-events-none"
+            style={{
+              left: `${(Math.min(selectionStart, selectionEnd) / duration) * 100}%`,
+              width: `${(Math.abs(selectionEnd - selectionStart) / duration) * 100}%`,
+            }} />
+        )}
+      </div>
 
       <div className="px-2 py-2 space-y-1 border-t border-white/[0.06] shrink-0">
         {tracks.map((track) => (
@@ -244,11 +319,39 @@ export default function TimelinePanel() {
               </div>
             </div>
             <div className={`flex-1 h-5 ${track.trackColor} rounded relative overflow-hidden`}>
-              <div className={`h-full ${track.fillColor} rounded`} style={{ width: `${Math.min(progressPct + 15, 100)}%` }} />
+              {track.label === 'B-Roll' ? (
+                // Show actual B-Roll items on track
+                bRollItems.map((item) => (
+                  <div key={item.id}
+                    onClick={() => setSelectedBRollId(item.id)}
+                    className={`absolute top-0 h-full rounded cursor-pointer transition-colors ${selectedBRollId === item.id ? 'bg-pink-500/60 ring-1 ring-pink-400' : 'bg-pink-500/40 hover:bg-pink-500/50'}`}
+                    style={{
+                      left: duration > 0 ? `${(item.startTime / duration) * 100}%` : '0%',
+                      width: duration > 0 ? `${(item.duration / duration) * 100}%` : '0%',
+                    }}
+                    title={item.prompt || 'B-Roll'}>
+                    <span className="text-[7px] text-white truncate px-0.5 leading-5">{item.prompt?.slice(0, 15) || 'B-Roll'}</span>
+                  </div>
+                ))
+              ) : (
+                <div className={`h-full ${track.fillColor} rounded`} style={{ width: `${Math.min(progressPct + 15, 100)}%` }} />
+              )}
+              {/* Playhead on track */}
+              {duration > 0 && (
+                <div className="absolute top-0 bottom-0 w-px bg-pink-400/60 pointer-events-none" style={{ left: `${progressPct}%` }} />
+              )}
             </div>
           </div>
         ))}
       </div>
+      {/* Selection info */}
+      {selectionStart !== null && selectionEnd !== null && (
+        <div className="px-3 py-1 border-t border-white/[0.06] text-[10px] text-text-muted flex items-center gap-3">
+          <span>בחירה: {Math.floor(Math.min(selectionStart, selectionEnd) / 60)}:{Math.floor(Math.min(selectionStart, selectionEnd) % 60).toString().padStart(2, '0')} - {Math.floor(Math.max(selectionStart, selectionEnd) / 60)}:{Math.floor(Math.max(selectionStart, selectionEnd) % 60).toString().padStart(2, '0')}</span>
+          <span>({Math.abs(selectionEnd - selectionStart).toFixed(1)} שניות)</span>
+          <button onClick={() => { setSelectionStart(null); setSelectionEnd(null) }} className="text-text-muted hover:text-text-primary">נקה</button>
+        </div>
+      )}
     </div>
   )
 }
