@@ -1,9 +1,27 @@
 import { useState, useRef } from 'react'
-import { Film, Upload, Trash2, GripVertical, Loader2, Merge, AlertTriangle, ChevronDown, ChevronLeft } from 'lucide-react'
+import { Film, Upload, Trash2, GripVertical, Loader2, Merge, AlertTriangle, ChevronDown, ChevronLeft, ArrowLeftRight, Check } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
 import { api } from '../../services/api'
+
+const TRANSITIONS = [
+  { id: 'none', name: 'ללא', icon: '—', description: 'חיבור ישיר ללא מעבר' },
+  { id: 'fade', name: 'עמעום', icon: '🌫', description: 'עמעום הדרגתי בין הסרטונים' },
+  { id: 'dissolve', name: 'המסה', icon: '💫', description: 'המסה חלקה בין הסרטונים' },
+  { id: 'wipe-left', name: 'מחיקה שמאלה', icon: '👈', description: 'הסרטון הבא נכנס משמאל' },
+  { id: 'wipe-right', name: 'מחיקה ימינה', icon: '👉', description: 'הסרטון הבא נכנס מימין' },
+  { id: 'wipe-up', name: 'מחיקה למעלה', icon: '👆', description: 'הסרטון הבא נכנס מלמטה' },
+  { id: 'wipe-down', name: 'מחיקה למטה', icon: '👇', description: 'הסרטון הבא נכנס מלמעלה' },
+  { id: 'slide-left', name: 'הזזה שמאלה', icon: '⬅️', description: 'שני הסרטונים זזים שמאלה' },
+  { id: 'slide-right', name: 'הזזה ימינה', icon: '➡️', description: 'שני הסרטונים זזים ימינה' },
+  { id: 'zoom-in', name: 'זום פנימה', icon: '🔍', description: 'זום פנימה למרכז' },
+  { id: 'zoom-out', name: 'זום החוצה', icon: '🔎', description: 'זום החוצה מהמרכז' },
+  { id: 'blur', name: 'טשטוש', icon: '🌀', description: 'טשטוש ומעבר' },
+  { id: 'flash', name: 'הבזק', icon: '⚡', description: 'הבזק לבן בין הסרטונים' },
+  { id: 'black', name: 'מעבר שחור', icon: '⬛', description: 'עמעום לשחור ובחזרה' },
+  { id: 'spin', name: 'סיבוב', icon: '🔄', description: 'סיבוב בין הסרטונים' },
+]
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`
@@ -30,7 +48,8 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
   const [showSaveDialog, setShowSaveDialog] = useState<{ targetVideoId: string } | null>(null)
   const [isMerging, setIsMerging] = useState(false)
   const [showMergeDialog, setShowMergeDialog] = useState(false)
-  const [mergeTransition, setMergeTransition] = useState<'none' | 'fade'>('none')
+  const [mergeTransition, setMergeTransition] = useState('none')
+  const [mergeTransitionDuration, setMergeTransitionDuration] = useState(1.0)
   const [showOriginalFiles, setShowOriginalFiles] = useState(false)
   const [originalFileNames, setOriginalFileNames] = useState<string[]>([])
 
@@ -106,7 +125,7 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
     setIsMerging(true)
     try {
       const sortedFiles = videos.map((v) => v.file)
-      const result = await api.mergeVideos(sortedFiles, mergeTransition)
+      const result = await api.mergeVideos(sortedFiles, mergeTransition, mergeTransitionDuration)
       if (result.url) {
         const response = await fetch(`http://localhost:3001${result.url}`)
         const blob = await response.blob()
@@ -250,16 +269,49 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
                 </div>
               ))}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-muted">מעבר:</span>
-              <select
-                value={mergeTransition}
-                onChange={(e) => setMergeTransition(e.target.value as 'none' | 'fade')}
-                className="px-2 py-1 bg-bg-elevated rounded-lg border border-white/[0.06] text-xs text-text-primary focus:outline-none cursor-pointer"
-              >
-                <option value="none">ללא</option>
-                <option value="fade">עמעום (Fade)</option>
-              </select>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <ArrowLeftRight size={14} className="text-text-muted" />
+                <span className="text-xs text-text-muted font-medium">מעבר בין הקבצים:</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 max-h-40 overflow-y-auto">
+                {TRANSITIONS.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setMergeTransition(t.id)}
+                    className={`relative flex flex-col items-center gap-0.5 p-1.5 rounded-lg border transition-all text-center ${
+                      mergeTransition === t.id
+                        ? 'border-accent-purple bg-accent-purple/10 text-accent-purple'
+                        : 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.15] text-text-secondary hover:text-text-primary'
+                    }`}
+                  >
+                    {mergeTransition === t.id && (
+                      <div className="absolute top-0.5 left-0.5">
+                        <Check size={8} className="text-accent-purple" />
+                      </div>
+                    )}
+                    <span className="text-base leading-none">{t.icon}</span>
+                    <span className="text-[9px] font-medium leading-tight">{t.name}</span>
+                  </button>
+                ))}
+              </div>
+              {mergeTransition !== 'none' && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-text-muted">משך מעבר:</span>
+                    <span className="text-[10px] text-accent-purple font-mono">{mergeTransitionDuration.toFixed(1)}s</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.3"
+                    max="3"
+                    step="0.1"
+                    value={mergeTransitionDuration}
+                    onChange={(e) => setMergeTransitionDuration(parseFloat(e.target.value))}
+                    className="w-full h-1 bg-white/[0.06] rounded-full appearance-none cursor-pointer accent-accent-purple"
+                  />
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <button onClick={handleMerge}

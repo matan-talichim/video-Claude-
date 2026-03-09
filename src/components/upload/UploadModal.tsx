@@ -1,10 +1,28 @@
 import { useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CloudUpload, X, GripVertical, Video, Music, Plus, Merge, ArrowLeftRight, AlertCircle } from 'lucide-react'
+import { CloudUpload, X, GripVertical, Video, Music, Plus, Merge, ArrowLeftRight, AlertCircle, Check } from 'lucide-react'
 import Modal from '../Modal'
 import { useUploadsStore } from '../../stores/uploadsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useUIStore } from '../../stores/uiStore'
 
+const TRANSITIONS = [
+  { id: 'none', name: 'ללא', icon: '—', description: 'חיבור ישיר ללא מעבר' },
+  { id: 'fade', name: 'עמעום', icon: '🌫', description: 'עמעום הדרגתי בין הסרטונים' },
+  { id: 'dissolve', name: 'המסה', icon: '💫', description: 'המסה חלקה בין הסרטונים' },
+  { id: 'wipe-left', name: 'מחיקה שמאלה', icon: '👈', description: 'הסרטון הבא נכנס משמאל' },
+  { id: 'wipe-right', name: 'מחיקה ימינה', icon: '👉', description: 'הסרטון הבא נכנס מימין' },
+  { id: 'wipe-up', name: 'מחיקה למעלה', icon: '👆', description: 'הסרטון הבא נכנס מלמטה' },
+  { id: 'wipe-down', name: 'מחיקה למטה', icon: '👇', description: 'הסרטון הבא נכנס מלמעלה' },
+  { id: 'slide-left', name: 'הזזה שמאלה', icon: '⬅️', description: 'שני הסרטונים זזים שמאלה' },
+  { id: 'slide-right', name: 'הזזה ימינה', icon: '➡️', description: 'שני הסרטונים זזים ימינה' },
+  { id: 'zoom-in', name: 'זום פנימה', icon: '🔍', description: 'זום פנימה למרכז' },
+  { id: 'zoom-out', name: 'זום החוצה', icon: '🔎', description: 'זום החוצה מהמרכז' },
+  { id: 'blur', name: 'טשטוש', icon: '🌀', description: 'טשטוש ומעבר' },
+  { id: 'flash', name: 'הבזק', icon: '⚡', description: 'הבזק לבן בין הסרטונים' },
+  { id: 'black', name: 'מעבר שחור', icon: '⬛', description: 'עמעום לשחור ובחזרה' },
+  { id: 'spin', name: 'סיבוב', icon: '🔄', description: 'סיבוב בין הסרטונים' },
+]
 
 interface LocalFile {
   id: string
@@ -43,17 +61,21 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [files, setFiles] = useState<LocalFile[]>([])
   const [dragOver, setDragOver] = useState(false)
   const [mergeEnabled, setMergeEnabled] = useState(false)
-  const [transition, setTransition] = useState<'none' | 'fade' | 'crossDissolve'>('none')
+  const [transition, setTransition] = useState('none')
+  const [transitionDuration, setTransitionDuration] = useState(1.0)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
   const [projectName, setProjectName] = useState('')
   const [nameError, setNameError] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [isMerging, setIsMerging] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [statusText, setStatusText] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addUploadFile = useUploadsStore((s) => s.addFile)
   const simulateUpload = useUploadsStore((s) => s.simulateUpload)
   const addProject = useProjectsStore((s) => s.addProject)
+  const addToast = useUIStore((s) => s.addToast)
 
 
   const processNativeFiles = useCallback((nativeFiles: FileList | File[]) => {
@@ -116,7 +138,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
     setDropIdx(null)
   }
 
-  const handleStartUpload = () => {
+  const handleStartUpload = async () => {
     if (!projectName.trim()) {
       setNameError(true)
       return
@@ -125,50 +147,68 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
     setIsUploading(true)
     setUploadProgress(0)
 
-    // Always create ONE project with ALL files
-    const videosData = files.map((file) => ({
-      file: file.nativeFile,
-      blobUrl: URL.createObjectURL(file.nativeFile),
-      mediaType: file.type,
-    }))
+    if (mergeEnabled && files.length > 1) {
+      // MERGE FLOW: upload all files, merge on server, create one project with merged video
+      setIsMerging(true)
+      setStatusText('מעלה קבצים...')
+      setUploadProgress(20)
 
-    const projectId = addProject({
-      name: projectName.trim(),
-      mediaFile: files[0]?.nativeFile,
-      mediaBlobUrl: videosData[0]?.blobUrl,
-      mediaType: files[0]?.type,
-      source: 'upload',
-      videos: videosData,
-    })
-
-    // Track uploads
-    files.forEach((file) => {
-      const uploadId = addUploadFile({
-        name: file.name,
-        size: file.size,
-        sizeBytes: file.sizeBytes,
-        type: file.type,
-        source: 'upload',
-        status: 'waiting',
-        progress: 0,
-        thumbnailGradient: '',
-        projectId,
-        file: file.nativeFile,
-        blobUrl: URL.createObjectURL(file.nativeFile),
+      const formData = new FormData()
+      files.forEach((f, i) => {
+        formData.append('files', f.nativeFile)
+        formData.append('order', String(i))
       })
-      simulateUpload(uploadId)
-    })
+      formData.append('transition', transition)
+      formData.append('transitionDuration', String(transitionDuration))
 
-    // Simulate upload progress with visual feedback
-    let progress = 0
-    const progressInterval = setInterval(() => {
-      progress += 8
-      setUploadProgress(Math.min(progress, 100))
-      if (progress >= 100) {
-        clearInterval(progressInterval)
+      try {
+        setStatusText('מאחד סרטונים... ⏳')
+        setUploadProgress(50)
+
+        const response = await fetch('http://localhost:3001/api/merge', {
+          method: 'POST',
+          body: formData,
+        })
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}))
+          throw new Error(err.message || 'Merge failed')
+        }
+
+        setUploadProgress(80)
+        setStatusText('מעבד תוצאה...')
+
+        const result = await response.json()
+        // Fetch the merged file blob
+        const blobResponse = await fetch(`http://localhost:3001${result.url}`)
+        const mergedBlob = await blobResponse.blob()
+        const mergedFile = new File([mergedBlob], projectName.trim() + '.mp4', { type: 'video/mp4' })
+        const mergedUrl = URL.createObjectURL(mergedBlob)
+
+        setUploadProgress(95)
+
+        // Create ONE project with ONE merged video
+        const projectId = addProject({
+          name: projectName.trim(),
+          mediaFile: mergedFile,
+          mediaBlobUrl: mergedUrl,
+          mediaType: 'video',
+          source: 'upload',
+          videos: [{
+            file: mergedFile,
+            blobUrl: mergedUrl,
+            mediaType: 'video' as const,
+          }],
+        })
+
+        setUploadProgress(100)
+        addToast('הסרטונים אוחדו בהצלחה!', 'success')
+
         setTimeout(() => {
           setIsUploading(false)
+          setIsMerging(false)
           setUploadProgress(0)
+          setStatusText('')
           setFiles([])
           setProjectName('')
           setMergeEnabled(false)
@@ -176,8 +216,68 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
           onClose()
           navigate(`/editor/${projectId}`)
         }, 500)
+      } catch (error: any) {
+        setIsUploading(false)
+        setIsMerging(false)
+        setUploadProgress(0)
+        setStatusText('')
+        addToast(error.message || 'שגיאה באיחוד. נסה שוב.', 'error')
       }
-    }, 200)
+    } else {
+      // NORMAL FLOW (no merge) - one project with separate videos
+      const videosData = files.map((file) => ({
+        file: file.nativeFile,
+        blobUrl: URL.createObjectURL(file.nativeFile),
+        mediaType: file.type,
+      }))
+
+      const projectId = addProject({
+        name: projectName.trim(),
+        mediaFile: files[0]?.nativeFile,
+        mediaBlobUrl: videosData[0]?.blobUrl,
+        mediaType: files[0]?.type,
+        source: 'upload',
+        videos: videosData,
+      })
+
+      // Track uploads
+      files.forEach((file) => {
+        const uploadId = addUploadFile({
+          name: file.name,
+          size: file.size,
+          sizeBytes: file.sizeBytes,
+          type: file.type,
+          source: 'upload',
+          status: 'waiting',
+          progress: 0,
+          thumbnailGradient: '',
+          projectId,
+          file: file.nativeFile,
+          blobUrl: URL.createObjectURL(file.nativeFile),
+        })
+        simulateUpload(uploadId)
+      })
+
+      // Simulate upload progress with visual feedback
+      let progress = 0
+      const progressInterval = setInterval(() => {
+        progress += 8
+        setUploadProgress(Math.min(progress, 100))
+        if (progress >= 100) {
+          clearInterval(progressInterval)
+          setTimeout(() => {
+            setIsUploading(false)
+            setUploadProgress(0)
+            setFiles([])
+            setProjectName('')
+            setMergeEnabled(false)
+            setTransition('none')
+            onClose()
+            navigate(`/editor/${projectId}`)
+          }, 500)
+        }
+      }, 200)
+    }
   }
 
   const handleClose = () => {
@@ -199,7 +299,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
             <div className="text-center py-8">
               <CloudUpload size={48} className="mx-auto mb-4 text-accent-purple animate-bounce" />
               <h3 className="text-lg font-medium text-text-primary mb-2">
-                {uploadProgress < 100 ? 'מעלה...' : 'מעבד...'}
+                {isMerging ? statusText : (uploadProgress < 100 ? 'מעלה...' : 'מעבד...')}
               </h3>
               <p className="text-sm text-text-muted mb-4">{projectName} ({files.length} קבצים)</p>
               <div className="max-w-md mx-auto">
@@ -324,7 +424,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
                 </label>
 
                 {mergeEnabled ? (
-                  <div className="space-y-2 pr-6">
+                  <div className="space-y-3 pr-6">
                     <p className="text-xs text-text-muted">הסרטון הסופי יהיה בסדר הבא:</p>
                     <div className="space-y-1">
                       {files.map((f, i) => (
@@ -334,20 +434,61 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
                         </div>
                       ))}
                     </div>
-                    <div className="flex items-center gap-2 mt-2">
-                      <ArrowLeftRight size={14} className="text-text-muted" />
-                      <span className="text-xs text-text-muted">מעבר בין הקבצים:</span>
-                      <select
-                        value={transition}
-                        onChange={(e) => setTransition(e.target.value as typeof transition)}
-                        className="px-2 py-1 bg-bg-elevated rounded-lg border border-white/[0.06] text-xs text-text-primary focus:outline-none cursor-pointer"
-                      >
-                        <option value="none">ללא</option>
-                        <option value="fade">Fade</option>
-                        <option value="crossDissolve">Cross dissolve</option>
-                      </select>
+
+                    {/* Transition selection grid */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <ArrowLeftRight size={14} className="text-text-muted" />
+                        <span className="text-xs text-text-muted font-medium">מעבר בין הקבצים:</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5 max-h-48 overflow-y-auto">
+                        {TRANSITIONS.map((t) => (
+                          <button
+                            key={t.id}
+                            onClick={() => setTransition(t.id)}
+                            className={`relative flex flex-col items-center gap-0.5 p-2 rounded-lg border transition-all text-center ${
+                              transition === t.id
+                                ? 'border-accent-purple bg-accent-purple/10 text-accent-purple'
+                                : 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.15] text-text-secondary hover:text-text-primary'
+                            }`}
+                          >
+                            {transition === t.id && (
+                              <div className="absolute top-1 left-1">
+                                <Check size={10} className="text-accent-purple" />
+                              </div>
+                            )}
+                            <span className="text-lg leading-none">{t.icon}</span>
+                            <span className="text-[10px] font-medium leading-tight">{t.name}</span>
+                            <span className="text-[8px] text-text-muted leading-tight">{t.description}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <p className="text-xs text-text-muted">האיחוד יתבצע בעורך לאחר ההעלאה</p>
+
+                    {/* Transition duration slider */}
+                    {transition !== 'none' && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-text-muted">משך מעבר:</span>
+                          <span className="text-xs text-accent-purple font-mono">{transitionDuration.toFixed(1)} שניות</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.3"
+                          max="3"
+                          step="0.1"
+                          value={transitionDuration}
+                          onChange={(e) => setTransitionDuration(parseFloat(e.target.value))}
+                          className="w-full h-1.5 bg-white/[0.06] rounded-full appearance-none cursor-pointer accent-accent-purple"
+                        />
+                        <div className="flex justify-between text-[9px] text-text-muted">
+                          <span>0.3s</span>
+                          <span>3.0s</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="text-xs text-accent-blue">האיחוד יתבצע אוטומטית בלחיצה על ״התחל העלאה״</p>
                   </div>
                 ) : (
                   <p className="text-xs text-text-muted pr-6">כל קובץ יופיע בנפרד בסרגל המדיה של הפרויקט</p>
