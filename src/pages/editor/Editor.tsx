@@ -19,14 +19,14 @@ import { useUIStore } from '../../stores/uiStore'
 
 type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'settings'
 
-const panelTabs: { id: PanelId; icon: typeof FileText; label: string }[] = [
-  { id: 'transcript', icon: FileText, label: 'תמלול' },
-  { id: 'ai', icon: Bot, label: 'עוזר AI' },
-  { id: 'media', icon: FolderOpen, label: 'קבצים' },
-  { id: 'broll', icon: Image, label: 'B-Roll' },
-  { id: 'captions', icon: Subtitles, label: 'כתוביות' },
-  { id: 'audio', icon: Volume2, label: 'אודיו' },
-  { id: 'settings', icon: Settings, label: 'הגדרות' },
+const panelTabs: { id: PanelId; icon: typeof FileText; label: string; tooltip: string }[] = [
+  { id: 'transcript', icon: FileText, label: 'תמלול', tooltip: 'תמלול - עריכת טקסט' },
+  { id: 'ai', icon: Bot, label: 'עוזר AI', tooltip: 'עוזר AI - עריכה חכמה' },
+  { id: 'media', icon: FolderOpen, label: 'קבצים', tooltip: 'קבצים - ניהול מדיה' },
+  { id: 'broll', icon: Image, label: 'B-Roll', tooltip: 'B-Roll - קטעי וידאו משלימים' },
+  { id: 'captions', icon: Subtitles, label: 'כתוביות', tooltip: 'כתוביות - עריכת כתוביות' },
+  { id: 'audio', icon: Volume2, label: 'אודיו', tooltip: 'אודיו - עריכת שמע' },
+  { id: 'settings', icon: Settings, label: 'הגדרות', tooltip: 'הגדרות - הגדרות הפרויקט' },
 ]
 
 export default function Editor() {
@@ -253,23 +253,23 @@ export default function Editor() {
         )}
 
         {/* Tab bar - always visible on LEFT (RTL: appears on the left visually) */}
-        <div className="w-12 shrink-0 bg-[#12121A] border-r border-white/[0.06] flex flex-col items-center py-2 gap-1">
+        <div className="w-16 shrink-0 bg-[#12121A] border-r border-white/[0.06] flex flex-col items-center py-2 gap-1">
           {panelTabs.map((tab, idx) => (
             <button
               key={tab.id}
               onClick={() => togglePanel(tab.id)}
-              className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all group relative ${
+              className={`w-14 h-14 rounded-lg flex flex-col items-center justify-center gap-1 transition-all group relative ${
                 activePanel === tab.id
                   ? 'bg-accent-purple/20 text-accent-purple border border-accent-purple/30'
                   : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
               }`}
-              title={tab.label}
             >
               <tab.icon size={18} />
-              {/* Tooltip on hover */}
-              <div className="absolute left-full mr-2 px-2 py-1 bg-[#1a1a2e] border border-white/[0.12] rounded text-[10px] text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg" style={{ marginLeft: '8px' }}>
-                {tab.label}
-                {idx < 5 && <span className="text-text-muted mr-1">({idx + 1})</span>}
+              <span className="text-[9px] leading-tight">{tab.label}</span>
+              {/* Tooltip on hover - appears to the LEFT in RTL */}
+              <div className="absolute left-full px-2 py-1 bg-[#1a1a2e] border border-white/[0.12] rounded text-[10px] text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg" style={{ marginLeft: '8px' }}>
+                {tab.tooltip}
+                {idx < 5 && <span className="text-text-muted mr-1"> ({idx + 1})</span>}
               </div>
             </button>
           ))}

@@ -586,19 +586,36 @@ app.post('/api/merge', upload.array('files', 20), async (req, res) => {
   try {
     const files = req.files as Express.Multer.File[]
     const transition = req.body.transition || 'none'
+    const transitionDuration = parseFloat(req.body.transitionDuration) || 1
 
     if (!files || files.length < 2) {
       if (files) files.forEach(f => fs.unlinkSync(f.path))
       return res.status(400).json({ message: 'נדרשים לפחות 2 קבצים למיזוג.' })
     }
 
-    console.log(`[MERGE] Merging ${files.length} files with transition: ${transition}`)
+    console.log(`[MERGE] Merging ${files.length} files with transition: ${transition}, duration: ${transitionDuration}s`)
 
     const ffmpeg = getFFmpeg()
-
-    // Create a concat list file
-    const listPath = path.join(uploadsDir, `concat-${Date.now()}.txt`)
+    const ffprobePath = ffmpeg === 'ffmpeg' ? 'ffprobe' : ffmpeg.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
     const outputPath = path.join(uploadsDir, `merged-${Date.now()}.mp4`)
+
+    // xfade transition mapping
+    const xfadeMap: Record<string, string> = {
+      'fade': 'fade',
+      'dissolve': 'dissolve',
+      'wipe-left': 'wipeleft',
+      'wipe-right': 'wiperight',
+      'wipe-up': 'wipeup',
+      'wipe-down': 'wipedown',
+      'slide-left': 'slideleft',
+      'slide-right': 'slideright',
+      'zoom-in': 'zoomin',
+      'zoom-out': 'squeezev',
+      'blur': 'fadeblack',
+      'flash': 'fadewhite',
+      'black': 'fadeblack',
+      'spin': 'circleopen',
+    }
 
     // Step 1: Normalize all files to same format (1920x1080, same codecs)
     for (let i = 0; i < files.length; i++) {
@@ -613,28 +630,88 @@ app.post('/api/merge', upload.array('files', 20), async (req, res) => {
       try { fs.unlinkSync(files[i].path) } catch {}
     }
 
-    // Step 2: Write concat list
-    const listContent = filePaths.map(p => `file '${p}'`).join('\n')
-    fs.writeFileSync(listPath, listContent)
+    const xfade = xfadeMap[transition]
 
-    // Step 3: Concatenate
-    if (transition === 'none') {
+    if (transition === 'none' || !xfade) {
+      // Simple concat without transitions
+      const listPath = path.join(uploadsDir, `concat-${Date.now()}.txt`)
+      const listContent = filePaths.map(p => `file '${p}'`).join('\n')
+      fs.writeFileSync(listPath, listContent)
+
       console.log('[MERGE] Concatenating without transitions...')
       execSync(
         `"${ffmpeg}" -f concat -safe 0 -i "${listPath}" -c copy "${outputPath}" -y`,
         { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
       )
-    } else {
-      // For fade transition, re-encode with concat filter
-      console.log('[MERGE] Concatenating with fade transition...')
+      try { fs.unlinkSync(listPath) } catch {}
+    } else if (filePaths.length === 2) {
+      // 2 files: use xfade directly
+      const probe = execSync(
+        `"${ffprobePath}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePaths[0]}"`,
+        { timeout: 30000 }
+      ).toString().trim()
+      const firstDuration = parseFloat(probe)
+      const offset = Math.max(0, firstDuration - transitionDuration)
+
+      console.log(`[MERGE] Applying xfade=${xfade}, offset=${offset}, duration=${transitionDuration}`)
       execSync(
-        `"${ffmpeg}" -f concat -safe 0 -i "${listPath}" -c:v libx264 -preset fast -crf 23 -c:a aac "${outputPath}" -y`,
+        `"${ffmpeg}" -i "${filePaths[0]}" -i "${filePaths[1]}" -filter_complex "[0:v][1:v]xfade=transition=${xfade}:duration=${transitionDuration}:offset=${offset}[outv];[0:a][1:a]acrossfade=d=${transitionDuration}[outa]" -map "[outv]" -map "[outa]" "${outputPath}" -y`,
+        { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+    } else {
+      // 3+ files: chain xfade filters
+      // Get durations of all files
+      const durations: number[] = []
+      for (const fp of filePaths) {
+        const probe = execSync(
+          `"${ffprobePath}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${fp}"`,
+          { timeout: 30000 }
+        ).toString().trim()
+        durations.push(parseFloat(probe))
+      }
+
+      // Build chained xfade filter
+      const inputs = filePaths.map((_, i) => `-i "${filePaths[i]}"`).join(' ')
+      let videoFilter = ''
+      let audioFilter = ''
+      let cumulativeOffset = 0
+
+      for (let i = 0; i < filePaths.length - 1; i++) {
+        const prevLabel = i === 0 ? '[0:v]' : `[vout${i}]`
+        const nextLabel = `[${i + 1}:v]`
+        const outLabel = i === filePaths.length - 2 ? '[outv]' : `[vout${i + 1}]`
+
+        if (i === 0) {
+          cumulativeOffset = durations[0] - transitionDuration
+        } else {
+          cumulativeOffset = cumulativeOffset + durations[i] - transitionDuration
+        }
+        const offset = Math.max(0, cumulativeOffset)
+
+        videoFilter += `${prevLabel}${nextLabel}xfade=transition=${xfade}:duration=${transitionDuration}:offset=${offset}${outLabel}`
+        if (i < filePaths.length - 2) videoFilter += ';'
+      }
+
+      // Chain audio crossfades
+      for (let i = 0; i < filePaths.length - 1; i++) {
+        const prevLabel = i === 0 ? '[0:a]' : `[aout${i}]`
+        const nextLabel = `[${i + 1}:a]`
+        const outLabel = i === filePaths.length - 2 ? '[outa]' : `[aout${i + 1}]`
+
+        audioFilter += `${prevLabel}${nextLabel}acrossfade=d=${transitionDuration}${outLabel}`
+        if (i < filePaths.length - 2) audioFilter += ';'
+      }
+
+      const fullFilter = `${videoFilter};${audioFilter}`
+      console.log(`[MERGE] Chained xfade for ${filePaths.length} files: ${fullFilter}`)
+
+      execSync(
+        `"${ffmpeg}" ${inputs} -filter_complex "${fullFilter}" -map "[outv]" -map "[outa]" "${outputPath}" -y`,
         { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
       )
     }
 
     // Cleanup temp files
-    try { fs.unlinkSync(listPath) } catch {}
     filePaths.forEach(p => { try { fs.unlinkSync(p) } catch {} })
 
     const outputFilename = path.basename(outputPath)

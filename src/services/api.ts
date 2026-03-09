@@ -158,13 +158,14 @@ export const api = {
     })
   },
 
-  mergeVideos: async (files: File[], transition: string = 'none') => {
+  mergeVideos: async (files: File[], transition: string = 'none', transitionDuration: number = 1) => {
     const formData = new FormData()
     files.forEach((f, i) => {
       formData.append('files', f)
       formData.append('order', String(i))
     })
     formData.append('transition', transition)
+    formData.append('transitionDuration', String(transitionDuration))
     return apiCall('/merge', { method: 'POST', body: formData })
   },
 
