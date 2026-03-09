@@ -52,6 +52,30 @@ export interface BRollItem {
   duration: number
   source: 'ai' | 'stock' | 'upload'
   prompt?: string
+  // Position
+  displayMode: 'fullscreen' | 'pip' | 'halfLeft' | 'halfRight'
+  x: number
+  y: number
+  width: number
+  height: number
+  lockAspectRatio: boolean
+  // Animation
+  entranceAnimation: 'none' | 'fadeIn' | 'slideRight' | 'slideLeft' | 'slideUp' | 'zoomIn'
+  exitAnimation: 'none' | 'fadeOut' | 'slideRight' | 'slideLeft' | 'slideUp' | 'zoomOut'
+  animationDuration: number
+  // Visual
+  opacity: number
+  borderRadius: number
+  shadowEnabled: boolean
+  shadowIntensity: number
+  borderEnabled: boolean
+  borderColor: string
+  borderWidth: number
+  blurBackground: boolean
+  // Fit
+  objectFit: 'cover' | 'contain' | 'fill'
+  // Layer
+  zIndex: number
 }
 
 export interface DeletedRegion {
@@ -119,9 +143,13 @@ interface EditorState {
   setShowCaptions: (show: boolean) => void
   setCaptions: (captions: Caption[]) => void
   setCaptionStyle: (style: Partial<CaptionStyle>) => void
-  addBRollItem: (item: BRollItem) => void
+  addBRollItem: (item: Partial<BRollItem> & Pick<BRollItem, 'id' | 'imageUrl' | 'startTime' | 'duration' | 'source'>) => void
   removeBRollItem: (id: string) => void
   updateBRollItem: (id: string, updates: Partial<BRollItem>) => void
+  duplicateBRollItem: (id: string) => void
+  moveBRollLayer: (id: string, direction: 'up' | 'down') => void
+  selectedBRollId: string | null
+  setSelectedBRollId: (id: string | null) => void
   addEditHistory: (entry: Omit<EditHistoryEntry, 'timestamp'>) => void
   markSaved: () => void
   setIsDirty: (dirty: boolean) => void
@@ -154,6 +182,13 @@ interface EditorState {
   reassignSegmentSpeaker: (segIdx: number, speakerId: number) => void
   splitSegment: (segIdx: number, wordIdx: number) => void
   mergeSegments: (segIdx1: number, segIdx2: number) => void
+  splitAtPlayhead: () => void
+  muteTimeRange: (startTime: number, endTime: number) => void
+  rangeStart: number | null
+  rangeEnd: number | null
+  setRangeStart: (t: number | null) => void
+  setRangeEnd: (t: number | null) => void
+  clearRange: () => void
 }
 
 const defaultCaptionStyle: CaptionStyle = {
@@ -192,6 +227,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   captions: [],
   captionStyle: { ...defaultCaptionStyle },
   bRollItems: [],
+  selectedBRollId: null,
+  rangeStart: null,
+  rangeEnd: null,
   editHistory: [],
   redoHistory: [],
   lastSavedAt: null,
@@ -217,12 +255,51 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setShowCaptions: (show) => set({ showCaptions: show }),
   setCaptions: (captions) => set({ captions }),
   setCaptionStyle: (style) => set((s) => ({ captionStyle: { ...s.captionStyle, ...style } })),
-  addBRollItem: (item) => set((s) => ({ bRollItems: [...s.bRollItems, item], isDirty: true })),
-  removeBRollItem: (id) => set((s) => ({ bRollItems: s.bRollItems.filter((b) => b.id !== id), isDirty: true })),
+  setSelectedBRollId: (id) => set({ selectedBRollId: id }),
+  setRangeStart: (t) => set({ rangeStart: t }),
+  setRangeEnd: (t) => set({ rangeEnd: t }),
+  clearRange: () => set({ rangeStart: null, rangeEnd: null }),
+  addBRollItem: (item) => set((s) => {
+    const maxZ = s.bRollItems.reduce((m, b) => Math.max(m, b.zIndex || 0), 0)
+    const full: BRollItem = {
+      displayMode: 'fullscreen', x: 0, y: 0, width: 100, height: 100, lockAspectRatio: true,
+      entranceAnimation: 'fadeIn', exitAnimation: 'fadeOut', animationDuration: 0.5,
+      opacity: 100, borderRadius: 0, shadowEnabled: false, shadowIntensity: 50,
+      borderEnabled: false, borderColor: '#FFFFFF', borderWidth: 2, blurBackground: false,
+      objectFit: 'cover', zIndex: maxZ + 1,
+      ...item,
+    }
+    return { bRollItems: [...s.bRollItems, full], isDirty: true }
+  }),
+  removeBRollItem: (id) => set((s) => ({
+    bRollItems: s.bRollItems.filter((b) => b.id !== id),
+    selectedBRollId: s.selectedBRollId === id ? null : s.selectedBRollId,
+    isDirty: true,
+  })),
   updateBRollItem: (id, updates) => set((s) => ({
     bRollItems: s.bRollItems.map((b) => b.id === id ? { ...b, ...updates } : b),
     isDirty: true,
   })),
+  duplicateBRollItem: (id) => set((s) => {
+    const item = s.bRollItems.find((b) => b.id === id)
+    if (!item) return s
+    const maxZ = s.bRollItems.reduce((m, b) => Math.max(m, b.zIndex || 0), 0)
+    const dup: BRollItem = { ...item, id: `broll-${Date.now()}`, startTime: item.startTime + item.duration, zIndex: maxZ + 1 }
+    return { bRollItems: [...s.bRollItems, dup], isDirty: true }
+  }),
+  moveBRollLayer: (id, direction) => set((s) => {
+    const sorted = [...s.bRollItems].sort((a, b) => a.zIndex - b.zIndex)
+    const idx = sorted.findIndex((b) => b.id === id)
+    if (idx < 0) return s
+    const swapIdx = direction === 'up' ? idx + 1 : idx - 1
+    if (swapIdx < 0 || swapIdx >= sorted.length) return s
+    const items = s.bRollItems.map((b) => {
+      if (b.id === sorted[idx].id) return { ...b, zIndex: sorted[swapIdx].zIndex }
+      if (b.id === sorted[swapIdx].id) return { ...b, zIndex: sorted[idx].zIndex }
+      return b
+    })
+    return { bRollItems: items, isDirty: true }
+  }),
   addEditHistory: (entry) => set((s) => ({
     editHistory: [...s.editHistory, { ...entry, timestamp: Date.now() }],
     redoHistory: [],
@@ -278,7 +355,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     mediaFile: null, mediaBlobUrl: null, mediaType: null, waveformData: null,
     currentTime: 0, duration: 0, isPlaying: false, playbackSpeed: 1, volume: 80,
     transcript: [], showCaptions: false, captions: [], captionStyle: { ...defaultCaptionStyle },
-    bRollItems: [], editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
+    bRollItems: [], selectedBRollId: null, rangeStart: null, rangeEnd: null, editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
     speakers: [], editorEffects: {}, deletedRegions: [],
   }),
 
@@ -537,6 +614,56 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({
       transcript: newTranscript, isDirty: true, redoHistory: [],
       editHistory: [...editHistory, { action: 'mergeSegments', description: `מוזגו קטעות ${idx1 + 1} ו-${idx2 + 1}`, timestamp: Date.now(), previousTranscript }],
+    })
+  },
+
+  splitAtPlayhead: () => {
+    const { currentTime, transcript, editHistory } = get()
+    if (transcript.length === 0) return
+    // Find segment containing the playhead
+    for (let si = 0; si < transcript.length; si++) {
+      const seg = transcript[si]
+      const segStart = seg.words[0]?.start ?? 0
+      const segEnd = seg.words[seg.words.length - 1]?.end ?? 0
+      if (currentTime >= segStart && currentTime <= segEnd) {
+        // Find the word boundary closest to currentTime
+        let wordIdx = 0
+        for (let wi = 0; wi < seg.words.length; wi++) {
+          if (seg.words[wi].start >= currentTime) {
+            wordIdx = wi
+            break
+          }
+          wordIdx = wi + 1
+        }
+        if (wordIdx > 0 && wordIdx < seg.words.length) {
+          const previousTranscript = JSON.parse(JSON.stringify(transcript))
+          const formatTs = (s: number) => {
+            const m = Math.floor(s / 60); const sec = Math.floor(s % 60)
+            return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+          }
+          const firstWords = seg.words.slice(0, wordIdx)
+          const secondWords = seg.words.slice(wordIdx)
+          const seg1: Segment = { ...seg, words: firstWords, endTime: formatTs(firstWords[firstWords.length - 1]?.end ?? 0), segEnd: firstWords[firstWords.length - 1]?.end }
+          const seg2: Segment = { ...seg, words: secondWords, startTime: formatTs(secondWords[0]?.start ?? 0), segStart: secondWords[0]?.start }
+          const newTranscript = [...transcript.slice(0, si), seg1, seg2, ...transcript.slice(si + 1)]
+          set({
+            transcript: newTranscript, isDirty: true, redoHistory: [],
+            editHistory: [...editHistory, { action: 'splitAtPlayhead', description: `פוצל בנקודת ה-playhead (${formatTs(currentTime)})`, timestamp: Date.now(), previousTranscript }],
+          })
+          return
+        }
+      }
+    }
+  },
+
+  muteTimeRange: (startTime, endTime) => {
+    const { deletedRegions, editHistory, transcript } = get()
+    const previousDeletedRegions = JSON.parse(JSON.stringify(deletedRegions))
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    set({
+      deletedRegions: [...deletedRegions, { startTime, endTime, description: 'השתקת קטע' }].sort((a, b) => a.startTime - b.startTime),
+      isDirty: true, redoHistory: [],
+      editHistory: [...editHistory, { action: 'muteTimeRange', description: `הושתק קטע מ-${startTime.toFixed(1)} עד ${endTime.toFixed(1)}`, timestamp: Date.now(), previousTranscript, previousDeletedRegions }],
     })
   },
 }))
