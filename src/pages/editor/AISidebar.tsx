@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Bot, Send, Volume2, Scissors, Subtitles, Languages, Wand2, Film, Eye, X, Paperclip, Mic, Copy, ChevronDown, ChevronUp, AlertCircle, ExternalLink, Image, Undo2, ThumbsUp } from 'lucide-react'
 import { useAIStore } from '../../stores/aiStore'
+import type { AISuggestion } from '../../stores/aiStore'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUsageStore } from '../../stores/usageStore'
 import { useApiStatusStore } from '../../stores/apiStatusStore'
@@ -8,6 +9,7 @@ import { useUIStore } from '../../stores/uiStore'
 import { api, ApiError } from '../../services/api'
 import { executeAiActions, formatActionResults } from '../../services/aiActionExecutor'
 import type { AIAction } from '../../services/aiActionExecutor'
+import AIRecommendations from './AIRecommendations'
 
 const quickActions = [
   { label: 'נקה אודיו', icon: Volume2, action: 'clean_audio' },
@@ -107,6 +109,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       hasEyeContact: editor.editorEffects?.eyeContact || false,
       hasGreenScreen: editor.editorEffects?.greenScreen?.enabled || false,
       reframeRatio: editor.editorEffects?.reframe?.ratio || '16:9',
+      isAudioEnhanced: editor.editorEffects?.audioEnhanced || false,
       isTranscribed: transcript.length > 0,
       hasMusic: false,
       exportFormat: null,
@@ -318,13 +321,13 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       }
     }
 
-    // Recommendations (local) - REAL analysis
-    if (input.includes('ממליץ') || input.includes('מה לעשות') || input.includes('מה אתה ממליץ')) {
+    // Recommendations (local) - REAL analysis with interactive checklist
+    if (input.includes('ממליץ') || input.includes('מה לעשות') || input.includes('מה אתה ממליץ') || input.includes('ערוך מקצועי') || input.includes('ערוך את הסרטון')) {
       if (editor.transcript.length === 0) {
-        updateMessage(processingId, '💡 תמלל קודם את הסרטון כדי שאוכל לנתח ולהמליץ.')
+        updateMessage(processingId, 'תמלל קודם את הסרטון כדי שאוכל לנתח ולהמליץ.')
         return
       }
-      const suggestions: string[] = []
+      const checklistSuggestions: AISuggestion[] = []
       const realFillers = editor.countFillerWords()
       const totalF = Object.values(realFillers).reduce((s: number, c) => s + (c as number), 0)
       const silences = editor.countSilences(1.0)
@@ -333,31 +336,72 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
 
       if (totalF > 0) {
         const topFillers = Object.entries(realFillers).sort((a, b) => (b[1] as number) - (a[1] as number)).slice(0, 3).map(([w, c]) => `${w}(${c})`).join(', ')
-        suggestions.push(`✂️ מצאתי ${totalF} מילות מילוי (${topFillers}). הסרה שלהן תחסוך זמן`)
+        checklistSuggestions.push({
+          text: `מצאתי ${totalF} מילות מילוי (${topFillers}). הסרתן תשפר את הבהירות`,
+          priority: 'high',
+          action: { action: 'remove_filler_words', params: {} },
+        })
       }
       if (silences.count > 0) {
-        suggestions.push(`⏱️ יש ${silences.count} שתיקות ארוכות (סה"כ ${silences.totalDuration.toFixed(0)} שניות). קיצור שלהן ישפר את הקצב`)
+        checklistSuggestions.push({
+          text: `יש ${silences.count} שתיקות ארוכות (סה"כ ${silences.totalDuration.toFixed(0)} שניות). קיצורן ישפר את הקצב`,
+          priority: 'high',
+          action: { action: 'shorten_silences', params: { threshold: 1.0 } },
+        })
       }
       if (!editor.showCaptions) {
-        suggestions.push('📝 אין כתוביות. כתוביות מגדילות מעורבות ב-40%')
-      }
-      if (editor.bRollItems.length === 0) {
-        suggestions.push('🖼️ אין B-Roll. הוספת תמונות תשבור מונוטוניות')
-      }
-      if (editor.duration > 120) {
-        suggestions.push(`🎬 הסרטון אורך ${formatSeconds(editor.duration)}. אפשר ליצור קליפים קצרים לרשתות`)
-      }
-      if (speakers.length > 1) {
-        suggestions.push(`👥 מזהה ${speakers.length} דוברים (${speakers.join(', ')}). מרכוז דובר פעיל ישפר את החוויה`)
+        checklistSuggestions.push({
+          text: 'אין כתוביות. הוספת כתוביות מודרניות תגדיל מעורבות ב-40%',
+          priority: 'high',
+          action: { action: 'add_captions', params: { style: 'modern' } },
+        })
       }
       if (!editor.editorEffects.audioEnhanced) {
-        suggestions.push('🎵 מומלץ לשפר את איכות האודיו בסאונד סטודיו')
+        checklistSuggestions.push({
+          text: 'מומלץ לשפר את איכות האודיו',
+          priority: 'high',
+          action: { action: 'enhance_audio', params: {} },
+        })
+      }
+      if (editor.bRollItems.length === 0) {
+        checklistSuggestions.push({
+          text: 'אין B-Roll. הוספת תמונות בנקודות מפתח תשבור מונוטוניות',
+          priority: 'medium',
+          action: { action: 'auto_broll', params: {} },
+        })
+      }
+      if (!editor.editorEffects.eyeContact) {
+        checklistSuggestions.push({
+          text: 'הפעלת קשר עין תשפר את החיבור עם הצופים',
+          priority: 'medium',
+          action: { action: 'eye_contact', params: { enabled: true } },
+        })
+      }
+      if (speakers.length > 1 && !editor.editorEffects.centerSpeaker) {
+        checklistSuggestions.push({
+          text: `מזהה ${speakers.length} דוברים (${speakers.join(', ')}). מרכוז דובר פעיל ישפר את החוויה`,
+          priority: 'medium',
+          action: { action: 'center_speaker', params: { enabled: true } },
+        })
+      }
+      if (editor.duration > 120) {
+        checklistSuggestions.push({
+          text: `הסרטון אורך ${formatSeconds(editor.duration)}. אפשר ליצור קליפים קצרים לרשתות`,
+          priority: 'low',
+          action: { action: 'suggest_clips', params: { count: 3 } },
+        })
       }
 
-      if (suggestions.length === 0) suggestions.push('✅ הכל נראה מעולה! הסרטון מוכן.')
+      if (checklistSuggestions.length === 0) {
+        updateMessage(processingId, 'הכל נראה מעולה! הסרטון מוכן.')
+        return
+      }
 
-      const summary = `📊 סיכום: ${wordCount} מילים, ${speakers.length} ${speakers.length === 1 ? 'דובר' : 'דוברים'}, ${formatSeconds(editor.duration)}`
-      updateMessage(processingId, `💡 המלצות:\n\n${suggestions.join('\n\n')}\n\n${summary}`)
+      const summary = `ניתחתי את הסרטון: ${wordCount} מילים, ${speakers.length} ${speakers.length === 1 ? 'דובר' : 'דוברים'}, ${formatSeconds(editor.duration)}`
+      updateMessage(processingId, summary, false, {
+        suggestions: checklistSuggestions,
+        showAsChecklist: true,
+      })
       return
     }
 
@@ -481,19 +525,32 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
 
         const response = result.response
 
-        // Handle multi-action responses
-        if (response.type === 'action' && response.actions && Array.isArray(response.actions)) {
-          let progressText = response.summary ? `🔄 ${response.summary}\n\n` : '🔄 מבצע פעולות...\n\n'
+        // Handle checklist/recommendation responses
+        if (response.showAsChecklist && response.suggestions && response.suggestions.length > 0) {
+          const suggestions: AISuggestion[] = response.suggestions.map((s: any) => ({
+            text: s.text,
+            priority: s.priority || 'medium',
+            action: s.action || { action: 'unknown', params: {} },
+          }))
+          updateMessage(processingId, response.message || response.summary || 'המלצות:', false, {
+            suggestions,
+            showAsChecklist: true,
+          })
+        }
+        // Handle multi-action responses (direct execution)
+        else if (response.actions && Array.isArray(response.actions) && response.actions.length > 0) {
+          let progressText = response.message ? `🔄 ${response.message}\n\n` : '🔄 מבצע פעולות...\n\n'
           updateMessage(processingId, progressText)
 
           const actionResults = await executeAiActions(response.actions, (step, total, desc) => {
-            progressText = `${response.summary || 'מבצע פעולות...'}\n\n${desc}\n(${step}/${total})`
+            progressText = `${response.message || 'מבצע פעולות...'}\n\n${desc}\n(${step}/${total})`
             updateMessage(processingId, progressText)
           })
 
           setLastBatchActions(response.actions)
           const summary = formatActionResults(actionResults)
-          updateMessage(processingId, `✅ ${response.summary || 'הפעולות הושלמו!'}\n\n${summary}`)
+          updateMessage(processingId, `✅ ${response.message || response.summary || 'הפעולות הושלמו!'}\n\n${summary}`)
+          addToast('הפעולות בוצעו בהצלחה!', 'success')
         }
         // Handle single action (backward compat)
         else if (response.type === 'action' && response.action) {
@@ -503,7 +560,6 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
             updateMessage(processingId,
               `✅ ${response.summary || 'הוסרו מילות מילוי'}\n\n${entries}\n\nסה"כ: ${editResult.totalRemoved} מילים\nנחסכו: ${formatSeconds(editResult.timeSaved)}`)
           } else {
-            // Execute single action via executor
             const actionResults = await executeAiActions([{ action: response.action, params: response.params || {} }])
             const summary = formatActionResults(actionResults)
             updateMessage(processingId, `✅ ${response.summary || 'הפעולה בוצעה'}\n\n${summary}`)
@@ -512,13 +568,9 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
         else if (response.type === 'content') {
           updateMessage(processingId, `✅ ${response.summary || 'תוכן נוצר'}:\n\n${response.content}`)
         }
-        else if (response.type === 'analysis') {
-          const suggestions = response.suggestions?.join('\n• ') || ''
-          updateMessage(processingId, `💡 ${response.summary || 'ניתוח'}:\n\n• ${suggestions}`)
-        }
         else {
           // Plain text response
-          updateMessage(processingId, response.content || result.rawContent || response.summary || 'לא התקבלה תשובה.')
+          updateMessage(processingId, response.message || response.content || result.rawContent || response.summary || 'לא התקבלה תשובה.')
         }
       } catch (err) {
         const message = err instanceof ApiError ? err.message : 'שגיאה בחיבור לשרת.'
@@ -531,7 +583,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     }
 
     setIsProcessing(false)
-  }, [editor, apiConnected, addMessage, updateMessage, setIsProcessing, getTranscriptText, processLocalCommand, addGptUsage, getEditorContext])
+  }, [editor, apiConnected, addMessage, updateMessage, setIsProcessing, getTranscriptText, processLocalCommand, addGptUsage, getEditorContext, addToast])
 
   const handleSend = useCallback(() => {
     if (!inputValue.trim()) return
@@ -640,11 +692,16 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
                   <div className="w-1.5 h-1.5 rounded-full bg-accent-purple animate-bounce" style={{ animationDelay: '0.3s' }} />
                   <span className="text-text-muted text-xs">מעבד...</span>
                 </div>
+              ) : msg.showAsChecklist && msg.suggestions && msg.suggestions.length > 0 ? (
+                <div>
+                  {msg.content && <p className="whitespace-pre-line mb-3 text-xs text-gray-300">{msg.content}</p>}
+                  <AIRecommendations suggestions={msg.suggestions} />
+                </div>
               ) : (
                 <p className="whitespace-pre-line">{msg.content}</p>
               )}
             </div>
-            {!msg.isProcessing && msg.role === 'assistant' && (
+            {!msg.isProcessing && msg.role === 'assistant' && !msg.showAsChecklist && (
               <div className="absolute top-2 left-2 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button onClick={() => handleCopy(msg.content)}
                   className="p-1 rounded bg-white/[0.06] text-text-muted hover:text-text-primary">
