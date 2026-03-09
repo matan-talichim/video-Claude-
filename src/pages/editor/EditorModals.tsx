@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { Copy, Play, Star, Download, Loader2, Link2, CheckCircle, FileText, Music, Film, Captions, Upload } from 'lucide-react'
+import { Copy, Star, Download, Loader2, Link2, CheckCircle, FileText, Music, Film, Captions, Upload } from 'lucide-react'
 import Modal from '../../components/Modal'
 import { useUIStore } from '../../stores/uiStore'
 import { useEditorStore } from '../../stores/editorStore'
@@ -7,12 +7,12 @@ import { useApiStatusStore } from '../../stores/apiStatusStore'
 import { api } from '../../services/api'
 import { exportVideo, exportAudio, exportSubtitles, exportTranscript, triggerDownload as triggerExportDownload } from '../../services/exportService'
 
-function useAIAction() {
+export function AIActionButton({ label, message }: { label: string; message: string }) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isDone, setIsDone] = useState(false)
   const { addToast, closeModal } = useUIStore()
 
-  const run = useCallback((message: string) => {
+  const run = useCallback(() => {
     setIsProcessing(true)
     setIsDone(false)
     setTimeout(() => {
@@ -21,16 +21,11 @@ function useAIAction() {
       addToast(message, 'success')
       setTimeout(() => closeModal(), 800)
     }, 2000)
-  }, [addToast, closeModal])
+  }, [addToast, closeModal, message])
 
-  return { isProcessing, isDone, run }
-}
-
-function AIActionButton({ label, message }: { label: string; message: string }) {
-  const { isProcessing, isDone, run } = useAIAction()
   return (
     <button
-      onClick={() => run(message)}
+      onClick={() => run()}
       disabled={isProcessing || isDone}
       className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20"
     >
@@ -133,7 +128,7 @@ function SoundStudioContent() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isDone, setIsDone] = useState(false)
   const [stats, setStats] = useState<{ noiseReduction: number; volumeNormalization: number } | null>(null)
-  const { addToast, closeModal } = useUIStore()
+  const { addToast } = useUIStore()
   const mediaBlobUrl = useEditorStore((s) => s.mediaBlobUrl)
   const setEnhancedAudioBuffer = useEditorStore((s) => s.setEnhancedAudioBuffer)
   const addEditHistory = useEditorStore((s) => s.addEditHistory)
@@ -229,7 +224,7 @@ function SoundStudioContent() {
 
 // === EYE CONTACT ===
 function EyeContactContent() {
-  const { addToast, closeModal } = useUIStore()
+  const { addToast } = useUIStore()
   const setEditorEffect = useEditorStore((s) => s.setEditorEffect)
   const effects = useEditorStore((s) => s.editorEffects)
   const addEditHistory = useEditorStore((s) => s.addEditHistory)
@@ -262,7 +257,7 @@ function EyeContactContent() {
 
 // === GREEN SCREEN ===
 function GreenScreenContent() {
-  const { addToast, closeModal } = useUIStore()
+  const { addToast } = useUIStore()
   const setEditorEffect = useEditorStore((s) => s.setEditorEffect)
   const effects = useEditorStore((s) => s.editorEffects)
   const addEditHistory = useEditorStore((s) => s.addEditHistory)

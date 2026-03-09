@@ -38,7 +38,7 @@ export default function CaptionsPanel({ onClose }: { onClose: () => void }) {
       return
     }
     generateCaptionsFromTranscript()
-    addToast(`נוצרו ${captions.length || 'כתוביות'} כתוביות!`, 'success')
+    addToast(`נוצרו ${captions?.length || ''} כתוביות!`, 'success')
   }
 
   const handlePresetChange = (preset: CaptionStyle['preset']) => {
@@ -86,10 +86,10 @@ export default function CaptionsPanel({ onClose }: { onClose: () => void }) {
           className="w-full py-2 bg-accent-purple/15 hover:bg-accent-purple/25 border border-accent-purple/20 rounded-xl text-sm text-accent-purple font-medium transition-all flex items-center justify-center gap-2"
         >
           <Sparkles size={14} />
-          {captions.length > 0 ? 'יצר כתוביות מחדש' : 'יצר כתוביות מתמלול'}
+          {(captions?.length || 0) > 0 ? 'יצר כתוביות מחדש' : 'יצר כתוביות מתמלול'}
         </button>
 
-        {captions.length > 0 && (
+        {(captions?.length || 0) > 0 && (
           <p className="text-xs text-text-muted text-center">{captions.length} כתוביות נוצרו</p>
         )}
 
