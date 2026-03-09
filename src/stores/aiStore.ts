@@ -1,10 +1,19 @@
 import { create } from 'zustand'
+import type { AIAction } from '../services/aiActionExecutor'
+
+export interface AISuggestion {
+  text: string
+  priority?: 'high' | 'medium' | 'low'
+  action: AIAction
+}
 
 export interface AIMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   isProcessing?: boolean
+  suggestions?: AISuggestion[]
+  showAsChecklist?: boolean
 }
 
 interface AIState {
@@ -15,7 +24,7 @@ interface AIState {
   setMode: (mode: 'execute' | 'discuss') => void
   setInputValue: (value: string) => void
   addMessage: (role: AIMessage['role'], content: string, isProcessing?: boolean) => string
-  updateMessage: (id: string, content: string, isProcessing?: boolean) => void
+  updateMessage: (id: string, content: string, isProcessing?: boolean, extra?: { suggestions?: AISuggestion[]; showAsChecklist?: boolean }) => void
   removeMessage: (id: string) => void
   setIsProcessing: (processing: boolean) => void
   clearMessages: () => void
@@ -36,10 +45,10 @@ export const useAIStore = create<AIState>((set) => ({
     }))
     return id
   },
-  updateMessage: (id, content, isProcessing = false) => {
+  updateMessage: (id, content, isProcessing = false, extra) => {
     set((s) => ({
       messages: s.messages.map((m) =>
-        m.id === id ? { ...m, content, isProcessing } : m
+        m.id === id ? { ...m, content, isProcessing, ...(extra || {}) } : m
       ),
     }))
   },

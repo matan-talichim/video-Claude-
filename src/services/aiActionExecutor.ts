@@ -215,6 +215,68 @@ export async function executeAiActions(
           break
         }
 
+        case 'shorten_silences': {
+          const threshold = action.params.threshold || 1.0
+          const keepDuration = action.params.keepDuration || 0.3
+          const silenceResult = store.shortenSilences(threshold, keepDuration)
+          results.push({
+            action: 'shorten_silences',
+            success: true,
+            count: silenceResult.count,
+            detail: `קוצרו ${silenceResult.count} שתיקות, נחסכו ${silenceResult.timeSaved.toFixed(1)} שניות`,
+          })
+          break
+        }
+
+        case 'enhance_audio': {
+          store.setEditorEffect('audioEnhanced', true)
+          results.push({ action: 'enhance_audio', success: true, detail: 'האודיו שופר' })
+          break
+        }
+
+        case 'eye_contact': {
+          const enabled = action.params.enabled !== undefined ? action.params.enabled : true
+          store.setEditorEffect('eyeContact', enabled)
+          results.push({ action: 'eye_contact', success: true, detail: enabled ? 'קשר עין הופעל' : 'קשר עין כובה' })
+          break
+        }
+
+        case 'green_screen': {
+          store.setEditorEffect('greenScreen', { enabled: true, background: action.params.background || 'office' })
+          results.push({ action: 'green_screen', success: true, detail: 'רקע הוחלף' })
+          break
+        }
+
+        case 'center_speaker': {
+          const csEnabled = action.params.enabled !== undefined ? action.params.enabled : true
+          store.setEditorEffect('centerSpeaker', csEnabled)
+          results.push({ action: 'center_speaker', success: true, detail: csEnabled ? 'מרכוז דובר הופעל' : 'מרכוז דובר כובה' })
+          break
+        }
+
+        case 'reframe': {
+          store.setEditorEffect('reframe', { ratio: action.params.ratio || '16:9' })
+          results.push({ action: 'reframe', success: true, detail: `פורמט שונה ל-${action.params.ratio || '16:9'}` })
+          break
+        }
+
+        case 'generate_chapters': {
+          const transcriptText = getTranscriptText()
+          if (!transcriptText) {
+            results.push({ action: 'generate_chapters', success: false, error: 'אין תמלול זמין' })
+            break
+          }
+          try {
+            const chaptersResult = await api.chapters(transcriptText, getSegments())
+            const chapters = chaptersResult.chapters || chaptersResult
+            store.setChapters(chapters)
+            results.push({ action: 'generate_chapters', success: true, count: chapters.length, detail: `נוצרו ${chapters.length} פרקים` })
+          } catch {
+            results.push({ action: 'generate_chapters', success: false, error: 'שגיאה ביצירת פרקים' })
+          }
+          break
+        }
+
         default:
           results.push({ action: action.action, success: false, error: `פעולה לא מוכרת: ${action.action}` })
       }
@@ -242,6 +304,13 @@ function getActionDescription(action: AIAction): string {
     resize_broll: '📐 משנה גודל B-Roll...',
     delete_all_broll: '🗑️ מוחק כל B-Roll...',
     add_animation: '✨ מוסיף אנימציה...',
+    shorten_silences: '⏱️ מקצר שתיקות...',
+    enhance_audio: '🎵 משפר אודיו...',
+    eye_contact: '👁️ מפעיל קשר עין...',
+    green_screen: '🟢 מחליף רקע...',
+    center_speaker: '🎯 ממרכז דובר...',
+    reframe: '📐 משנה פורמט...',
+    generate_chapters: '📑 מייצר פרקים...',
   }
   return descriptions[action.action] || `מבצע ${action.action}...`
 }
@@ -293,6 +362,27 @@ export function formatActionResults(results: ActionResult[]): string {
           break
         case 'add_animation':
           lines.push(`✨ נוספה אנימציה ל-${r.count} פריטים`)
+          break
+        case 'shorten_silences':
+          lines.push(`⏱️ ${r.detail || `קוצרו ${r.count} שתיקות`}`)
+          break
+        case 'enhance_audio':
+          lines.push('🎵 האודיו שופר')
+          break
+        case 'eye_contact':
+          lines.push(`👁️ ${r.detail || 'קשר עין הופעל'}`)
+          break
+        case 'green_screen':
+          lines.push('🟢 הרקע הוחלף')
+          break
+        case 'center_speaker':
+          lines.push(`🎯 ${r.detail || 'מרכוז דובר הופעל'}`)
+          break
+        case 'reframe':
+          lines.push(`📐 ${r.detail || 'פורמט שונה'}`)
+          break
+        case 'generate_chapters':
+          lines.push(`📑 ${r.detail || `נוצרו ${r.count} פרקים`}`)
           break
         default:
           lines.push(`✅ ${r.action} בוצע`)

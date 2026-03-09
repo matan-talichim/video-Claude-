@@ -384,21 +384,52 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ message: 'לא התקבלה הודעה' })
     }
 
-    const systemPrompt = `אתה עוזר AI לעריכת וידאו בשם סטודיו AI. אתה מדבר עברית בלבד.
-יש לך גישה לתמלול הסרטון. כשמבקשים ממך לעשות פעולת עריכה, החזר JSON.
-כשמבקשים תוכן, החזר את התוכן בעברית.
+    const systemPrompt = `You are an AI video editor assistant called סטודיו AI. You speak Hebrew only.
+You have access to the user's video project with transcript and editing tools.
 
-שם הפרויקט: ${projectName || 'ללא שם'}
-משך: ${duration || 0} שניות
+Project: ${projectName || 'ללא שם'}
+Duration: ${duration || 0} seconds
 
-For edit actions respond ONLY with JSON:
-{"type":"action","action":"remove_filler_words|add_captions|delete_segment|replace_word|add_title|shorten_silences|enhance_audio|generate_clips","params":{},"summary":"תיאור בעברית של מה שנעשה","stats":{"removed":5,"saved_time":"0:45"}}
+IMPORTANT: You must ALWAYS respond with valid JSON in this exact format:
+{
+  "message": "Your Hebrew response explaining what you did or recommend",
+  "actions": [],
+  "suggestions": [],
+  "showAsChecklist": false
+}
 
-For content generation respond ONLY with JSON:
-{"type":"content","contentType":"youtube_description|social_post|summary|titles|blog","content":"התוכן","summary":"תיאור"}
+Available action types for the "actions" array (use when user gives a direct command):
+- {"type": "remove_filler_words"}
+- {"type": "add_captions", "params": {"style": "modern"}} (styles: classic, modern, karaoke, minimal, typewriter, bounce)
+- {"type": "shorten_silences", "params": {"threshold": 1.0}}
+- {"type": "add_broll", "params": {"prompt": "description for DALL-E", "startTime": 5, "endTime": 10}}
+- {"type": "add_broll_auto"}
+- {"type": "generate_content", "params": {"contentType": "youtube_description"}} (types: youtube_description, social_post, summary, titles, blog)
+- {"type": "enhance_audio"}
+- {"type": "eye_contact", "params": {"enabled": true}}
+- {"type": "green_screen", "params": {"background": "office"}}
+- {"type": "center_speaker", "params": {"enabled": true}}
+- {"type": "reframe", "params": {"ratio": "9:16"}}
+- {"type": "generate_chapters"}
+- {"type": "delete_range", "params": {"startTime": 30, "endTime": 35}}
+- {"type": "mute_range", "params": {"startTime": 5, "endTime": 8}}
+- {"type": "suggest_clips", "params": {"count": 3}}
 
-For analysis respond ONLY with JSON:
-{"type":"analysis","suggestions":["הצעה 1","הצעה 2"],"summary":"ניתוח"}`
+When user asks for recommendations (מה אתה ממליץ, מה כדאי לעשות, תנתח את הסרטון, ערוך מקצועי):
+- Set "showAsChecklist": true
+- Return suggestions with priority (high/medium/low) and executable action
+- Each suggestion must have real numbers from the context
+- Sort by priority: high first, then medium, then low
+- Include 5-8 suggestions
+- Format: {"text": "description", "priority": "high", "action": {"type": "action_type", "params": {}}}
+
+When user gives a direct command (הסר מילות מילוי, הוסף כתוביות):
+- Set "showAsChecklist": false
+- Put the action directly in "actions" array for immediate execution
+- Explain what you did in "message"
+
+NEVER just describe what you would do. ALWAYS include the action in the JSON so it actually happens.
+Always respond with valid JSON only. No markdown, no code blocks, just JSON.`
 
     const response = await ai.chat.completions.create({
       model: 'gpt-4o',
@@ -407,26 +438,32 @@ For analysis respond ONLY with JSON:
         { role: 'user', content: message + (transcript ? `\n\nTranscript:\n${transcript}` : '') },
       ],
       temperature: 0.7,
+      response_format: { type: 'json_object' },
     })
 
-    const content = response.choices[0]?.message?.content || ''
+    const responseText = response.choices[0]?.message?.content || '{}'
     const usage = response.usage
 
-    // Try to parse as JSON
-    let parsed: any = null
+    // Parse JSON response
+    let parsed: any
     try {
-      // Try to find JSON in the response
-      const jsonMatch = content.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0])
-      }
+      parsed = JSON.parse(responseText)
     } catch {
-      // Not JSON, treat as plain text
+      // If GPT didn't return valid JSON, wrap it
+      parsed = {
+        message: responseText,
+        actions: [],
+        suggestions: [],
+      }
     }
 
+    // Ensure structure
     res.json({
-      response: parsed || { type: 'text', content, summary: content },
-      rawContent: content,
+      message: parsed.message || responseText,
+      actions: parsed.actions || [],
+      suggestions: parsed.suggestions || [],
+      showAsChecklist: parsed.showAsChecklist || false,
+      rawContent: responseText,
       usage: usage ? { promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, totalTokens: usage.total_tokens } : null,
     })
   } catch (error: any) {
@@ -933,49 +970,71 @@ app.post('/api/chat/enhanced', async (req, res) => {
     const { message, context } = req.body
     if (!message) return res.status(400).json({ message: 'לא התקבלה הודעה' })
 
-    const systemPrompt = `אתה עוזר AI מקצועי לעריכת וידאו. יש לך שליטה מלאה על:
-- תמלול: עריכה, מחיקה, החלפת מילים
-- B-Roll: יצירה עם DALL-E, מיקום, גודל, אנימציה
-- כתוביות: הוספה, סגנון, צבע, אנימציה
-- חיתוך: מחיקת קטעים, פיצול, השתקה
-- תרגום: תרגום כתוביות ודאבינג
-- יצירת תוכן: תיאורים, פוסטים, כותרות
+    const systemPrompt = `You are a professional AI video editor assistant. You speak Hebrew only.
+You have full control over video editing tools.
 
-מצב הפרויקט הנוכחי:
-- שם: ${context?.projectName || 'ללא שם'}
-- משך: ${context?.duration || 0} שניות
-- דוברים: ${context?.speakers?.join(', ') || 'לא זוהו'}
-- פריטי B-Roll: ${context?.brollItems?.length || 0}
-- כתוביות: ${context?.captions?.enabled ? 'פעילות' : 'כבויות'}
-- קטעים שנמחקו: ${context?.editPoints?.length || 0}
+Current project state:
+- Name: ${context?.projectName || 'ללא שם'}
+- Duration: ${context?.duration || 0} seconds
+- Speakers: ${context?.speakers?.join(', ') || 'לא זוהו'} (${context?.speakerCount || 0})
+- B-Roll items: ${context?.brollCount || 0}
+- Captions: ${context?.hasCaptions ? 'enabled (' + (context?.captionStyle || 'modern') + ')' : 'disabled'}
+- Deleted regions: ${context?.deletedRegionsCount || 0} (${context?.deletedDuration?.toFixed(1) || 0}s)
+- Filler words: ${context?.fillerWordCount || 0}
+- Silences > 1s: ${context?.silenceCount || 0} (total: ${context?.silenceDuration?.toFixed(1) || 0}s)
+- Eye contact: ${context?.hasEyeContact ? 'on' : 'off'}
+- Green screen: ${context?.hasGreenScreen ? 'on' : 'off'}
+- Audio enhanced: ${context?.isAudioEnhanced ? 'yes' : 'no'}
 
-כשמבקשים ממך לבצע פעולה, החזר JSON עם:
+IMPORTANT: You must ALWAYS respond with valid JSON in this exact format:
 {
-  "type": "action",
-  "actions": [
-    { "action": "add_broll", "params": { "prompt": "description", "start": 5, "end": 10, "position": "fullscreen" } },
-    { "action": "add_captions", "params": { "style": "modern", "language": "he" } },
-    { "action": "delete_range", "params": { "start": 30, "end": 35 } },
-    { "action": "remove_filler_words", "params": {} },
-    { "action": "generate_content", "params": { "type": "youtube_description" } },
-    { "action": "translate", "params": { "targetLang": "en" } },
-    { "action": "change_caption_style", "params": { "style": "karaoke" } },
-    { "action": "mute_range", "params": { "start": 5, "end": 8 } },
-    { "action": "suggest_clips", "params": { "count": 3, "format": "9:16" } },
-    { "action": "move_broll", "params": { "fromTime": 5, "toTime": 20 } },
-    { "action": "resize_broll", "params": { "time": 10, "position": "fullscreen" } },
-    { "action": "delete_all_broll", "params": {} },
-    { "action": "add_animation", "params": { "type": "fadeIn", "target": "broll" } },
-    { "action": "auto_broll", "params": {} }
-  ],
-  "summary": "תיאור בעברית של מה שנעשה",
-  "steps": ["שלב 1...", "שלב 2..."]
+  "message": "Hebrew explanation of what you did or recommend",
+  "actions": [],
+  "suggestions": [],
+  "showAsChecklist": false
 }
 
-אתה יכול להחזיר מספר פעולות ברשימה אחת - הן יבוצעו לפי הסדר.
-תמיד תסביר בעברית מה אתה עושה ולמה.
-אם לא בטוח, שאל שאלה לפני שמבצע.
-החזר תמיד JSON תקין בלבד.`
+Available action types for the "actions" array:
+- {"action": "remove_filler_words", "params": {}}
+- {"action": "add_captions", "params": {"style": "modern"}}
+- {"action": "shorten_silences", "params": {"threshold": 1.0}}
+- {"action": "add_broll", "params": {"prompt": "description", "start": 5, "end": 10, "position": "fullscreen"}}
+- {"action": "auto_broll", "params": {}}
+- {"action": "generate_content", "params": {"type": "youtube_description"}}
+- {"action": "enhance_audio", "params": {}}
+- {"action": "eye_contact", "params": {"enabled": true}}
+- {"action": "green_screen", "params": {"background": "office"}}
+- {"action": "center_speaker", "params": {"enabled": true}}
+- {"action": "reframe", "params": {"ratio": "9:16"}}
+- {"action": "generate_chapters", "params": {}}
+- {"action": "delete_range", "params": {"start": 30, "end": 35}}
+- {"action": "mute_range", "params": {"start": 5, "end": 8}}
+- {"action": "suggest_clips", "params": {"count": 3}}
+- {"action": "change_caption_style", "params": {"style": "karaoke"}}
+- {"action": "translate", "params": {"targetLang": "en"}}
+- {"action": "delete_all_broll", "params": {}}
+- {"action": "add_animation", "params": {"type": "fadeIn"}}
+
+When user asks for recommendations (מה אתה ממליץ, מה כדאי לעשות, תנתח את הסרטון):
+- Set "showAsChecklist": true
+- Return suggestions with priority (high/medium/low) and executable action
+- Each suggestion must reference real numbers from the project state above
+- Sort by priority: high first, then medium, then low
+- Include 5-8 suggestions
+- Format: {"text": "description with real numbers", "priority": "high", "action": {"action": "action_type", "params": {}}}
+
+When user asks to professionally edit (ערוך מקצועי, ערוך את הסרטון):
+- Set "showAsChecklist": true
+- Return all recommended editing actions as suggestions
+
+When user gives a direct command (הסר מילות מילוי, הוסף כתוביות):
+- Set "showAsChecklist": false
+- Put actions in "actions" array for immediate execution
+- Explain in "message" what was done
+
+You can return multiple actions - they execute in order.
+NEVER just describe what you would do. ALWAYS include actions in the JSON.
+Always respond with valid JSON only. No markdown, no code blocks.`
 
     const transcriptText = context?.transcript || ''
 
@@ -989,18 +1048,48 @@ app.post('/api/chat/enhanced', async (req, res) => {
       response_format: { type: 'json_object' },
     })
 
-    const content = response.choices[0]?.message?.content || '{}'
+    const rawContent = response.choices[0]?.message?.content || '{}'
     const usage = response.usage
     let parsed: any
     try {
-      parsed = JSON.parse(content)
+      parsed = JSON.parse(rawContent)
     } catch {
-      parsed = { type: 'text', content, summary: content }
+      parsed = { message: rawContent, actions: [], suggestions: [] }
     }
 
+    // Normalize: support both old format (type/actions with "action" key) and new format
+    const normalizedActions = (parsed.actions || []).map((a: any) => {
+      // If action uses {action: "name"} format, keep it for backward compat with executor
+      // If action uses {type: "name"} format, convert to {action: "name"} for executor
+      if (a.type && !a.action) {
+        return { action: a.type, params: a.params || {} }
+      }
+      return { action: a.action, params: a.params || {} }
+    })
+
+    // Normalize suggestions: ensure action field uses executor format
+    const normalizedSuggestions = (parsed.suggestions || []).map((s: any) => {
+      if (s.action) {
+        const act = typeof s.action === 'string'
+          ? { action: s.action, params: {} }
+          : { action: s.action.action || s.action.type || s.action, params: s.action.params || {} }
+        return { ...s, action: act }
+      }
+      return s
+    })
+
     res.json({
-      response: parsed,
-      rawContent: content,
+      response: {
+        type: parsed.type || (normalizedActions.length > 0 ? 'action' : parsed.showAsChecklist ? 'suggestions' : 'text'),
+        actions: normalizedActions,
+        suggestions: normalizedSuggestions,
+        showAsChecklist: parsed.showAsChecklist || false,
+        message: parsed.message || parsed.summary || rawContent,
+        summary: parsed.summary || parsed.message || '',
+        content: parsed.content || '',
+        steps: parsed.steps || [],
+      },
+      rawContent,
       usage: usage ? { promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, totalTokens: usage.total_tokens } : null,
     })
   } catch (error: any) {
