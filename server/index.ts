@@ -29,12 +29,9 @@ const PORT = 3001
 
 // CORS - allow any localhost port
 app.use(cors({
-  origin: function(origin, callback) {
-    if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) {
-      callback(null, true)
-    } else {
-      callback(new Error('Not allowed by CORS'))
-    }
+  origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) cb(null, true)
+    else cb(null, true)
   }
 }))
 
@@ -52,7 +49,7 @@ const storage = multer.diskStorage({
     cb(null, uniqueName)
   },
 })
-const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } }) // 500MB max
+const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 * 1024 } }) // 2GB max
 
 // Serve audio/video files from uploads
 app.use('/api/audio', express.static(uploadsDir))
@@ -120,14 +117,92 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     const mp3Size = fs.statSync(mp3Path).size
     console.log('[TRANSCRIBE 3] Audio extracted:', (mp3Size / 1024 / 1024).toFixed(1) + 'MB')
 
-    if (mp3Size > 25 * 1024 * 1024) {
-      return res.status(413).json({ message: 'הקובץ גדול מדי גם אחרי דחיסה. נסה קובץ קצר יותר.' })
-    }
+    const WHISPER_MAX = 24 * 1024 * 1024 // 24MB to be safe
 
-    // Delete original
+    // Delete original input file
     try { fs.unlinkSync(inputPath); inputPath = '' } catch {}
 
-    // Send to Whisper
+    if (mp3Size > WHISPER_MAX) {
+      // ===== CHUNKED TRANSCRIPTION for large files =====
+      console.log('[SPLIT] File is', (mp3Size / 1024 / 1024).toFixed(1) + 'MB. Splitting into chunks...')
+
+      // Get audio duration using ffprobe
+      const ffprobePath = ffmpeg === 'ffmpeg' ? 'ffprobe' : ffmpeg.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+      const durationStr = execSync(
+        `"${ffprobePath}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${mp3Path}"`,
+        { stdio: ['pipe', 'pipe', 'pipe'] }
+      ).toString().trim()
+      const totalDuration = parseFloat(durationStr)
+      console.log('[SPLIT] Total duration:', totalDuration, 'seconds')
+
+      const chunkDuration = 600 // 10 minutes per chunk
+      const numChunks = Math.ceil(totalDuration / chunkDuration)
+      console.log('[SPLIT] Splitting into', numChunks, 'chunks of', chunkDuration, 'seconds')
+
+      let allSegments: any[] = []
+      let fullText = ''
+
+      for (let i = 0; i < numChunks; i++) {
+        const startTime = i * chunkDuration
+        const chunkPath = mp3Path.replace('.mp3', `_chunk${i}.mp3`)
+
+        console.log(`[SPLIT] Chunk ${i + 1}/${numChunks}: ${startTime}s - ${startTime + chunkDuration}s`)
+
+        // Extract chunk
+        execSync(
+          `"${ffmpeg}" -i "${mp3Path}" -ss ${startTime} -t ${chunkDuration} -acodec libmp3lame -ab 64k -ar 16000 -ac 1 "${chunkPath}" -y`,
+          { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+
+        // Transcribe chunk
+        const chunkTranscription = await ai.audio.transcriptions.create({
+          model: 'whisper-1',
+          file: fs.createReadStream(chunkPath),
+          language: 'he',
+          response_format: 'verbose_json',
+          timestamp_granularities: ['segment'],
+        })
+
+        console.log(`[SPLIT] Chunk ${i + 1} transcribed:`, (chunkTranscription.text || '').length, 'chars')
+
+        // Adjust timestamps by adding offset
+        const chunkSegments = ((chunkTranscription as any).segments || []).map((seg: any, idx: number) => ({
+          id: allSegments.length + idx,
+          speaker: 'דובר ' + (((allSegments.length + idx) % 2) + 1),
+          text: (seg.text || '').trim(),
+          start: (seg.start || 0) + startTime,
+          end: (seg.end || 0) + startTime,
+          words: (seg.words || []).map((w: any) => ({
+            word: (w.word || '').trim(),
+            start: (w.start || 0) + startTime,
+            end: (w.end || 0) + startTime,
+          })),
+        }))
+
+        allSegments = [...allSegments, ...chunkSegments]
+        fullText += (chunkTranscription.text || '') + ' '
+
+        // Cleanup chunk
+        try { fs.unlinkSync(chunkPath) } catch {}
+      }
+
+      // Cleanup original mp3
+      try { fs.unlinkSync(mp3Path); mp3Path = '' } catch {}
+
+      console.log('[SPLIT] All chunks transcribed! Total segments:', allSegments.length)
+
+      return res.json({
+        text: fullText.trim(),
+        duration: totalDuration,
+        language: 'he',
+        segments: allSegments,
+        words: [],
+        chunked: true,
+        totalChunks: numChunks,
+      })
+    }
+
+    // ===== SINGLE FILE transcription (under 24MB) =====
     console.log('[TRANSCRIBE 4] Sending to Whisper...')
     const transcription = await ai.audio.transcriptions.create({
       model: 'whisper-1',

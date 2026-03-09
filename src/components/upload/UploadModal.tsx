@@ -241,6 +241,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
               <p className="text-lg font-medium text-text-primary mb-1">גרור קבצים לכאן</p>
               <p className="text-sm text-text-muted mb-2">או לחץ לבחירת קבצים</p>
               <p className="text-xs text-text-muted">MP4, MOV, WebM, AVI, MKV, MP3, WAV, M4A, FLAC, OGG</p>
+              <p className="text-xs text-text-muted mt-1">ניתן להעלות קבצים בכל גודל</p>
             </div>
 
             {/* File list */}
@@ -371,6 +372,9 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
                   </div>
                 )}
                 <p className="text-xs text-text-muted">הקבצים נשמרים באופן זמני. חבר backend לשמירה קבועה</p>
+                {files.some(f => f.sizeBytes > 100 * 1024 * 1024) && (
+                  <p className="text-xs text-yellow-400">קבצים גדולים עשויים לקחת יותר זמן לעיבוד</p>
+                )}
               </div>
             )}
 
