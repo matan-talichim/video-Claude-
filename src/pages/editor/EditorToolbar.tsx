@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Mic, Scissors, RotateCcw, Clock, List, Eye, Image, Wand2, Users, Maximize2, Droplets, Share2, Upload, Download, Undo2, Redo2, SplitSquareHorizontal, Trash2, VolumeX } from 'lucide-react'
+import { Mic, Scissors, RotateCcw, Clock, List, Eye, Image, Wand2, Users, Maximize2, Droplets, Share2, Upload, Download, Undo2, Redo2, SplitSquareHorizontal, Trash2, VolumeX, History } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 
@@ -130,12 +130,37 @@ export default function EditorToolbar() {
     addToast('סומן סוף טווח', 'info')
   }
 
+  const [showHistory, setShowHistory] = useState(false)
+  const historyRef = useRef<HTMLDivElement>(null)
+
+  // Close history panel on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (historyRef.current && !historyRef.current.contains(e.target as Node)) setShowHistory(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Skip if typing in input/textarea/contentEditable
       const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable
+
+      // Cmd+Z / Cmd+Shift+Z work globally (even in inputs)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) {
+          handleRedo()
+        } else {
+          handleUndo()
+        }
+        return
+      }
+
+      if (isInput) return
 
       switch (e.key.toLowerCase()) {
         case 's':
@@ -153,6 +178,9 @@ export default function EditorToolbar() {
           break
         case ']':
           e.preventDefault(); handleSetRangeEnd()
+          break
+        case 'h':
+          e.preventDefault(); setShowHistory((p) => !p)
           break
       }
     }
@@ -214,7 +242,7 @@ export default function EditorToolbar() {
           onClick={handleUndo}
           disabled={editHistory.length === 0}
           className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary disabled:opacity-30"
-          title="⌘Z"
+          title={editHistory.length > 0 ? `בטל: ${editHistory[editHistory.length - 1]?.description} (⌘Z)` : '⌘Z'}
         >
           <Undo2 size={15} />
         </button>
@@ -222,10 +250,51 @@ export default function EditorToolbar() {
           onClick={handleRedo}
           disabled={redoHistory.length === 0}
           className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary disabled:opacity-30"
-          title="⌘⇧Z"
+          title={redoHistory.length > 0 ? `שחזר: ${redoHistory[redoHistory.length - 1]?.description} (⌘⇧Z)` : '⌘⇧Z'}
         >
           <Redo2 size={15} />
         </button>
+        <div className="relative" ref={historyRef}>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary"
+            title="היסטוריית עריכה (H)"
+          >
+            <History size={15} />
+          </button>
+          {showHistory && (
+            <div className="absolute top-full mt-2 left-0 glass rounded-xl shadow-2xl py-2 min-w-[280px] max-h-[320px] overflow-y-auto z-50 animate-scale-in" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="px-3 pb-2 border-b border-white/[0.06] flex items-center justify-between">
+                <span className="text-xs font-medium text-text-primary">היסטוריית עריכה</span>
+                {editHistory.length > 0 && (
+                  <button onClick={() => { /* would need a clearHistory method */ }} className="text-[10px] text-text-muted hover:text-red-400 transition-colors">נקה</button>
+                )}
+              </div>
+              {editHistory.length === 0 && redoHistory.length === 0 && (
+                <div className="px-3 py-4 text-center text-xs text-text-muted">אין פעולות בהיסטוריה</div>
+              )}
+              {/* Redo entries (future) */}
+              {redoHistory.slice().reverse().map((entry, i) => (
+                <div key={`redo-${i}`} className="px-3 py-1.5 text-xs text-text-muted/50 flex items-center gap-2">
+                  <span className="w-12 font-mono text-[10px]">{new Date(entry.timestamp).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className="flex-1">{entry.description}</span>
+                </div>
+              ))}
+              {/* Current position indicator */}
+              {editHistory.length > 0 && (
+                <div className="px-3 py-0.5"><div className="border-t border-accent-purple/40" /></div>
+              )}
+              {/* Edit history entries */}
+              {editHistory.slice().reverse().map((entry, i) => (
+                <div key={`edit-${i}`} className={`px-3 py-1.5 text-xs flex items-center gap-2 ${i === 0 ? 'text-accent-purple bg-accent-purple/5' : 'text-text-secondary'}`}>
+                  {i === 0 && <span className="text-accent-purple">→</span>}
+                  <span className="w-12 font-mono text-[10px]">{new Date(entry.timestamp).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className="flex-1">{entry.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <input

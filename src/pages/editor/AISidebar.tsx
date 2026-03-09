@@ -1,29 +1,30 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Bot, Send, Volume2, Scissors, Subtitles, Languages, Wand2, Film, Eye, X, Paperclip, Mic, Copy, ChevronDown, ChevronUp, AlertCircle, ExternalLink, Image, Undo2, ThumbsUp } from 'lucide-react'
 import { useAIStore } from '../../stores/aiStore'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUsageStore } from '../../stores/usageStore'
 import { useApiStatusStore } from '../../stores/apiStatusStore'
+import { useUIStore } from '../../stores/uiStore'
 import { api, ApiError } from '../../services/api'
 import { executeAiActions, formatActionResults } from '../../services/aiActionExecutor'
 import type { AIAction } from '../../services/aiActionExecutor'
 
 const quickActions = [
-  { label: 'נקה אודיו', icon: Volume2 },
-  { label: 'הסר מילוי', icon: Scissors },
-  { label: 'כתוביות', icon: Subtitles },
-  { label: 'תרגם', icon: Languages },
-  { label: 'עצב', icon: Wand2 },
-  { label: 'קליפים', icon: Film },
-  { label: 'B-Roll', icon: Image },
-  { label: 'שפר מבט', icon: Eye },
+  { label: 'נקה אודיו', icon: Volume2, action: 'clean_audio' },
+  { label: 'הסר מילוי', icon: Scissors, action: 'remove_filler' },
+  { label: 'כתוביות', icon: Subtitles, action: 'add_captions' },
+  { label: 'תרגם', icon: Languages, action: 'translate' },
+  { label: 'עצב', icon: Wand2, action: 'quick_style' },
+  { label: 'קליפים', icon: Film, action: 'clips' },
+  { label: 'הסר רקע', icon: Image, action: 'green_screen' },
+  { label: 'שפר מבט', icon: Eye, action: 'eye_contact' },
 ]
 
 const smartSuggestions = [
-  { emoji: '✂️', label: 'הסר מילות מילוי' },
-  { emoji: '📝', label: 'הוסף כתוביות' },
-  { emoji: '🖼️', label: 'הוסף B-Roll לכל הסרטון' },
-  { emoji: '💡', label: 'מה אתה ממליץ?' },
+  { emoji: '✂️', label: 'הסר מילות מילוי', action: 'remove_filler' },
+  { emoji: '📝', label: 'הוסף כתוביות', action: 'add_captions' },
+  { emoji: '🖼️', label: 'הוסף B-Roll לכל הסרטון', action: 'add_broll' },
+  { emoji: '💡', label: 'מה אתה ממליץ?', action: 'recommend' },
 ]
 
 function formatSeconds(s: number): string {
@@ -54,11 +55,13 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
   }, [editor.transcript])
 
   const getEditorContext = useCallback(() => {
+    const silences = editor.transcript.length > 0 ? editor.countSilences(1.0) : { count: 0, totalDuration: 0, gaps: [] }
     return {
       projectName: editor.projectName,
       duration: editor.duration,
       transcript: getTranscriptText(),
-      segments: editor.transcript,
+      segmentCount: editor.transcript.length,
+      speakerCount: speakerCount,
       speakers: [...new Set(editor.transcript.map(s => s.speaker))],
       brollItems: editor.bRollItems.map(b => ({
         id: b.id,
@@ -67,25 +70,121 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
         end: b.startTime + b.duration,
         position: b.displayMode,
       })),
+      brollCount: editor.bRollItems.length,
       captions: { enabled: editor.showCaptions, style: editor.captionStyle.preset, language: 'he' },
+      hasCaptions: editor.showCaptions,
+      captionStyle: editor.captionStyle.preset,
       editPoints: editor.deletedRegions,
+      deletedRegionsCount: editor.deletedRegions.length,
       deletedDuration: editor.deletedRegions.reduce((s, r) => s + (r.endTime - r.startTime), 0),
-      fillerWordsCount: editor.transcript.reduce((s, seg) => s + seg.words.filter(w => w.isFiller).length, 0),
+      fillerWordCount: totalFillers,
+      silenceCount: silences.count,
+      silenceDuration: silences.totalDuration,
+      hasEyeContact: editor.editorEffects?.eyeContact || false,
+      hasGreenScreen: editor.editorEffects?.greenScreen?.enabled || false,
+      reframeRatio: editor.editorEffects?.reframe?.ratio || '16:9',
+      isTranscribed: editor.transcript.length > 0,
       hasMusic: false,
       exportFormat: null,
     }
-  }, [editor, getTranscriptText])
+  }, [editor, getTranscriptText, totalFillers, speakerCount])
 
-  // Proactive suggestions based on current state
+  const { openModal, addToast } = useUIStore()
+
+  // Real analysis helpers
+  const fillerCounts = useMemo(() => {
+    if (editor.transcript.length === 0) return {}
+    return editor.countFillerWords()
+  }, [editor.transcript])
+
+  const totalFillers = useMemo(() => Object.values(fillerCounts).reduce((s: number, c) => s + (c as number), 0), [fillerCounts])
+
+  const silenceData = useMemo(() => {
+    if (editor.transcript.length === 0) return { count: 0, totalDuration: 0, gaps: [] }
+    return editor.countSilences(1.0)
+  }, [editor.transcript])
+
+  const speakerCount = useMemo(() => new Set(editor.transcript.map(s => s.speaker)).size, [editor.transcript])
+
+  // Execute quick action directly
+  const executeQuickAction = useCallback((action: string) => {
+    switch (action) {
+      case 'clean_audio':
+        openModal('soundStudio')
+        break
+      case 'remove_filler':
+        if (editor.transcript.length === 0) { addToast('תמלל קודם את הסרטון', 'warning'); return }
+        openModal('fillerWords')
+        break
+      case 'add_captions':
+        if (editor.transcript.length === 0) { addToast('תמלל קודם את הסרטון', 'warning'); return }
+        editor.generateCaptionsFromTranscript()
+        editor.setShowCaptions(true)
+        addToast('כתוביות נוספו!', 'success')
+        break
+      case 'translate':
+        // Navigate to translate
+        openModal('translate')
+        break
+      case 'quick_style':
+        openModal('quickStyle')
+        break
+      case 'clips':
+        openModal('clips')
+        break
+      case 'green_screen':
+        openModal('greenScreen')
+        break
+      case 'eye_contact':
+        editor.setEditorEffect('eyeContact', !editor.editorEffects.eyeContact)
+        addToast(editor.editorEffects.eyeContact ? 'קשר עין כובה' : 'קשר עין יופעל בייצוא', 'success')
+        break
+      case 'shorten_silences':
+        openModal('silence')
+        break
+      case 'center_speaker':
+        editor.setEditorEffect('centerSpeaker', !editor.editorEffects.centerSpeaker)
+        addToast('מרכוז דובר הופעל', 'success')
+        break
+      case 'add_broll':
+        // Trigger B-Roll via command
+        handleSuggestionClick('הוסף B-Roll לכל הסרטון')
+        break
+      case 'suggest_clips':
+        openModal('clips')
+        break
+      case 'recommend':
+        handleSuggestionClick('מה אתה ממליץ?')
+        break
+      default:
+        handleSuggestionClick(action)
+    }
+  }, [editor, openModal, addToast])
+
+  // Proactive suggestions based on REAL current state
   const getProactiveSuggestions = useCallback(() => {
     const suggestions: Array<{ emoji: string; label: string; action: string }> = []
-    const fillerCount = editor.transcript.reduce((s, seg) => s + seg.words.filter(w => w.isFiller).length, 0)
-    if (fillerCount > 0) suggestions.push({ emoji: '✂️', label: `יש ${fillerCount} מילות מילוי. להסיר?`, action: 'הסר מילות מילוי' })
-    if (!editor.showCaptions && editor.transcript.length > 0) suggestions.push({ emoji: '📝', label: 'אין כתוביות. להוסיף?', action: 'הוסף כתוביות מודרניות' })
-    if (editor.bRollItems.length === 0 && editor.transcript.length > 0) suggestions.push({ emoji: '🖼️', label: 'רוצה שאוסיף B-Roll מתאים?', action: 'הוסף B-Roll לכל הסרטון' })
-    if (editor.duration > 300) suggestions.push({ emoji: '⏱️', label: `הסרטון ארוך (${formatSeconds(editor.duration)}). ליצור קליפים?`, action: 'פצל את הסרטון לקליפים' })
-    return suggestions
-  }, [editor])
+
+    if (editor.transcript.length === 0) return suggestions
+
+    if (totalFillers > 0) {
+      suggestions.push({ emoji: '✂️', label: `מצאתי ${totalFillers} מילות מילוי. להסיר?`, action: 'remove_filler' })
+    }
+    if (silenceData.count > 0) {
+      suggestions.push({ emoji: '⏱️', label: `${silenceData.count} שתיקות ארוכות (${silenceData.totalDuration.toFixed(0)}s). לקצר?`, action: 'shorten_silences' })
+    }
+    if (!editor.showCaptions) {
+      suggestions.push({ emoji: '📝', label: 'אין כתוביות. כתוביות מגדילות מעורבות ב-40%', action: 'add_captions' })
+    }
+    if (editor.bRollItems.length === 0) {
+      suggestions.push({ emoji: '🖼️', label: 'אין B-Roll. רוצה שאוסיף תמונות מתאימות?', action: 'add_broll' })
+    }
+    if (editor.duration > 120) {
+      suggestions.push({ emoji: '🎬', label: `הסרטון ארוך (${formatSeconds(editor.duration)}). ליצור קליפים?`, action: 'suggest_clips' })
+    }
+
+    return suggestions.slice(0, 3)
+  }, [editor, totalFillers, silenceData])
 
   // Local fallback commands (when no API)
   const processLocalCommand = useCallback((input: string, processingId: string) => {
@@ -211,16 +310,46 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       }
     }
 
-    // Recommendations (local)
-    if (input.includes('ממליץ') || input.includes('מה לעשות')) {
+    // Recommendations (local) - REAL analysis
+    if (input.includes('ממליץ') || input.includes('מה לעשות') || input.includes('מה אתה ממליץ')) {
+      if (editor.transcript.length === 0) {
+        updateMessage(processingId, '💡 תמלל קודם את הסרטון כדי שאוכל לנתח ולהמליץ.')
+        return
+      }
       const suggestions: string[] = []
-      const fillerCount = editor.transcript.reduce((s, seg) => s + seg.words.filter(w => w.isFiller).length, 0)
-      if (fillerCount > 0) suggestions.push(`✂️ יש ${fillerCount} מילות מילוי. רוצה שאסיר?`)
-      if (!editor.showCaptions) suggestions.push('📝 אין כתוביות. רוצה שאוסיף?')
-      if (editor.bRollItems.length === 0) suggestions.push('🖼️ אין B-Roll. רוצה שאוסיף תמונות מתאימות?')
-      if (editor.duration > 300) suggestions.push(`⏱️ הסרטון ארוך (${formatSeconds(editor.duration)}). רוצה שאצור קליפים?`)
-      if (suggestions.length === 0) suggestions.push('✅ הכל נראה טוב! הסרטון מוכן.')
-      updateMessage(processingId, `💡 המלצות:\n\n${suggestions.join('\n')}`)
+      const realFillers = editor.countFillerWords()
+      const totalF = Object.values(realFillers).reduce((s: number, c) => s + (c as number), 0)
+      const silences = editor.countSilences(1.0)
+      const speakers = [...new Set(editor.transcript.map(s => s.speaker))]
+      const wordCount = editor.transcript.reduce((s, seg) => s + seg.words.length, 0)
+
+      if (totalF > 0) {
+        const topFillers = Object.entries(realFillers).sort((a, b) => (b[1] as number) - (a[1] as number)).slice(0, 3).map(([w, c]) => `${w}(${c})`).join(', ')
+        suggestions.push(`✂️ מצאתי ${totalF} מילות מילוי (${topFillers}). הסרה שלהן תחסוך זמן`)
+      }
+      if (silences.count > 0) {
+        suggestions.push(`⏱️ יש ${silences.count} שתיקות ארוכות (סה"כ ${silences.totalDuration.toFixed(0)} שניות). קיצור שלהן ישפר את הקצב`)
+      }
+      if (!editor.showCaptions) {
+        suggestions.push('📝 אין כתוביות. כתוביות מגדילות מעורבות ב-40%')
+      }
+      if (editor.bRollItems.length === 0) {
+        suggestions.push('🖼️ אין B-Roll. הוספת תמונות תשבור מונוטוניות')
+      }
+      if (editor.duration > 120) {
+        suggestions.push(`🎬 הסרטון אורך ${formatSeconds(editor.duration)}. אפשר ליצור קליפים קצרים לרשתות`)
+      }
+      if (speakers.length > 1) {
+        suggestions.push(`👥 מזהה ${speakers.length} דוברים (${speakers.join(', ')}). מרכוז דובר פעיל ישפר את החוויה`)
+      }
+      if (!editor.editorEffects.audioEnhanced) {
+        suggestions.push('🎵 מומלץ לשפר את איכות האודיו בסאונד סטודיו')
+      }
+
+      if (suggestions.length === 0) suggestions.push('✅ הכל נראה מעולה! הסרטון מוכן.')
+
+      const summary = `📊 סיכום: ${wordCount} מילים, ${speakers.length} ${speakers.length === 1 ? 'דובר' : 'דוברים'}, ${formatSeconds(editor.duration)}`
+      updateMessage(processingId, `💡 המלצות:\n\n${suggestions.join('\n\n')}\n\n${summary}`)
       return
     }
 
@@ -260,17 +389,48 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       return
     }
 
-    // Clean audio (local)
+    // Clean audio - open modal
     if (input.includes('נקה אודיו') || (input.includes('שפר') && input.includes('אודיו'))) {
-      updateMessage(processingId,
-        '✅ האודיו שופר!\n\n✅ אוזנו רמות\n✅ סונן רעש רקע\n✅ שופר בהירות הקול')
+      openModal('soundStudio')
+      updateMessage(processingId, '🎵 פותח את סאונד סטודיו...')
       return
     }
 
-    // Silence (local)
+    // Silence - real analysis
     if (input.includes('שתיקות') || input.includes('קצר שתיקות')) {
+      if (editor.transcript.length === 0) {
+        updateMessage(processingId, 'תמלל קודם את הסרטון לזיהוי שתיקות.')
+        return
+      }
+      const silences = editor.countSilences(1.0)
+      if (silences.count === 0) {
+        updateMessage(processingId, 'לא נמצאו שתיקות ארוכות בתמלול.')
+        return
+      }
+      const result = editor.shortenSilences(1.0, 0.3)
       updateMessage(processingId,
-        '✅ קוצרו שתיקות\n\nנמצאו 12 שתיקות, קוצרו.\nנחסכו: 1:30 דקות')
+        `✅ קוצרו שתיקות\n\nנמצאו ${result.count} שתיקות, קוצרו.\nנחסכו: ${result.timeSaved.toFixed(1)} שניות`)
+      return
+    }
+
+    // Eye contact toggle
+    if (input.includes('שפר מבט') || input.includes('קשר עין')) {
+      editor.setEditorEffect('eyeContact', !editor.editorEffects.eyeContact)
+      updateMessage(processingId, editor.editorEffects.eyeContact ? '✅ קשר עין יופעל בייצוא' : '⏹️ קשר עין כובה')
+      return
+    }
+
+    // Quick style
+    if (input.includes('עצב') || input.includes('עיצוב')) {
+      openModal('quickStyle')
+      updateMessage(processingId, '🎨 פותח עיצוב מהיר...')
+      return
+    }
+
+    // Green screen
+    if (input.includes('הסר רקע') || input.includes('מסך ירוק') || input.includes('רקע')) {
+      openModal('greenScreen')
+      updateMessage(processingId, '🟢 פותח מסך ירוק...')
       return
     }
 
@@ -440,11 +600,11 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
           <p className="text-[10px] text-accent-purple font-medium mb-1.5">💡 הצעות לשיפור הסרטון:</p>
           <div className="space-y-1">
             {proactiveSuggestions.map((s, i) => (
-              <button key={i} onClick={() => handleSuggestionClick(s.action)}
+              <button key={i} onClick={() => executeQuickAction(s.action)}
                 className="w-full flex items-center gap-2 px-2 py-1 rounded bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] text-right transition-all">
                 <span className="text-[10px]">{s.emoji}</span>
                 <span className="text-[10px] text-text-secondary flex-1">{s.label}</span>
-                <span className="text-[9px] px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded">כן</span>
+                <span className="text-[9px] px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded">בצע</span>
               </button>
             ))}
           </div>
@@ -509,7 +669,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
           {smartSuggestions.map((s) => (
             <button
               key={s.label}
-              onClick={() => handleSuggestionClick(s.label)}
+              onClick={() => s.action === 'recommend' || s.action === 'add_broll' ? handleSuggestionClick(s.label) : executeQuickAction(s.action)}
               className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] hover:border-accent-purple/30 hover:bg-accent-purple/5 text-xs text-text-secondary hover:text-text-primary transition-all whitespace-nowrap"
             >
               <span>{s.emoji}</span>
@@ -528,17 +688,17 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
 
         {showQuickActions && (
           <div className="grid grid-cols-4 gap-1.5 animate-fade-up">
-            {quickActions.map((action) => {
-              const Icon = action.icon
+            {quickActions.map((qa) => {
+              const Icon = qa.icon
               return (
                 <button
-                  key={action.label}
-                  onClick={() => handleSuggestionClick(action.label)}
+                  key={qa.label}
+                  onClick={() => executeQuickAction(qa.action)}
                   className="p-2 bg-white/[0.03] hover:bg-white/[0.06] rounded-lg transition-all text-center group hover:scale-105"
-                  title={action.label}
+                  title={qa.label}
                 >
                   <Icon size={14} className="mx-auto mb-0.5 text-text-muted group-hover:text-accent-purple transition-colors" />
-                  <span className="text-[9px] text-text-muted group-hover:text-text-secondary">{action.label}</span>
+                  <span className="text-[9px] text-text-muted group-hover:text-text-secondary">{qa.label}</span>
                 </button>
               )
             })}
