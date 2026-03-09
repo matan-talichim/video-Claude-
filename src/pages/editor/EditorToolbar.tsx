@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Mic, Scissors, RotateCcw, Clock, List, Eye, Image, Wand2, Users, Maximize2, Droplets, Share2, Upload, Download, Undo2, Redo2 } from 'lucide-react'
+import { Mic, Scissors, RotateCcw, Clock, List, Eye, Image, Wand2, Users, Maximize2, Droplets, Share2, Upload, Download, Undo2, Redo2, SplitSquareHorizontal, Trash2, VolumeX, Copy, ClipboardPaste } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 
@@ -78,7 +78,7 @@ function Dropdown({ label, emoji, items, accentColor }: { label: string; emoji: 
 }
 
 export default function EditorToolbar() {
-  const { projectName, setProjectName, undoLastEdit, redoLastEdit, editHistory, redoHistory } = useEditorStore()
+  const { projectName, setProjectName, undoLastEdit, redoLastEdit, editHistory, redoHistory, splitAtPlayhead, removeTimeRange, muteTimeRange, rangeStart, rangeEnd, currentTime, setRangeStart, setRangeEnd, clearRange } = useEditorStore()
   const { openModal, addToast } = useUIStore()
 
   const handleUndo = () => {
@@ -95,11 +95,120 @@ export default function EditorToolbar() {
     }
   }
 
+  const handleSplit = () => {
+    splitAtPlayhead()
+    addToast('פוצל בנקודת ה-playhead', 'info')
+  }
+
+  const handleDeleteRange = () => {
+    if (rangeStart !== null && rangeEnd !== null) {
+      const start = Math.min(rangeStart, rangeEnd)
+      const end = Math.max(rangeStart, rangeEnd)
+      removeTimeRange(start, end)
+      clearRange()
+      addToast('נמחק קטע נבחר', 'info')
+    }
+  }
+
+  const handleMuteRange = () => {
+    if (rangeStart !== null && rangeEnd !== null) {
+      const start = Math.min(rangeStart, rangeEnd)
+      const end = Math.max(rangeStart, rangeEnd)
+      muteTimeRange(start, end)
+      clearRange()
+      addToast('הושתק קטע נבחר', 'info')
+    }
+  }
+
+  const handleSetRangeStart = () => {
+    setRangeStart(currentTime)
+    addToast('סומנה תחילת טווח', 'info')
+  }
+
+  const handleSetRangeEnd = () => {
+    setRangeEnd(currentTime)
+    addToast('סומן סוף טווח', 'info')
+  }
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Skip if typing in input/textarea/contentEditable
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+
+      switch (e.key.toLowerCase()) {
+        case 's':
+          if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); handleSplit() }
+          break
+        case 'delete':
+        case 'backspace':
+          if (!e.metaKey && !e.ctrlKey) handleDeleteRange()
+          break
+        case 'm':
+          if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); handleMuteRange() }
+          break
+        case '[':
+          e.preventDefault(); handleSetRangeStart()
+          break
+        case ']':
+          e.preventDefault(); handleSetRangeEnd()
+          break
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  })
+
+  const hasRange = rangeStart !== null && rangeEnd !== null
+
   return (
     <div className="flex items-center justify-between px-4 h-12 bg-bg-panel border-b border-white/[0.06] shrink-0">
       <div className="flex items-center gap-2">
         <Dropdown label="שמע טוב" emoji="🎵" items={audioItems} accentColor="text-accent-purple" />
         <Dropdown label="תיראה טוב" emoji="🎬" items={videoItems} accentColor="text-accent-blue" />
+        <div className="w-px h-5 bg-white/[0.06] mx-1" />
+        {/* Cut/Split tools */}
+        <button
+          onClick={handleSplit}
+          className="flex items-center gap-1 px-2 py-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary text-xs"
+          title="S - פיצול בנקודת playhead"
+        >
+          <SplitSquareHorizontal size={14} />
+          <span className="hidden xl:inline">פצל</span>
+        </button>
+        <button
+          onClick={handleSetRangeStart}
+          className="px-1.5 py-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary text-xs font-mono"
+          title="[ - סמן תחילת טווח"
+        >
+          [
+        </button>
+        <button
+          onClick={handleSetRangeEnd}
+          className="px-1.5 py-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary text-xs font-mono"
+          title="] - סמן סוף טווח"
+        >
+          ]
+        </button>
+        <button
+          onClick={handleDeleteRange}
+          disabled={!hasRange}
+          className="flex items-center gap-1 px-2 py-1.5 hover:bg-red-500/10 rounded-lg transition-colors text-text-muted hover:text-red-400 disabled:opacity-30 text-xs"
+          title="Delete - מחק טווח נבחר"
+        >
+          <Trash2 size={14} />
+          <span className="hidden xl:inline">מחק</span>
+        </button>
+        <button
+          onClick={handleMuteRange}
+          disabled={!hasRange}
+          className="flex items-center gap-1 px-2 py-1.5 hover:bg-yellow-500/10 rounded-lg transition-colors text-text-muted hover:text-yellow-400 disabled:opacity-30 text-xs"
+          title="M - השתק טווח נבחר"
+        >
+          <VolumeX size={14} />
+          <span className="hidden xl:inline">השתק</span>
+        </button>
         <div className="w-px h-5 bg-white/[0.06] mx-1" />
         <button
           onClick={handleUndo}

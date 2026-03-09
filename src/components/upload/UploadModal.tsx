@@ -50,6 +50,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [nameError, setNameError] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [completedProjects, setCompletedProjects] = useState<Array<{ id: string; name: string }>>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addUploadFile = useUploadsStore((s) => s.addFile)
   const simulateUpload = useUploadsStore((s) => s.simulateUpload)
@@ -193,6 +194,10 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
 
     // Simulate upload progress with visual feedback
     let progress = 0
+    const projectNames = files.map((f, i) => {
+      if (mergeEnabled || files.length === 1) return projectName.trim()
+      return files.length > 1 ? `${projectName.trim()} (${i + 1})` : projectName.trim()
+    })
     const progressInterval = setInterval(() => {
       progress += 8
       setUploadProgress(Math.min(progress, 100))
@@ -200,13 +205,17 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
         clearInterval(progressInterval)
         setTimeout(() => {
           setIsUploading(false)
-          setFiles([])
-          setProjectName('')
           setUploadProgress(0)
-          onClose()
-          // Navigate to first project
-          if (projectIds.length > 0) {
-            navigate(`/editor/${projectIds[0]}`)
+          // If multiple separate projects, show completion dialog
+          if (!mergeEnabled && files.length > 1) {
+            const projects = projectIds.map((id, i) => ({ id, name: projectNames[i] || `פרויקט ${i + 1}` }))
+            setCompletedProjects(projects)
+          } else {
+            // Single project - navigate directly
+            setFiles([])
+            setProjectName('')
+            onClose()
+            if (projectIds.length > 0) navigate(`/editor/${projectIds[0]}`)
           }
         }, 500)
       }
@@ -248,7 +257,41 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
           </div>
         )}
 
-        {!isUploading && (
+        {/* Completion dialog for multiple projects */}
+        {completedProjects.length > 0 && !isUploading && (
+          <div className="space-y-4">
+            <div className="text-center py-4">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-success/10 flex items-center justify-center">
+                <CloudUpload size={32} className="text-success" />
+              </div>
+              <h3 className="text-lg font-medium text-text-primary mb-1">
+                הועלו {completedProjects.length} פרויקטים בהצלחה!
+              </h3>
+            </div>
+            <div className="space-y-2">
+              {completedProjects.map((proj, i) => (
+                <div key={proj.id} className="flex items-center gap-3 p-3 rounded-xl border border-white/[0.06] bg-bg-card hover:border-white/[0.12] transition-all">
+                  <span className="w-6 h-6 rounded-full bg-accent-purple/10 flex items-center justify-center text-xs text-accent-purple font-mono">{i + 1}</span>
+                  <span className="flex-1 text-sm text-text-primary">{proj.name}</span>
+                  <button
+                    onClick={() => { setCompletedProjects([]); setFiles([]); setProjectName(''); onClose(); navigate(`/editor/${proj.id}`) }}
+                    className="px-3 py-1.5 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-xs transition-colors"
+                  >
+                    פתח
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => { setCompletedProjects([]); setFiles([]); setProjectName(''); onClose(); navigate(`/editor/${completedProjects[0].id}`) }}
+              className="w-full py-3 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20"
+            >
+              פתח את הראשון
+            </button>
+          </div>
+        )}
+
+        {!isUploading && completedProjects.length === 0 && (
           <>
             {/* Drop zone */}
             <div

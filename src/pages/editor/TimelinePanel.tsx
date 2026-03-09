@@ -4,7 +4,7 @@ import { useEditorStore } from '../../stores/editorStore'
 
 export default function TimelinePanel() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { currentTime, duration, setCurrentTime, mediaFile, waveformData, setWaveformData, deletedRegions, bRollItems } = useEditorStore()
+  const { currentTime, duration, setCurrentTime, mediaFile, waveformData, setWaveformData, deletedRegions, bRollItems, rangeStart, rangeEnd } = useEditorStore()
   const [zoom, setZoom] = useState(1)
   const [isDragging, setIsDragging] = useState(false)
   const waveformRef = useRef<number[]>([])
@@ -112,6 +112,24 @@ export default function TimelinePanel() {
       }
     }
 
+    // Draw range selection
+    if (duration > 0 && rangeStart !== null && rangeEnd !== null) {
+      const rs = Math.min(rangeStart, rangeEnd)
+      const re = Math.max(rangeStart, rangeEnd)
+      const rx1 = (rs / duration) * w
+      const rx2 = (re / duration) * w
+      ctx.fillStyle = 'rgba(124, 92, 255, 0.15)'
+      ctx.fillRect(rx1, 0, rx2 - rx1, h)
+      ctx.strokeStyle = 'rgba(124, 92, 255, 0.6)'
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 2])
+      ctx.beginPath()
+      ctx.moveTo(rx1, 0); ctx.lineTo(rx1, h)
+      ctx.moveTo(rx2, 0); ctx.lineTo(rx2, h)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+
     // Playhead
     const playheadX = playedRatio * w
     ctx.strokeStyle = '#FF6B8A'
@@ -128,7 +146,7 @@ export default function TimelinePanel() {
     ctx.lineTo(playheadX, 7)
     ctx.closePath()
     ctx.fill()
-  }, [currentTime, duration, zoom, waveformData, deletedRegions])
+  }, [currentTime, duration, zoom, waveformData, deletedRegions, rangeStart, rangeEnd])
 
   const seekFromCanvas = useCallback((clientX: number) => {
     const canvas = canvasRef.current

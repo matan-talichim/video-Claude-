@@ -174,31 +174,15 @@ export default function Editor() {
 
       <EditorToolbar />
 
-      {/* Main editor area */}
+      {/* Main editor area - RTL: transcript RIGHT, AI LEFT */}
       <div className="flex flex-1 overflow-hidden">
-        {showAI && (
-          <div className="w-80 shrink-0 p-2 animate-slide-in-right">
-            <AISidebar onClose={() => setShowAI(false)} />
-          </div>
-        )}
-        {showCaptionsPanel && (
-          <div className="w-72 shrink-0 p-2 animate-slide-in-right">
-            <CaptionsPanel onClose={() => setShowCaptionsPanel(false)} />
-          </div>
-        )}
-        {showBRollPanel && (
-          <div className="w-72 shrink-0 p-2 animate-slide-in-right">
-            <BRollPanel onClose={() => setShowBRollPanel(false)} />
-          </div>
-        )}
-
         <div className="flex-1 flex flex-col overflow-hidden p-2 gap-2">
           <div className="flex flex-1 gap-2 overflow-hidden">
-            <div className="flex-1">
-              <VideoPanel />
-            </div>
             <div className="w-[40%] shrink-0">
               <TranscriptPanel />
+            </div>
+            <div className="flex-1">
+              <VideoPanel />
             </div>
           </div>
           {timelineExpanded && (
@@ -221,6 +205,22 @@ export default function Editor() {
             </button>
           )}
         </div>
+
+        {showCaptionsPanel && (
+          <div className="w-72 shrink-0 p-2 animate-slide-in-right">
+            <CaptionsPanel onClose={() => setShowCaptionsPanel(false)} />
+          </div>
+        )}
+        {showBRollPanel && (
+          <div className="w-72 shrink-0 p-2 animate-slide-in-right">
+            <BRollPanel onClose={() => setShowBRollPanel(false)} />
+          </div>
+        )}
+        {showAI && (
+          <div className="w-80 shrink-0 p-2 animate-slide-in-right">
+            <AISidebar onClose={() => setShowAI(false)} />
+          </div>
+        )}
       </div>
 
       <EditorModals />
