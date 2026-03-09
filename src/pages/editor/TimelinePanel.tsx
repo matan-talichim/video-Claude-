@@ -1,11 +1,15 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { ZoomIn, ZoomOut, Volume2, Lock, Scissors, VolumeX, Trash2 } from 'lucide-react'
+import { ZoomIn, ZoomOut, Volume2, VolumeX, Lock, Unlock, Eye, EyeOff, Scissors, Trash2 } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 
 export default function TimelinePanel() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const { currentTime, duration, setCurrentTime, mediaFile, waveformData, setWaveformData, deletedRegions, bRollItems, rangeStart, rangeEnd, splitAtPlayhead, muteTimeRange, removeTimeRange, selectedBRollId, setSelectedBRollId } = useEditorStore()
+  const trackStates = useEditorStore((s) => s.trackStates)
+  const toggleTrackMute = useEditorStore((s) => s.toggleTrackMute)
+  const toggleTrackLock = useEditorStore((s) => s.toggleTrackLock)
+  const toggleTrackVisibility = useEditorStore((s) => s.toggleTrackVisibility)
   const { addToast } = useUIStore()
   const [zoom, setZoom] = useState(1)
   const [isDragging, setIsDragging] = useState(false)
@@ -16,7 +20,6 @@ export default function TimelinePanel() {
   // Generate real waveform from audio file
   useEffect(() => {
     if (!mediaFile) {
-      // No media file - show empty timeline
       waveformRef.current = []
       setWaveformData(null)
       return
@@ -30,7 +33,6 @@ export default function TimelinePanel() {
         const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer)
         const channelData = audioBuffer.getChannelData(0)
 
-        // Downsample to ~500 points
         const samples = 500
         const blockSize = Math.floor(channelData.length / samples)
         const data: number[] = []
@@ -42,14 +44,12 @@ export default function TimelinePanel() {
           data.push(sum / blockSize)
         }
 
-        // Normalize
         const max = Math.max(...data, 0.01)
         const normalized = data.map((v) => v / max)
         waveformRef.current = normalized
         setWaveformData(normalized)
         audioCtx.close()
       } catch {
-        // Failed to decode - leave empty
         waveformRef.current = []
         setWaveformData(null)
       }
@@ -103,10 +103,8 @@ export default function TimelinePanel() {
         const x2 = (region.endTime / duration) * w
         ctx.fillStyle = 'rgba(239, 68, 68, 0.25)'
         ctx.fillRect(x1, 0, x2 - x1, h)
-        // Scissors icon marker at start of deleted region
         ctx.fillStyle = 'rgba(239, 68, 68, 0.6)'
         ctx.fillRect(x1, 0, 1.5, h)
-        // Small triangle marker
         ctx.beginPath()
         ctx.moveTo(x1 - 4, 0)
         ctx.lineTo(x1 + 4, 0)
@@ -188,14 +186,16 @@ export default function TimelinePanel() {
     timeMarkers.push('0:00')
   }
 
-  const tracks = [
-    { icon: '🎥', label: 'וידאו', color: 'bg-accent-blue', trackColor: 'bg-accent-blue/20', fillColor: 'bg-accent-blue/40' },
-    { icon: '🎵', label: 'אודיו', color: 'bg-success', trackColor: 'bg-success/20', fillColor: 'bg-success/40' },
-    { icon: '💬', label: 'כתוביות', color: 'bg-warning', trackColor: 'bg-warning/20', fillColor: 'bg-warning/40' },
+  type TrackKey = 'video' | 'audio' | 'captions' | 'broll'
+
+  const tracks: { key: TrackKey; icon: string; label: string; color: string; trackColor: string; fillColor: string }[] = [
+    { key: 'video', icon: '🎥', label: 'וידאו', color: 'bg-accent-blue', trackColor: 'bg-accent-blue/20', fillColor: 'bg-accent-blue/40' },
+    { key: 'audio', icon: '🎵', label: 'אודיו', color: 'bg-success', trackColor: 'bg-success/20', fillColor: 'bg-success/40' },
+    { key: 'captions', icon: '💬', label: 'כתוביות', color: 'bg-warning', trackColor: 'bg-warning/20', fillColor: 'bg-warning/40' },
   ]
 
   if (bRollItems.length > 0) {
-    tracks.push({ icon: '🖼️', label: 'B-Roll', color: 'bg-pink-500', trackColor: 'bg-pink-500/20', fillColor: 'bg-pink-500/40' })
+    tracks.push({ key: 'broll', icon: '🖼️', label: 'B-Roll', color: 'bg-pink-500', trackColor: 'bg-pink-500/20', fillColor: 'bg-pink-500/40' })
   }
 
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0
@@ -245,6 +245,12 @@ export default function TimelinePanel() {
     }
   }
 
+  const handleTrackItemClick = (trackKey: TrackKey) => {
+    if (trackStates[trackKey].locked) {
+      addToast('הטראק נעול. לחץ על המנעול לביטול נעילה', 'warning')
+    }
+  }
+
   return (
     <div className="bg-bg-deepest rounded-xl border border-white/[0.06] overflow-hidden h-full flex flex-col">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.06] shrink-0">
@@ -254,7 +260,6 @@ export default function TimelinePanel() {
           ))}
         </div>
         <div className="flex items-center gap-2 shrink-0 mr-2">
-          {/* Timeline tools */}
           <button onClick={handleSplit} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-accent-purple" title="פצל בנקודה הנוכחית">
             <Scissors size={12} />
           </button>
@@ -304,45 +309,82 @@ export default function TimelinePanel() {
       </div>
 
       <div className="px-2 py-2 space-y-1 border-t border-white/[0.06] shrink-0">
-        {tracks.map((track) => (
-          <div key={track.label} className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 w-24 shrink-0">
-              <span className="text-xs">{track.icon}</span>
-              <span className="text-[11px] text-text-secondary">{track.label}</span>
-              <div className="flex items-center gap-0.5 mr-auto">
-                <button className="p-0.5 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-text-primary">
-                  <Volume2 size={10} />
-                </button>
-                <button className="p-0.5 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-text-primary">
-                  <Lock size={10} />
-                </button>
+        {tracks.map((track) => {
+          const state = trackStates[track.key]
+          const isMuted = state.muted
+          const isLocked = state.locked
+          const isVisible = state.visible
+
+          return (
+            <div
+              key={track.label}
+              className={`flex items-center gap-2 transition-opacity ${isMuted ? 'opacity-40' : ''}`}
+              onClick={() => handleTrackItemClick(track.key)}
+            >
+              <div className="flex items-center gap-1.5 w-28 shrink-0">
+                <span className="text-xs">{track.icon}</span>
+                <span className="text-[11px] text-text-secondary">{track.label}</span>
+                <div className="flex items-center gap-0.5 mr-auto">
+                  {/* Mute button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleTrackMute(track.key) }}
+                    className={`p-0.5 rounded transition-colors ${isMuted ? 'text-red-400 hover:text-red-300' : 'text-text-muted hover:text-text-primary hover:bg-white/[0.06]'}`}
+                    title={isMuted ? 'בטל השתקה' : 'השתק'}
+                  >
+                    {isMuted ? <VolumeX size={11} /> : <Volume2 size={11} />}
+                  </button>
+                  {/* Lock button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleTrackLock(track.key) }}
+                    className={`p-0.5 rounded transition-colors ${isLocked ? 'text-yellow-400 hover:text-yellow-300' : 'text-text-muted hover:text-text-primary hover:bg-white/[0.06]'}`}
+                    title={isLocked ? 'בטל נעילה' : 'נעל טראק'}
+                  >
+                    {isLocked ? <Lock size={11} /> : <Unlock size={11} />}
+                  </button>
+                  {/* Visibility button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleTrackVisibility(track.key) }}
+                    className={`p-0.5 rounded transition-colors ${!isVisible ? 'text-gray-500 hover:text-gray-400' : 'text-text-muted hover:text-text-primary hover:bg-white/[0.06]'}`}
+                    title={isVisible ? 'הסתר' : 'הצג'}
+                  >
+                    {isVisible ? <Eye size={11} /> : <EyeOff size={11} />}
+                  </button>
+                </div>
+              </div>
+              <div className={`flex-1 h-5 ${track.trackColor} rounded relative overflow-hidden ${isLocked ? 'cursor-not-allowed' : ''} ${!isVisible ? 'border border-dashed border-white/[0.12] opacity-20' : ''}`}
+                style={isLocked ? { backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255,255,255,0.03) 4px, rgba(255,255,255,0.03) 8px)' } : undefined}
+              >
+                {track.key === 'broll' ? (
+                  bRollItems.map((item) => (
+                    <div key={item.id}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!isLocked) {
+                          setSelectedBRollId(item.id)
+                        } else {
+                          addToast('הטראק נעול. לחץ על המנעול לביטול נעילה', 'warning')
+                        }
+                      }}
+                      className={`absolute top-0 h-full rounded cursor-pointer transition-colors ${selectedBRollId === item.id ? 'bg-pink-500/60 ring-1 ring-pink-400' : 'bg-pink-500/40 hover:bg-pink-500/50'} ${isLocked ? 'cursor-not-allowed' : ''}`}
+                      style={{
+                        left: duration > 0 ? `${(item.startTime / duration) * 100}%` : '0%',
+                        width: duration > 0 ? `${(item.duration / duration) * 100}%` : '0%',
+                      }}
+                      title={item.prompt || 'B-Roll'}>
+                      <span className="text-[7px] text-white truncate px-0.5 leading-5">{item.prompt?.slice(0, 15) || 'B-Roll'}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className={`h-full ${track.fillColor} rounded`} style={{ width: `${Math.min(progressPct + 15, 100)}%` }} />
+                )}
+                {/* Playhead on track */}
+                {duration > 0 && (
+                  <div className="absolute top-0 bottom-0 w-px bg-pink-400/60 pointer-events-none" style={{ left: `${progressPct}%` }} />
+                )}
               </div>
             </div>
-            <div className={`flex-1 h-5 ${track.trackColor} rounded relative overflow-hidden`}>
-              {track.label === 'B-Roll' ? (
-                // Show actual B-Roll items on track
-                bRollItems.map((item) => (
-                  <div key={item.id}
-                    onClick={() => setSelectedBRollId(item.id)}
-                    className={`absolute top-0 h-full rounded cursor-pointer transition-colors ${selectedBRollId === item.id ? 'bg-pink-500/60 ring-1 ring-pink-400' : 'bg-pink-500/40 hover:bg-pink-500/50'}`}
-                    style={{
-                      left: duration > 0 ? `${(item.startTime / duration) * 100}%` : '0%',
-                      width: duration > 0 ? `${(item.duration / duration) * 100}%` : '0%',
-                    }}
-                    title={item.prompt || 'B-Roll'}>
-                    <span className="text-[7px] text-white truncate px-0.5 leading-5">{item.prompt?.slice(0, 15) || 'B-Roll'}</span>
-                  </div>
-                ))
-              ) : (
-                <div className={`h-full ${track.fillColor} rounded`} style={{ width: `${Math.min(progressPct + 15, 100)}%` }} />
-              )}
-              {/* Playhead on track */}
-              {duration > 0 && (
-                <div className="absolute top-0 bottom-0 w-px bg-pink-400/60 pointer-events-none" style={{ left: `${progressPct}%` }} />
-              )}
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
       {/* Selection info */}
       {selectionStart !== null && selectionEnd !== null && (

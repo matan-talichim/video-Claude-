@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Film, Upload, Trash2, GripVertical, Loader2, Merge, AlertTriangle } from 'lucide-react'
+import { Film, Upload, Trash2, GripVertical, Loader2, Merge, AlertTriangle, ChevronDown, ChevronLeft } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -10,23 +10,33 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60).toString().padStart(2, '0')
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0')
+  return `${m}:${s}`
+}
+
 export default function MediaSidebar({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  const { mediaBlobUrl, loadMedia, isDirty } = useEditorStore()
+  const { loadMedia, isDirty } = useEditorStore()
   const { addToast } = useUIStore()
   const project = useProjectsStore((s) => s.projects.find((p) => p.id === projectId))
   const addVideoToProject = useProjectsStore((s) => s.addVideoToProject)
   const reorderVideos = useProjectsStore((s) => s.reorderVideos)
   const removeVideoFromProject = useProjectsStore((s) => s.removeVideoFromProject)
   const setActiveVideo = useProjectsStore((s) => s.setActiveVideo)
+  const replaceVideosWithMerged = useProjectsStore((s) => s.replaceVideosWithMerged)
   const fileRef = useRef<HTMLInputElement>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [showSaveDialog, setShowSaveDialog] = useState<{ targetVideoId: string } | null>(null)
   const [isMerging, setIsMerging] = useState(false)
   const [showMergeDialog, setShowMergeDialog] = useState(false)
   const [mergeTransition, setMergeTransition] = useState<'none' | 'fade'>('none')
+  const [showOriginalFiles, setShowOriginalFiles] = useState(false)
+  const [originalFileNames, setOriginalFileNames] = useState<string[]>([])
 
   const videos = project?.videos?.slice().sort((a, b) => a.order - b.order) || []
   const activeVideoId = project?.activeVideoId || null
+  const isMergedProject = videos.length === 1 && videos[0]?.fileName.includes('(מאוחד)')
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -68,7 +78,6 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
       return
     }
     removeVideoFromProject(projectId, videoId)
-    // If removing the active video, switch to the first remaining
     if (videoId === activeVideoId) {
       const remaining = videos.filter((v) => v.id !== videoId)
       if (remaining.length > 0) {
@@ -91,6 +100,8 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
       addToast('נדרשים לפחות 2 קבצים למיזוג', 'warning')
       return
     }
+    // Store original file names before merge
+    const origNames = videos.map((v) => v.fileName)
     setShowMergeDialog(false)
     setIsMerging(true)
     try {
@@ -99,10 +110,23 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
       if (result.url) {
         const response = await fetch(`http://localhost:3001${result.url}`)
         const blob = await response.blob()
-        const file = new File([blob], 'merged.mp4', { type: 'video/mp4' })
+        const file = new File([blob], `${project?.name || 'merged'}.mp4`, { type: 'video/mp4' })
         const blobUrl = URL.createObjectURL(blob)
+
+        // Calculate total duration from videos
+        const totalDuration = videos.reduce((sum, v) => sum + (v.duration || 0), 0)
+
+        // Replace all individual videos with the merged one
+        const mergedId = replaceVideosWithMerged(projectId, file, blobUrl, totalDuration, origNames)
+
+        // Load merged video in editor
         loadMedia(file, blobUrl, 'video')
-        addToast('הסרטונים אוחדו בהצלחה!', 'success')
+
+        // Store original file names for display
+        setOriginalFileNames(origNames)
+        setShowOriginalFiles(false)
+
+        addToast('✅ הסרטונים אוחדו לסרטון אחד!', 'success')
       }
     } catch {
       addToast('שגיאה במיזוג הסרטונים', 'error')
@@ -131,7 +155,7 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
 
         {videos.map((video, idx) => (
           <div key={video.id}
-            draggable
+            draggable={!isMergedProject}
             onDragStart={() => handleDragStart(idx)}
             onDragOver={(e) => handleDragOver(e, idx)}
             onDragEnd={handleDragEnd}
@@ -141,9 +165,11 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
                 : 'bg-white/[0.03] border-white/[0.06] hover:border-white/[0.12]'
             } ${dragIdx === idx ? 'opacity-50' : ''}`}
             onClick={() => handleSwitchVideo(video.id)}>
-            <GripVertical size={12} className="text-text-muted cursor-grab shrink-0" />
+            {!isMergedProject && (
+              <GripVertical size={12} className="text-text-muted cursor-grab shrink-0" />
+            )}
             <span className="w-5 h-5 rounded-full bg-white/[0.06] flex items-center justify-center text-[9px] text-text-muted font-mono shrink-0">
-              {idx + 1}
+              {isMergedProject ? '🎬' : idx + 1}
             </span>
             <div className="w-10 h-8 bg-white/[0.04] rounded flex items-center justify-center shrink-0">
               <Film size={14} className="text-text-muted" />
@@ -151,22 +177,52 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
             <div className="flex-1 min-w-0">
               <p className="text-[11px] text-text-primary truncate">{video.fileName}</p>
               <p className="text-[9px] text-text-muted">
-                {formatFileSize(video.size)} - {video.mediaType === 'video' ? 'וידאו' : 'אודיו'}
+                {formatFileSize(video.size)}
+                {video.duration > 0 && ` • ${formatDuration(video.duration)}`}
+                {' - '}{video.mediaType === 'video' ? 'וידאו' : 'אודיו'}
               </p>
             </div>
             {video.id === activeVideoId ? (
-              <span className="text-[8px] px-1 py-0.5 bg-accent-purple/20 text-accent-purple rounded">עריכה</span>
+              <span className="text-[8px] px-1.5 py-0.5 bg-accent-purple/20 text-accent-purple rounded flex items-center gap-0.5">
+                ✏️ עריכה פעילה
+              </span>
             ) : video.isTranscribed ? (
               <span className="text-[8px] px-1 py-0.5 bg-success/20 text-success rounded">תומלל</span>
             ) : null}
-            <button onClick={(e) => handleRemove(e, video.id)}
-              className="p-1 text-text-muted hover:text-red-400 transition-colors shrink-0">
-              <Trash2 size={11} />
-            </button>
+            {!isMergedProject && (
+              <button onClick={(e) => handleRemove(e, video.id)}
+                className="p-1 text-text-muted hover:text-red-400 transition-colors shrink-0">
+                <Trash2 size={11} />
+              </button>
+            )}
           </div>
         ))}
 
-        {videos.length >= 2 && (
+        {/* Original files collapsible section (shown after merge) */}
+        {originalFileNames.length > 0 && (
+          <div className="border border-white/[0.06] rounded-lg overflow-hidden">
+            <button
+              onClick={() => setShowOriginalFiles(!showOriginalFiles)}
+              className="w-full flex items-center gap-2 p-2 text-xs text-text-muted hover:text-text-secondary hover:bg-white/[0.03] transition-all"
+            >
+              {showOriginalFiles ? <ChevronDown size={12} /> : <ChevronLeft size={12} />}
+              <span>קבצים מקוריים ({originalFileNames.length})</span>
+            </button>
+            {showOriginalFiles && (
+              <div className="px-3 pb-2 space-y-1">
+                {originalFileNames.map((name, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px] text-text-muted py-0.5">
+                    <span className="font-mono text-accent-purple/60">{i + 1}.</span>
+                    <Film size={10} className="text-text-muted/50 shrink-0" />
+                    <span className="truncate">{name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {videos.length >= 2 && !isMergedProject && (
           <button onClick={() => setShowMergeDialog(true)} disabled={isMerging}
             className="w-full flex items-center justify-center gap-1.5 py-2 bg-accent-purple/10 hover:bg-accent-purple/20 border border-accent-purple/20 rounded-lg text-xs text-accent-purple transition-all disabled:opacity-50">
             {isMerging ? <Loader2 size={12} className="animate-spin" /> : <Merge size={12} />}

@@ -140,6 +140,12 @@ export interface SpeakerInfo {
   color: string
 }
 
+export interface TrackState {
+  muted: boolean
+  locked: boolean
+  visible: boolean
+}
+
 interface EditorState {
   projectId: string | null
   projectName: string
@@ -167,6 +173,13 @@ interface EditorState {
   deletedRegions: DeletedRegion[]
   // Editor tool settings
   editorEffects: Record<string, any>
+  // Track states
+  trackStates: {
+    video: TrackState
+    audio: TrackState
+    captions: TrackState
+    broll: TrackState
+  }
 
   setProjectId: (id: string | null) => void
   setProjectName: (name: string) => void
@@ -244,6 +257,9 @@ interface EditorState {
   setRangeStart: (t: number | null) => void
   setRangeEnd: (t: number | null) => void
   clearRange: () => void
+  toggleTrackMute: (track: 'video' | 'audio' | 'captions' | 'broll') => void
+  toggleTrackLock: (track: 'video' | 'audio' | 'captions' | 'broll') => void
+  toggleTrackVisibility: (track: 'video' | 'audio' | 'captions' | 'broll') => void
 }
 
 const defaultCaptionStyle: CaptionStyle = {
@@ -288,6 +304,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   translatedCaptions: [],
   rangeStart: null,
   rangeEnd: null,
+  trackStates: {
+    video: { muted: false, locked: false, visible: true },
+    audio: { muted: false, locked: false, visible: true },
+    captions: { muted: false, locked: false, visible: true },
+    broll: { muted: false, locked: false, visible: true },
+  },
   editHistory: [],
   redoHistory: [],
   lastSavedAt: null,
@@ -405,6 +427,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setEditorEffect: (key, value) => set((s) => ({
     editorEffects: { ...s.editorEffects, [key]: value },
     isDirty: true,
+  })),
+
+  toggleTrackMute: (track) => set((s) => ({
+    trackStates: { ...s.trackStates, [track]: { ...s.trackStates[track], muted: !s.trackStates[track].muted } },
+  })),
+  toggleTrackLock: (track) => set((s) => ({
+    trackStates: { ...s.trackStates, [track]: { ...s.trackStates[track], locked: !s.trackStates[track].locked } },
+  })),
+  toggleTrackVisibility: (track) => set((s) => ({
+    trackStates: { ...s.trackStates, [track]: { ...s.trackStates[track], visible: !s.trackStates[track].visible } },
   })),
 
   loadProject: (opts) => {
