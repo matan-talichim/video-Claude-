@@ -85,6 +85,7 @@ function getFFmpeg(): string {
 }
 
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
+  console.log('=== TRANSCRIBE HANDLER V2 ===')
   let inputPath = ''
   let mp3Path = ''
 
