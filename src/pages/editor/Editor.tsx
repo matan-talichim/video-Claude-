@@ -21,7 +21,14 @@ export default function Editor() {
   const [showAI, setShowAI] = useState(true)
   const [showCaptionsPanel, setShowCaptionsPanel] = useState(false)
   const [showBRollPanel, setShowBRollPanel] = useState(false)
-  const [showMediaSidebar, setShowMediaSidebar] = useState(false)
+  const [showMediaSidebar, setShowMediaSidebar] = useState(() => {
+    // Auto-open media sidebar for multi-video projects
+    if (id) {
+      const proj = useProjectsStore.getState().getProject(id)
+      return (proj?.videos?.length ?? 0) > 1
+    }
+    return false
+  })
   const [timelineExpanded, setTimelineExpanded] = useState(true)
   const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved'>('idle')
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -36,14 +43,21 @@ export default function Editor() {
     if (!id) return
     const project = getProject(id)
     if (project) {
+      // Load from videos array if available, otherwise fallback to legacy fields
+      const activeVideo = project.videos?.find((v) => v.id === project.activeVideoId) || project.videos?.[0]
+      const mediaFile = activeVideo?.file ?? project.mediaFile
+      const mediaBlobUrl = activeVideo?.blobUrl ?? project.mediaBlobUrl
+      const mediaType = activeVideo?.mediaType ?? project.mediaType
+      const transcript = activeVideo?.transcript?.length ? activeVideo.transcript : project.transcript
+
       loadProject({
         id: project.id,
         name: project.name,
         isDemo: false,
-        mediaFile: project.mediaFile,
-        mediaBlobUrl: project.mediaBlobUrl,
-        mediaType: project.mediaType,
-        transcript: project.transcript,
+        mediaFile,
+        mediaBlobUrl,
+        mediaType,
+        transcript,
         editHistory: project.editHistory,
         deletedRegions: project.deletedRegions,
       })
@@ -217,9 +231,9 @@ export default function Editor() {
           )}
         </div>
 
-        {showMediaSidebar && (
+        {showMediaSidebar && id && (
           <div className="w-72 shrink-0 p-2 animate-slide-in-right">
-            <MediaSidebar onClose={() => setShowMediaSidebar(false)} />
+            <MediaSidebar projectId={id} onClose={() => setShowMediaSidebar(false)} />
           </div>
         )}
         {showCaptionsPanel && (

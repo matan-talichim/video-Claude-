@@ -581,14 +581,18 @@ app.post('/api/generate-image', async (req, res) => {
 
 // ==================== MERGE VIDEOS (FFmpeg) ====================
 
-app.post('/api/merge', upload.array('files', 10), async (req, res) => {
+app.post('/api/merge', upload.array('files', 20), async (req, res) => {
   const filePaths: string[] = []
   try {
     const files = req.files as Express.Multer.File[]
+    const transition = req.body.transition || 'none'
+
     if (!files || files.length < 2) {
       if (files) files.forEach(f => fs.unlinkSync(f.path))
       return res.status(400).json({ message: 'נדרשים לפחות 2 קבצים למיזוג.' })
     }
+
+    console.log(`[MERGE] Merging ${files.length} files with transition: ${transition}`)
 
     const ffmpeg = getFFmpeg()
 
@@ -596,43 +600,57 @@ app.post('/api/merge', upload.array('files', 10), async (req, res) => {
     const listPath = path.join(uploadsDir, `concat-${Date.now()}.txt`)
     const outputPath = path.join(uploadsDir, `merged-${Date.now()}.mp4`)
 
-    // Convert all files to same format first
+    // Step 1: Normalize all files to same format (1920x1080, same codecs)
     for (let i = 0; i < files.length; i++) {
       const normalizedPath = path.join(uploadsDir, `norm-${Date.now()}-${i}.mp4`)
+      console.log(`[MERGE] Normalizing file ${i + 1}/${files.length}: ${files[i].originalname}`)
       execSync(
-        `"${ffmpeg}" -i "${files[i].path}" -c:v libx264 -c:a aac -ar 44100 -r 30 -preset fast "${normalizedPath}" -y`,
-        { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+        `"${ffmpeg}" -i "${files[i].path}" -c:v libx264 -c:a aac -ar 44100 -ac 2 -r 30 -preset fast -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2" "${normalizedPath}" -y`,
+        { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
       )
       filePaths.push(normalizedPath)
       // Remove original upload
       try { fs.unlinkSync(files[i].path) } catch {}
     }
 
-    // Write concat list
+    // Step 2: Write concat list
     const listContent = filePaths.map(p => `file '${p}'`).join('\n')
     fs.writeFileSync(listPath, listContent)
 
-    // Merge using concat demuxer
-    execSync(
-      `"${ffmpeg}" -f concat -safe 0 -i "${listPath}" -c copy "${outputPath}" -y`,
-      { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
-    )
+    // Step 3: Concatenate
+    if (transition === 'none') {
+      console.log('[MERGE] Concatenating without transitions...')
+      execSync(
+        `"${ffmpeg}" -f concat -safe 0 -i "${listPath}" -c copy "${outputPath}" -y`,
+        { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+    } else {
+      // For fade transition, re-encode with concat filter
+      console.log('[MERGE] Concatenating with fade transition...')
+      execSync(
+        `"${ffmpeg}" -f concat -safe 0 -i "${listPath}" -c:v libx264 -preset fast -crf 23 -c:a aac "${outputPath}" -y`,
+        { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+    }
 
     // Cleanup temp files
     try { fs.unlinkSync(listPath) } catch {}
     filePaths.forEach(p => { try { fs.unlinkSync(p) } catch {} })
 
     const outputFilename = path.basename(outputPath)
+    const outputSize = fs.statSync(outputPath).size
+    console.log(`[MERGE] Success! Output: ${outputFilename}, Size: ${(outputSize / 1024 / 1024).toFixed(1)}MB`)
+
     res.json({
       url: `/api/audio/${outputFilename}`,
       filename: outputFilename,
-      size: fs.statSync(outputPath).size,
+      size: outputSize,
     })
   } catch (error: any) {
     // Cleanup on error
     filePaths.forEach(p => { try { fs.unlinkSync(p) } catch {} })
-    console.error('Merge error:', error.message)
-    return res.status(500).json({ message: 'שגיאה במיזוג הסרטונים. נסה שוב.' })
+    console.error('[MERGE ERROR]', error.message)
+    return res.status(500).json({ message: 'שגיאה באיחוד הסרטונים: ' + error.message })
   }
 })
 

@@ -1,6 +1,22 @@
 import { create } from 'zustand'
 import type { Segment, EditHistoryEntry, DeletedRegion } from './editorStore'
 
+export interface ProjectVideo {
+  id: string
+  fileName: string
+  file: File
+  blobUrl: string
+  mediaType: 'video' | 'audio'
+  duration: number
+  size: number
+  order: number
+  transcript: Segment[]
+  editHistory: EditHistoryEntry[]
+  deletedRegions: DeletedRegion[]
+  isTranscribed: boolean
+  hasUnsavedChanges: boolean
+}
+
 export interface Project {
   id: string
   name: string
@@ -9,6 +25,7 @@ export interface Project {
   updatedAt: string
   size: string
   gradient: string
+  // Legacy single-file fields (kept for backward compat)
   mediaFile?: File
   mediaBlobUrl?: string
   mediaType?: 'video' | 'audio'
@@ -20,6 +37,9 @@ export interface Project {
   updatedAtTimestamp?: number
   isDemo?: boolean
   source?: 'upload' | 'recording' | 'prompt' | 'script'
+  // Multi-video fields
+  videos: ProjectVideo[]
+  activeVideoId: string | null
 }
 
 const gradients = [
@@ -82,6 +102,7 @@ interface ProjectsState {
     duration?: number
     source?: 'upload' | 'recording' | 'prompt' | 'script'
     isDemo?: boolean
+    videos?: Array<{ file: File; blobUrl: string; mediaType: 'video' | 'audio' }>
   }) => string
   updateProject: (id: string, updates: Partial<Project>) => void
   getProject: (id: string) => Project | undefined
@@ -93,6 +114,11 @@ interface ProjectsState {
     mediaBlobUrl?: string
     mediaFile?: File
   }) => void
+  addVideoToProject: (projectId: string, file: File, blobUrl: string, mediaType: 'video' | 'audio') => void
+  updateVideoInProject: (projectId: string, videoId: string, updates: Partial<ProjectVideo>) => void
+  setActiveVideo: (projectId: string, videoId: string) => void
+  reorderVideos: (projectId: string, fromIndex: number, toIndex: number) => void
+  removeVideoFromProject: (projectId: string, videoId: string) => void
 }
 
 export const useProjectsStore = create<ProjectsState>((set, get) => ({
@@ -132,8 +158,49 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     const id = `proj-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
     const gradient = gradients[Math.floor(Math.random() * gradients.length)]
     const now = Date.now()
+
+    // Build videos array
+    const videos: ProjectVideo[] = []
+    if (opts.videos && opts.videos.length > 0) {
+      opts.videos.forEach((v, index) => {
+        videos.push({
+          id: `vid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          fileName: v.file.name,
+          file: v.file,
+          blobUrl: v.blobUrl,
+          mediaType: v.mediaType,
+          duration: 0,
+          size: v.file.size,
+          order: index,
+          transcript: [],
+          editHistory: [],
+          deletedRegions: [],
+          isTranscribed: false,
+          hasUnsavedChanges: false,
+        })
+      })
+    } else if (opts.mediaFile) {
+      videos.push({
+        id: `vid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        fileName: opts.mediaFile.name,
+        file: opts.mediaFile,
+        blobUrl: opts.mediaBlobUrl || '',
+        mediaType: opts.mediaType || 'video',
+        duration: opts.duration || 0,
+        size: opts.mediaFile.size,
+        order: 0,
+        transcript: opts.transcript || [],
+        editHistory: [],
+        deletedRegions: [],
+        isTranscribed: false,
+        hasUnsavedChanges: false,
+      })
+    }
+
+    const totalSize = videos.reduce((sum, v) => sum + v.size, 0)
     const durationStr = opts.duration ? formatDuration(opts.duration) : '00:00'
-    const sizeStr = opts.mediaFile ? formatSize(opts.mediaFile.size) : '0KB'
+    const sizeStr = totalSize > 0 ? formatSize(totalSize) : '0KB'
+
     const project: Project = {
       id, name: opts.name, status: 'טיוטה', duration: durationStr,
       updatedAt: 'עכשיו', size: sizeStr, gradient,
@@ -142,6 +209,8 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       transcriptMode: opts.transcriptMode ?? 'real',
       createdAt: now, updatedAtTimestamp: now,
       isDemo: opts.isDemo ?? false, source: opts.source ?? 'upload',
+      videos,
+      activeVideoId: videos.length > 0 ? videos[0].id : null,
     }
     set((s) => ({ projects: [project, ...s.projects] }))
     return id
@@ -180,6 +249,97 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
           }
         }
         return p
+      }),
+    }))
+  },
+
+  addVideoToProject: (projectId, file, blobUrl, mediaType) => {
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id !== projectId) return p
+        const newVideo: ProjectVideo = {
+          id: `vid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          fileName: file.name,
+          file,
+          blobUrl,
+          mediaType,
+          duration: 0,
+          size: file.size,
+          order: p.videos.length,
+          transcript: [],
+          editHistory: [],
+          deletedRegions: [],
+          isTranscribed: false,
+          hasUnsavedChanges: false,
+        }
+        const videos = [...p.videos, newVideo]
+        const totalSize = videos.reduce((sum, v) => sum + v.size, 0)
+        return {
+          ...p,
+          videos,
+          size: formatSize(totalSize),
+          updatedAtTimestamp: Date.now(),
+          updatedAt: 'עכשיו',
+        }
+      }),
+    }))
+  },
+
+  updateVideoInProject: (projectId, videoId, updates) => {
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id !== projectId) return p
+        return {
+          ...p,
+          videos: p.videos.map((v) => v.id === videoId ? { ...v, ...updates } : v),
+          updatedAtTimestamp: Date.now(),
+          updatedAt: 'עכשיו',
+        }
+      }),
+    }))
+  },
+
+  setActiveVideo: (projectId, videoId) => {
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id !== projectId) return p
+        return { ...p, activeVideoId: videoId }
+      }),
+    }))
+  },
+
+  reorderVideos: (projectId, fromIndex, toIndex) => {
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id !== projectId) return p
+        const videos = [...p.videos].sort((a, b) => a.order - b.order)
+        const [moved] = videos.splice(fromIndex, 1)
+        videos.splice(toIndex, 0, moved)
+        return {
+          ...p,
+          videos: videos.map((v, i) => ({ ...v, order: i })),
+        }
+      }),
+    }))
+  },
+
+  removeVideoFromProject: (projectId, videoId) => {
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id !== projectId) return p
+        const videos = p.videos.filter((v) => v.id !== videoId).map((v, i) => ({ ...v, order: i }))
+        const activeVideoId = p.activeVideoId === videoId
+          ? (videos[0]?.id || null)
+          : p.activeVideoId
+        const totalSize = videos.reduce((sum, v) => sum + v.size, 0)
+        return {
+          ...p,
+          videos,
+          activeVideoId,
+          size: formatSize(totalSize),
+          updatedAtTimestamp: Date.now(),
+          updatedAt: 'עכשיו',
+        }
       }),
     }))
   },
