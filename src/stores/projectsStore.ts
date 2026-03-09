@@ -345,7 +345,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     }))
   },
 
-  replaceVideosWithMerged: (projectId, mergedFile, mergedBlobUrl, totalDuration, originalFileNames) => {
+  replaceVideosWithMerged: (projectId, mergedFile, mergedBlobUrl, totalDuration, _originalFileNames) => {
     const project = get().projects.find((p) => p.id === projectId)
     if (!project) return null
     const mergedVideoId = `merged-${Date.now()}`

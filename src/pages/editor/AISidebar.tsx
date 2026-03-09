@@ -47,64 +47,71 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const getTranscriptText = useCallback(() => {
-    return editor.transcript
-      .flatMap((s) => s.words)
-      .map((w) => w.text)
-      .join(' ')
-  }, [editor.transcript])
-
-  const getEditorContext = useCallback(() => {
-    const silences = editor.transcript.length > 0 ? editor.countSilences(1.0) : { count: 0, totalDuration: 0, gaps: [] }
-    return {
-      projectName: editor.projectName,
-      duration: editor.duration,
-      transcript: getTranscriptText(),
-      segmentCount: editor.transcript.length,
-      speakerCount: speakerCount,
-      speakers: [...new Set(editor.transcript.map(s => s.speaker))],
-      brollItems: editor.bRollItems.map(b => ({
-        id: b.id,
-        prompt: b.prompt,
-        start: b.startTime,
-        end: b.startTime + b.duration,
-        position: b.displayMode,
-      })),
-      brollCount: editor.bRollItems.length,
-      captions: { enabled: editor.showCaptions, style: editor.captionStyle.preset, language: 'he' },
-      hasCaptions: editor.showCaptions,
-      captionStyle: editor.captionStyle.preset,
-      editPoints: editor.deletedRegions,
-      deletedRegionsCount: editor.deletedRegions.length,
-      deletedDuration: editor.deletedRegions.reduce((s, r) => s + (r.endTime - r.startTime), 0),
-      fillerWordCount: totalFillers,
-      silenceCount: silences.count,
-      silenceDuration: silences.totalDuration,
-      hasEyeContact: editor.editorEffects?.eyeContact || false,
-      hasGreenScreen: editor.editorEffects?.greenScreen?.enabled || false,
-      reframeRatio: editor.editorEffects?.reframe?.ratio || '16:9',
-      isTranscribed: editor.transcript.length > 0,
-      hasMusic: false,
-      exportFormat: null,
-    }
-  }, [editor, getTranscriptText, totalFillers, speakerCount])
-
   const { openModal, addToast } = useUIStore()
 
-  // Real analysis helpers
+  // Real analysis helpers - MUST be declared before getEditorContext which uses them
   const fillerCounts = useMemo(() => {
-    if (editor.transcript.length === 0) return {}
+    const transcript = editor.transcript || []
+    if (transcript.length === 0) return {}
     return editor.countFillerWords()
   }, [editor.transcript])
 
   const totalFillers = useMemo(() => Object.values(fillerCounts).reduce((s: number, c) => s + (c as number), 0), [fillerCounts])
 
   const silenceData = useMemo(() => {
-    if (editor.transcript.length === 0) return { count: 0, totalDuration: 0, gaps: [] }
+    const transcript = editor.transcript || []
+    if (transcript.length === 0) return { count: 0, totalDuration: 0, gaps: [] }
     return editor.countSilences(1.0)
   }, [editor.transcript])
 
-  const speakerCount = useMemo(() => new Set(editor.transcript.map(s => s.speaker)).size, [editor.transcript])
+  const speakerCount = useMemo(() => {
+    const transcript = editor.transcript || []
+    return new Set(transcript.map(s => s.speaker)).size
+  }, [editor.transcript])
+
+  const getTranscriptText = useCallback(() => {
+    const transcript = editor.transcript || []
+    return transcript
+      .flatMap((s) => s.words)
+      .map((w) => w.text)
+      .join(' ')
+  }, [editor.transcript])
+
+  const getEditorContext = useCallback(() => {
+    const transcript = editor.transcript || []
+    const silences = transcript.length > 0 ? editor.countSilences(1.0) : { count: 0, totalDuration: 0, gaps: [] }
+    return {
+      projectName: editor.projectName,
+      duration: editor.duration,
+      transcript: getTranscriptText(),
+      segmentCount: transcript.length,
+      speakerCount: speakerCount,
+      speakers: [...new Set(transcript.map(s => s.speaker))],
+      brollItems: (editor.bRollItems || []).map(b => ({
+        id: b.id,
+        prompt: b.prompt,
+        start: b.startTime,
+        end: b.startTime + b.duration,
+        position: b.displayMode,
+      })),
+      brollCount: (editor.bRollItems || []).length,
+      captions: { enabled: editor.showCaptions, style: editor.captionStyle?.preset, language: 'he' },
+      hasCaptions: editor.showCaptions,
+      captionStyle: editor.captionStyle?.preset,
+      editPoints: editor.deletedRegions || [],
+      deletedRegionsCount: (editor.deletedRegions || []).length,
+      deletedDuration: (editor.deletedRegions || []).reduce((s, r) => s + (r.endTime - r.startTime), 0),
+      fillerWordCount: totalFillers,
+      silenceCount: silences.count,
+      silenceDuration: silences.totalDuration,
+      hasEyeContact: editor.editorEffects?.eyeContact || false,
+      hasGreenScreen: editor.editorEffects?.greenScreen?.enabled || false,
+      reframeRatio: editor.editorEffects?.reframe?.ratio || '16:9',
+      isTranscribed: transcript.length > 0,
+      hasMusic: false,
+      exportFormat: null,
+    }
+  }, [editor, getTranscriptText, totalFillers, speakerCount])
 
   // Execute quick action directly
   const executeQuickAction = useCallback((action: string) => {
@@ -165,7 +172,8 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
   const getProactiveSuggestions = useCallback(() => {
     const suggestions: Array<{ emoji: string; label: string; action: string }> = []
 
-    if (editor.transcript.length === 0) return suggestions
+    const transcript = editor.transcript || []
+    if (transcript.length === 0) return suggestions
 
     if (totalFillers > 0) {
       suggestions.push({ emoji: '✂️', label: `מצאתי ${totalFillers} מילות מילוי. להסיר?`, action: 'remove_filler' })
@@ -176,7 +184,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     if (!editor.showCaptions) {
       suggestions.push({ emoji: '📝', label: 'אין כתוביות. כתוביות מגדילות מעורבות ב-40%', action: 'add_captions' })
     }
-    if (editor.bRollItems.length === 0) {
+    if ((editor.bRollItems || []).length === 0) {
       suggestions.push({ emoji: '🖼️', label: 'אין B-Roll. רוצה שאוסיף תמונות מתאימות?', action: 'add_broll' })
     }
     if (editor.duration > 120) {

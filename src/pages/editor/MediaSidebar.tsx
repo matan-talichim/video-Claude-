@@ -136,7 +136,7 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
         const totalDuration = videos.reduce((sum, v) => sum + (v.duration || 0), 0)
 
         // Replace all individual videos with the merged one
-        const mergedId = replaceVideosWithMerged(projectId, file, blobUrl, totalDuration, origNames)
+        replaceVideosWithMerged(projectId, file, blobUrl, totalDuration, origNames)
 
         // Load merged video in editor
         loadMedia(file, blobUrl, 'video')

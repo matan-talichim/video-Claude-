@@ -168,7 +168,8 @@ export default function TranscriptPanel() {
 
   const handleSpeakerRename = (segIdx: number) => {
     if (!speakerEditValue.trim()) { setEditingSpeaker(null); return }
-    renameSpeaker(transcript[segIdx].speaker, speakerEditValue.trim()); setEditingSpeaker(null)
+    const seg = transcript[segIdx]; if (!seg) { setEditingSpeaker(null); return }
+    renameSpeaker(seg.speaker, speakerEditValue.trim()); setEditingSpeaker(null)
   }
 
   const handleSegmentInput = useCallback((segIdx: number, e: React.FormEvent<HTMLDivElement>) => {
@@ -196,7 +197,8 @@ export default function TranscriptPanel() {
   const handleFillerClick = (segIdx: number, wordIdx: number) => {
     const { transcript: t, editHistory, deletedRegions } = useEditorStore.getState()
     const prev = JSON.parse(JSON.stringify(t)); const prevDeleted = JSON.parse(JSON.stringify(deletedRegions))
-    const word = t[segIdx].words[wordIdx]; const nt = [...t]; const seg = { ...nt[segIdx] }
+    const segData = t[segIdx]; if (!segData) return
+    const word = segData.words[wordIdx]; const nt = [...t]; const seg = { ...nt[segIdx] }
     seg.words = seg.words.filter((_, i) => i !== wordIdx); nt[segIdx] = seg
     const newDeletedRegions = word ? [...deletedRegions, { startTime: word.start, endTime: word.end, description: `מילת מילוי: ${word.text}` }].sort((a, b) => a.startTime - b.startTime) : deletedRegions
     useEditorStore.setState({ transcript: nt.filter(s => s.words.length > 0), deletedRegions: newDeletedRegions, isDirty: true, editHistory: [...editHistory, { action: 'deleteFiller', description: 'נמחקה מילת מילוי', timestamp: Date.now(), previousTranscript: prev, previousDeletedRegions: prevDeleted }], redoHistory: [] })
@@ -212,6 +214,7 @@ export default function TranscriptPanel() {
   const handleCopySelected = () => {
     if (!selectedWords) return
     const seg = transcript[selectedWords.segIdx]
+    if (!seg) return
     const text = selectedWords.wordIndices.map((wi) => seg.words[wi]?.text || '').join(' ')
     navigator.clipboard.writeText(text).catch(() => {}); addToast('הטקסט הועתק!', 'success'); setFloatingToolbar(null)
   }
@@ -238,8 +241,8 @@ export default function TranscriptPanel() {
 
   const handleOpenReplace = () => {
     if (!selectedWords || selectedWords.wordIndices.length !== 1) return
-    const seg = transcript[selectedWords.segIdx]; const word = seg.words[selectedWords.wordIndices[0]]
-    if (!word) return
+    const seg = transcript[selectedWords.segIdx]; if (!seg) return
+    const word = seg.words[selectedWords.wordIndices[0]]; if (!word) return
     setReplaceDialog({ segIdx: selectedWords.segIdx, wordIdx: selectedWords.wordIndices[0], original: word.text })
     setReplaceText(''); setFloatingToolbar(null)
   }
@@ -248,6 +251,7 @@ export default function TranscriptPanel() {
     if (!replaceDialog || !replaceText.trim()) return
     const { transcript: t, editHistory } = useEditorStore.getState()
     const prev = JSON.parse(JSON.stringify(t)); const nt = [...t]
+    if (!nt[replaceDialog.segIdx]) return
     const seg = { ...nt[replaceDialog.segIdx] }; const words = [...seg.words]
     words[replaceDialog.wordIdx] = { ...words[replaceDialog.wordIdx], text: replaceText.trim(), isEdited: true }
     seg.words = words; nt[replaceDialog.segIdx] = seg
