@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Search, Grid3X3, List, Plus, MoreVertical, Play } from 'lucide-react'
+import { Search, Grid3X3, List, Plus, MoreVertical, Play, FolderOpen } from 'lucide-react'
 import { useProjectsStore } from '../stores/projectsStore'
 
 const filters = ['הכל', 'טיוטה', 'מוכן', 'פורסם']
@@ -45,7 +45,16 @@ export default function Projects() {
         ))}
       </div>
 
-      {viewMode === 'grid' ? (
+      {projects.length === 0 ? (
+        <div className="bg-bg-card rounded-2xl border border-white/[0.06] p-16 text-center space-y-4">
+          <FolderOpen size={64} className="mx-auto text-text-muted opacity-20" />
+          <h2 className="text-lg font-medium text-text-primary">אין פרויקטים עדיין</h2>
+          <p className="text-sm text-text-muted max-w-md mx-auto">העלה קובץ וידאו או אודיו כדי להתחיל לערוך</p>
+          <Link to="/editor/new" className="inline-flex items-center gap-2 px-5 py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20">
+            <Plus size={16} /> פרויקט חדש
+          </Link>
+        </div>
+      ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {projects.map((project) => {
             const status = statusConfig[project.status] || statusConfig['טיוטה']

@@ -12,13 +12,9 @@ export default function TimelinePanel() {
   // Generate real waveform from audio file
   useEffect(() => {
     if (!mediaFile) {
-      // Generate demo waveform
-      const demo: number[] = []
-      for (let i = 0; i < 500; i++) {
-        demo.push(0.2 + Math.sin(i * 0.3) * 0.3 + Math.cos(i * 0.7) * 0.2 + Math.random() * 0.15)
-      }
-      waveformRef.current = demo
-      setWaveformData(demo)
+      // No media file - show empty timeline
+      waveformRef.current = []
+      setWaveformData(null)
       return
     }
 
@@ -49,13 +45,9 @@ export default function TimelinePanel() {
         setWaveformData(normalized)
         audioCtx.close()
       } catch {
-        // Fallback demo waveform
-        const demo: number[] = []
-        for (let i = 0; i < 500; i++) {
-          demo.push(0.2 + Math.sin(i * 0.3) * 0.3 + Math.cos(i * 0.7) * 0.2 + Math.random() * 0.15)
-        }
-        waveformRef.current = demo
-        setWaveformData(demo)
+        // Failed to decode - leave empty
+        waveformRef.current = []
+        setWaveformData(null)
       }
     }
 

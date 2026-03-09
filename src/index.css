@@ -389,3 +389,44 @@ html:not(.dark) *::-webkit-scrollbar-thumb {
   outline: 2px solid #7C5CFF;
   outline-offset: 2px;
 }
+
+/* ============================================
+   CAPTION ANIMATIONS
+   ============================================ */
+
+@keyframes caption-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes caption-slide-up {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes caption-bounce {
+  0% { transform: translate(-50%, 0) scale(0.8); opacity: 0; }
+  50% { transform: translate(-50%, -5px) scale(1.05); opacity: 1; }
+  100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+}
+
+@keyframes caption-zoom {
+  from { transform: translate(-50%, 0) scale(0.5); opacity: 0; }
+  to { transform: translate(-50%, 0) scale(1); opacity: 1; }
+}
+
+.animate-caption-fade {
+  animation: caption-fade 0.3s ease-out;
+}
+
+.animate-caption-slide-up {
+  animation: caption-slide-up 0.3s ease-out;
+}
+
+.animate-caption-bounce {
+  animation: caption-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.animate-caption-zoom {
+  animation: caption-zoom 0.3s ease-out;
+}

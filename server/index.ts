@@ -168,7 +168,8 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         // Adjust timestamps by adding offset
         const chunkSegments = ((chunkTranscription as any).segments || []).map((seg: any, idx: number) => ({
           id: allSegments.length + idx,
-          speaker: 'דובר ' + (((allSegments.length + idx) % 2) + 1),
+          speaker: 'דובר 1',
+          speakerId: 1,
           text: (seg.text || '').trim(),
           start: (seg.start || 0) + startTime,
           end: (seg.end || 0) + startTime,
@@ -191,11 +192,42 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
       console.log('[SPLIT] All chunks transcribed! Total segments:', allSegments.length)
 
+      // Try GPT-4o speaker detection for chunked transcription too
+      let chunkSpeakers: any[] = [{ id: 1, name: 'דובר 1', color: '#5C8AFF' }]
+      try {
+        if (allSegments.length > 1) {
+          const fullTextForSpeakers = allSegments.map((s: any) => `[${s.id}] ${s.text}`).join('\n')
+          // Truncate if too long
+          const truncated = fullTextForSpeakers.length > 8000 ? fullTextForSpeakers.slice(0, 8000) : fullTextForSpeakers
+          const speakerRes = await ai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+              { role: 'system', content: 'Analyze this Hebrew transcript and detect speakers. Return JSON: {"speakers":[{"id":1,"name":"דובר 1","description":"..."}],"segments":[{"id":0,"speakerId":1}]}. Return ONLY valid JSON.' },
+              { role: 'user', content: truncated },
+            ],
+            temperature: 0.3,
+            response_format: { type: 'json_object' },
+          })
+          const parsed = JSON.parse(speakerRes.choices[0]?.message?.content || '{}')
+          if (parsed.speakers && parsed.segments) {
+            chunkSpeakers = parsed.speakers.map((s: any, i: number) => ({ id: s.id || i + 1, name: s.name || `דובר ${i + 1}`, description: s.description || '', color: ['#5C8AFF', '#4ADE80', '#FBBF24', '#F472B6'][(s.id || i + 1 - 1) % 4] }))
+            const segMap = new Map(parsed.segments.map((s: any) => [s.id, s.speakerId]))
+            allSegments.forEach((seg: any) => {
+              const spId = segMap.get(seg.id) || 1
+              const sp = chunkSpeakers.find((s: any) => s.id === spId)
+              seg.speakerId = spId
+              seg.speaker = sp?.name || `דובר ${spId}`
+            })
+          }
+        }
+      } catch (e: any) { console.warn('[SPLIT] Speaker detection failed:', e.message) }
+
       return res.json({
         text: fullText.trim(),
         duration: totalDuration,
         language: 'he',
         segments: allSegments,
+        speakers: chunkSpeakers,
         words: [],
         chunked: true,
         totalChunks: numChunks,
@@ -218,10 +250,11 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     // Cleanup
     try { fs.unlinkSync(mp3Path); mp3Path = '' } catch {}
 
-    // Format response
+    // Format segments with initial speaker assignment
     const segments = ((transcription as any).segments || []).map((seg: any, i: number) => ({
       id: i,
-      speaker: 'דובר ' + ((i % 2) + 1),
+      speaker: 'דובר 1',
+      speakerId: 1,
       text: seg.text.trim(),
       start: seg.start,
       end: seg.end,
@@ -229,7 +262,50 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     }))
 
     if (segments.length === 0 && transcription.text) {
-      segments.push({ id: 0, speaker: 'דובר 1', text: transcription.text, start: 0, end: 0, words: [] })
+      segments.push({ id: 0, speaker: 'דובר 1', speakerId: 1, text: transcription.text, start: 0, end: 0, words: [] })
+    }
+
+    // Try GPT-4o speaker detection
+    let speakers: any[] = [{ id: 1, name: 'דובר 1', color: '#5C8AFF' }]
+    try {
+      if (segments.length > 1) {
+        const fullText = segments.map((s: any) => `[${s.id}] ${s.text}`).join('\n')
+        const speakerResponse = await ai.chat.completions.create({
+          model: 'gpt-4o',
+          messages: [
+            {
+              role: 'system',
+              content: `Analyze this Hebrew transcript and detect different speakers based on context, topic changes, question/answer patterns, and speaking style. Return JSON with:
+- "speakers": array of { "id": number, "name": "דובר N", "description": "short description" }
+- "segments": array of { "id": number, "speakerId": number }
+If it seems like one speaker only, return a single speaker. Return ONLY valid JSON.`,
+            },
+            { role: 'user', content: fullText },
+          ],
+          temperature: 0.3,
+          response_format: { type: 'json_object' },
+        })
+
+        const parsed = JSON.parse(speakerResponse.choices[0]?.message?.content || '{}')
+        if (parsed.speakers && parsed.segments) {
+          speakers = parsed.speakers.map((s: any, i: number) => ({
+            id: s.id || i + 1,
+            name: s.name || `דובר ${i + 1}`,
+            description: s.description || '',
+            color: ['#5C8AFF', '#4ADE80', '#FBBF24', '#F472B6'][(s.id || i + 1 - 1) % 4],
+          }))
+          const segmentMap = new Map(parsed.segments.map((s: any) => [s.id, s.speakerId]))
+          segments.forEach((seg: any) => {
+            const speakerId = segmentMap.get(seg.id) || 1
+            const speaker = speakers.find((s: any) => s.id === speakerId)
+            seg.speakerId = speakerId
+            seg.speaker = speaker?.name || `דובר ${speakerId}`
+          })
+        }
+        console.log('[TRANSCRIBE] Speaker detection: found', speakers.length, 'speakers')
+      }
+    } catch (speakerErr: any) {
+      console.warn('[TRANSCRIBE] Speaker detection failed, using single speaker:', speakerErr.message)
     }
 
     res.json({
@@ -237,6 +313,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       duration: (transcription as any).duration || 0,
       language: 'he',
       segments,
+      speakers,
     })
   } catch (error: any) {
     console.error('[TRANSCRIBE ERROR]', error.message, error.status)
