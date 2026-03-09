@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowRight, Bot, Save, Check, Subtitles, Image, Film } from 'lucide-react'
+import { ArrowRight, Save, Check, FileText, Bot, FolderOpen, Image, Subtitles, Volume2, Settings } from 'lucide-react'
 import EditorToolbar from './EditorToolbar'
 import TranscriptPanel from './TranscriptPanel'
 import VideoPanel from './VideoPanel'
@@ -9,26 +9,30 @@ import AISidebar from './AISidebar'
 import CaptionsPanel from './CaptionsPanel'
 import BRollPanel from './BRollPanel'
 import MediaSidebar from './MediaSidebar'
+import AudioPanel from './AudioPanel'
+import ProjectSettingsPanel from './ProjectSettingsPanel'
 import EditorModals from './EditorModals'
 import ToastContainer from '../../components/Toast'
 import { useEditorStore } from '../../stores/editorStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
 
+type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'settings'
+
+const panelTabs: { id: PanelId; icon: typeof FileText; label: string }[] = [
+  { id: 'transcript', icon: FileText, label: 'תמלול' },
+  { id: 'ai', icon: Bot, label: 'עוזר AI' },
+  { id: 'media', icon: FolderOpen, label: 'קבצים' },
+  { id: 'broll', icon: Image, label: 'B-Roll' },
+  { id: 'captions', icon: Subtitles, label: 'כתוביות' },
+  { id: 'audio', icon: Volume2, label: 'אודיו' },
+  { id: 'settings', icon: Settings, label: 'הגדרות' },
+]
+
 export default function Editor() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [showAI, setShowAI] = useState(true)
-  const [showCaptionsPanel, setShowCaptionsPanel] = useState(false)
-  const [showBRollPanel, setShowBRollPanel] = useState(false)
-  const [showMediaSidebar, setShowMediaSidebar] = useState(() => {
-    // Auto-open media sidebar for multi-video projects
-    if (id) {
-      const proj = useProjectsStore.getState().getProject(id)
-      return (proj?.videos?.length ?? 0) > 1
-    }
-    return false
-  })
+  const [activePanel, setActivePanel] = useState<PanelId | null>('transcript')
   const [timelineExpanded, setTimelineExpanded] = useState(true)
   const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved'>('idle')
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -37,13 +41,15 @@ export default function Editor() {
   const getProject = useProjectsStore((s) => s.getProject)
   const saveEditorState = useProjectsStore((s) => s.saveEditorState)
 
+  const togglePanel = (panelId: PanelId) => {
+    setActivePanel((prev) => (prev === panelId ? null : panelId))
+  }
 
   // Load project on mount
   useEffect(() => {
     if (!id) return
     const project = getProject(id)
     if (project) {
-      // Load from videos array if available, otherwise fallback to legacy fields
       const activeVideo = project.videos?.find((v) => v.id === project.activeVideoId) || project.videos?.[0]
       const mediaFile = activeVideo?.file ?? project.mediaFile
       const mediaBlobUrl = activeVideo?.blobUrl ?? project.mediaBlobUrl
@@ -67,9 +73,6 @@ export default function Editor() {
         name: 'פרויקט חדש',
         isDemo: false,
       })
-    }
-    return () => {
-      // Cleanup blob URLs is handled by the store
     }
   }, [id, getProject, loadProject])
 
@@ -98,16 +101,52 @@ export default function Editor() {
     }
   }, [doSave])
 
-  // Keyboard shortcut Cmd+S to save
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault()
         doSave()
+        return
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
         e.preventDefault()
         useUIStore.getState().openModal('export')
+        return
+      }
+
+      // Panel shortcuts (only without modifier keys)
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+
+      const panelKeys: Record<string, PanelId> = {
+        '1': 'transcript',
+        '2': 'ai',
+        '3': 'media',
+        '4': 'broll',
+        '5': 'captions',
+      }
+
+      if (e.key === '0') {
+        e.preventDefault()
+        setActivePanel(null)
+        return
+      }
+
+      if (panelKeys[e.key]) {
+        e.preventDefault()
+        togglePanel(panelKeys[e.key])
+        return
+      }
+
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        setActivePanel((prev) => {
+          if (!prev) return panelTabs[0].id
+          const idx = panelTabs.findIndex((t) => t.id === prev)
+          return panelTabs[(idx + 1) % panelTabs.length].id
+        })
       }
     }
     window.addEventListener('keydown', handler)
@@ -159,56 +198,25 @@ export default function Editor() {
         </div>
 
         <div className="flex-1" />
-        {!showMediaSidebar && (
-          <button
-            onClick={() => setShowMediaSidebar(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-sm text-text-secondary hover:text-text-primary transition-all"
-          >
-            <Film size={14} />
-            מדיה
-          </button>
-        )}
-        {!showCaptionsPanel && (
-          <button
-            onClick={() => setShowCaptionsPanel(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-sm text-text-secondary hover:text-text-primary transition-all"
-          >
-            <Subtitles size={14} />
-            כתוביות
-          </button>
-        )}
-        {!showBRollPanel && (
-          <button
-            onClick={() => setShowBRollPanel(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-sm text-text-secondary hover:text-text-primary transition-all"
-          >
-            <Image size={14} />
-            B-Roll
-          </button>
-        )}
-        {!showAI && (
-          <button
-            onClick={() => setShowAI(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-accent-purple/10 hover:bg-accent-purple/20 border border-accent-purple/20 rounded-lg text-sm text-accent-purple transition-all"
-          >
-            <Bot size={14} />
-            עוזר AI
-          </button>
-        )}
+
+        {/* Panel shortcut hints */}
+        <div className="flex items-center gap-1 text-[9px] text-text-muted">
+          <span>0: סגור הכל</span>
+          <span className="text-white/10">|</span>
+          <span>1-5: פאנלים</span>
+          <span className="text-white/10">|</span>
+          <span>Tab: הבא</span>
+        </div>
       </div>
 
       <EditorToolbar />
 
-      {/* Main editor area - RTL: transcript RIGHT, AI LEFT */}
+      {/* Main editor area */}
       <div className="flex flex-1 overflow-hidden">
+        {/* Main content - video + timeline */}
         <div className="flex-1 flex flex-col overflow-hidden p-2 gap-2">
-          <div className="flex flex-1 gap-2 overflow-hidden">
-            <div className="w-[40%] shrink-0">
-              <TranscriptPanel />
-            </div>
-            <div className="flex-1">
-              <VideoPanel />
-            </div>
+          <div className="flex-1 overflow-hidden">
+            <VideoPanel />
           </div>
           {timelineExpanded && (
             <div className="h-52 shrink-0 relative">
@@ -231,26 +239,41 @@ export default function Editor() {
           )}
         </div>
 
-        {showMediaSidebar && id && (
-          <div className="w-72 shrink-0 p-2 animate-slide-in-right">
-            <MediaSidebar projectId={id} onClose={() => setShowMediaSidebar(false)} />
+        {/* Panel content - slides in/out */}
+        {activePanel && (
+          <div className="w-[350px] shrink-0 p-2 animate-slide-in-right overflow-hidden">
+            {activePanel === 'transcript' && <TranscriptPanel />}
+            {activePanel === 'ai' && <AISidebar onClose={() => setActivePanel(null)} />}
+            {activePanel === 'media' && id && <MediaSidebar projectId={id} onClose={() => setActivePanel(null)} />}
+            {activePanel === 'broll' && <BRollPanel onClose={() => setActivePanel(null)} />}
+            {activePanel === 'captions' && <CaptionsPanel onClose={() => setActivePanel(null)} />}
+            {activePanel === 'audio' && <AudioPanel onClose={() => setActivePanel(null)} />}
+            {activePanel === 'settings' && <ProjectSettingsPanel onClose={() => setActivePanel(null)} />}
           </div>
         )}
-        {showCaptionsPanel && (
-          <div className="w-72 shrink-0 p-2 animate-slide-in-right">
-            <CaptionsPanel onClose={() => setShowCaptionsPanel(false)} />
-          </div>
-        )}
-        {showBRollPanel && (
-          <div className="w-80 shrink-0 p-2 animate-slide-in-right">
-            <BRollPanel onClose={() => setShowBRollPanel(false)} />
-          </div>
-        )}
-        {showAI && (
-          <div className="w-80 shrink-0 p-2 animate-slide-in-right">
-            <AISidebar onClose={() => setShowAI(false)} />
-          </div>
-        )}
+
+        {/* Tab bar - always visible on LEFT (RTL: appears on the left visually) */}
+        <div className="w-12 shrink-0 bg-[#12121A] border-r border-white/[0.06] flex flex-col items-center py-2 gap-1">
+          {panelTabs.map((tab, idx) => (
+            <button
+              key={tab.id}
+              onClick={() => togglePanel(tab.id)}
+              className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all group relative ${
+                activePanel === tab.id
+                  ? 'bg-accent-purple/20 text-accent-purple border border-accent-purple/30'
+                  : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
+              }`}
+              title={tab.label}
+            >
+              <tab.icon size={18} />
+              {/* Tooltip on hover */}
+              <div className="absolute left-full mr-2 px-2 py-1 bg-[#1a1a2e] border border-white/[0.12] rounded text-[10px] text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg" style={{ marginLeft: '8px' }}>
+                {tab.label}
+                {idx < 5 && <span className="text-text-muted mr-1">({idx + 1})</span>}
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
 
       <EditorModals />

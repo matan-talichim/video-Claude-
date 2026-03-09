@@ -119,6 +119,7 @@ interface ProjectsState {
   setActiveVideo: (projectId: string, videoId: string) => void
   reorderVideos: (projectId: string, fromIndex: number, toIndex: number) => void
   removeVideoFromProject: (projectId: string, videoId: string) => void
+  replaceVideosWithMerged: (projectId: string, mergedFile: File, mergedBlobUrl: string, totalDuration: number, originalFileNames: string[]) => string | null
 }
 
 export const useProjectsStore = create<ProjectsState>((set, get) => ({
@@ -342,5 +343,44 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
         }
       }),
     }))
+  },
+
+  replaceVideosWithMerged: (projectId, mergedFile, mergedBlobUrl, totalDuration, originalFileNames) => {
+    const project = get().projects.find((p) => p.id === projectId)
+    if (!project) return null
+    const mergedVideoId = `merged-${Date.now()}`
+    const mergedVideo: ProjectVideo = {
+      id: mergedVideoId,
+      fileName: `${project.name} (מאוחד)`,
+      file: mergedFile,
+      blobUrl: mergedBlobUrl,
+      mediaType: 'video',
+      duration: totalDuration,
+      size: mergedFile.size,
+      order: 0,
+      transcript: [],
+      editHistory: [],
+      deletedRegions: [],
+      isTranscribed: false,
+      hasUnsavedChanges: false,
+    }
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id !== projectId) return p
+        return {
+          ...p,
+          videos: [mergedVideo],
+          activeVideoId: mergedVideoId,
+          mediaFile: mergedFile,
+          mediaBlobUrl: mergedBlobUrl,
+          mediaType: 'video' as const,
+          size: formatSize(mergedFile.size),
+          duration: formatDuration(totalDuration),
+          updatedAtTimestamp: Date.now(),
+          updatedAt: 'עכשיו',
+        }
+      }),
+    }))
+    return mergedVideoId
   },
 }))

@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Subtitles, Music, Film } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Minimize, Subtitles, Music, Film, ChevronsRight, ChevronsLeft } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import type { CaptionStyle, BRollItem } from '../../stores/editorStore'
 import { getDeletedRegionEnd } from '../../services/videoEditor'
 
-const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2]
+const allSpeeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4]
 
 export default function VideoPanel() {
   const {
@@ -14,19 +14,50 @@ export default function VideoPanel() {
     setDuration, setIsPlaying, setShowCaptions,
   } = useEditorStore()
 
+  const trackStates = useEditorStore((s) => s.trackStates)
   const videoRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animFrameRef = useRef<number>(0)
-  const [showControls, setShowControls] = useState(false)
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const progressBarRef = useRef<HTMLDivElement>(null)
+  const [showControls, setShowControls] = useState(true)
   const [showVolume, setShowVolume] = useState(false)
-  const [speedIdx, setSpeedIdx] = useState(speeds.indexOf(playbackSpeed) >= 0 ? speeds.indexOf(playbackSpeed) : 2)
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isDraggingProgress, setIsDraggingProgress] = useState(false)
+  const [hoverTime, setHoverTime] = useState<number | null>(null)
+  const [hoverX, setHoverX] = useState<number>(0)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const formatTime = (s: number) => {
-    const m = Math.floor(s / 60).toString().padStart(2, '0')
+    if (!isFinite(s) || s < 0) s = 0
+    const h = Math.floor(s / 3600)
+    const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0')
     const sec = Math.floor(s % 60).toString().padStart(2, '0')
+    if (h > 0) return `${h}:${m}:${sec}`
     return `${m}:${sec}`
   }
+
+  // Auto-hide controls after 3 seconds
+  const resetControlsTimer = useCallback(() => {
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current)
+    setShowControls(true)
+    if (isPlaying) {
+      controlsTimerRef.current = setTimeout(() => {
+        setShowControls(false)
+      }, 3000)
+    }
+  }, [isPlaying])
+
+  useEffect(() => {
+    if (!isPlaying) {
+      setShowControls(true)
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current)
+    } else {
+      resetControlsTimer()
+    }
+  }, [isPlaying, resetControlsTimer])
 
   useEffect(() => {
     const el = mediaType === 'video' ? videoRef.current : audioRef.current
@@ -41,8 +72,8 @@ export default function VideoPanel() {
 
   useEffect(() => {
     const el = mediaType === 'video' ? videoRef.current : audioRef.current
-    if (el) el.volume = volume / 100
-  }, [volume, mediaType])
+    if (el) el.volume = (trackStates.audio.muted ? 0 : volume) / 100
+  }, [volume, mediaType, trackStates.audio.muted])
 
   const deletedRegions = useEditorStore((s) => s.deletedRegions)
   const skipFadeRef = useRef<HTMLDivElement>(null)
@@ -76,6 +107,7 @@ export default function VideoPanel() {
     if (el && Math.abs(el.currentTime - currentTime) > 0.5) el.currentTime = currentTime
   }, [currentTime, mediaType])
 
+  // Audio waveform visualization
   useEffect(() => {
     if (mediaType !== 'audio' || !mediaBlobUrl || !canvasRef.current) return
     const canvas = canvasRef.current
@@ -111,24 +143,59 @@ export default function VideoPanel() {
   const selectedBRollId = useEditorStore((s) => s.selectedBRollId)
   const setSelectedBRollId = useEditorStore((s) => s.setSelectedBRollId)
 
-
   const activeBRollItems = bRollItems
     .filter(b => currentTime >= b.startTime && currentTime < b.startTime + b.duration)
     .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
 
-  const handleSpeedCycle = () => {
-    const nextIdx = (speedIdx + 1) % speeds.length
-    setSpeedIdx(nextIdx); setPlaybackSpeed(speeds[nextIdx])
-  }
-
-  const handleProgressClick = (e: React.MouseEvent) => {
+  // RTL Progress bar click handler
+  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
-    const ratio = (e.clientX - rect.left) / rect.width
-    const newTime = ratio * duration
+    const clickX = e.clientX - rect.left
+    const percentage = clickX / rect.width
+    // RTL: right side = start (0), left side = end
+    const rtlPercentage = 1 - percentage
+    const newTime = rtlPercentage * duration
     setCurrentTime(newTime)
     const el = mediaType === 'video' ? videoRef.current : audioRef.current
     if (el) el.currentTime = newTime
   }
+
+  const handleProgressMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    setIsDraggingProgress(true)
+    handleProgressClick(e)
+  }
+
+  const handleProgressMouseMove = useCallback((e: MouseEvent) => {
+    if (!progressBarRef.current) return
+    const rect = progressBarRef.current.getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    const percentage = Math.max(0, Math.min(1, clickX / rect.width))
+    const rtlPercentage = 1 - percentage
+    setHoverTime(rtlPercentage * duration)
+    setHoverX(clickX)
+
+    if (isDraggingProgress) {
+      const newTime = rtlPercentage * duration
+      setCurrentTime(newTime)
+      const el = mediaType === 'video' ? videoRef.current : audioRef.current
+      if (el) el.currentTime = newTime
+    }
+  }, [isDraggingProgress, duration, setCurrentTime, mediaType])
+
+  const handleProgressMouseUp = useCallback(() => {
+    setIsDraggingProgress(false)
+  }, [])
+
+  useEffect(() => {
+    if (isDraggingProgress) {
+      window.addEventListener('mousemove', handleProgressMouseMove)
+      window.addEventListener('mouseup', handleProgressMouseUp)
+      return () => {
+        window.removeEventListener('mousemove', handleProgressMouseMove)
+        window.removeEventListener('mouseup', handleProgressMouseUp)
+      }
+    }
+  }, [isDraggingProgress, handleProgressMouseMove, handleProgressMouseUp])
 
   const handlePlayToggle = () => { togglePlay() }
 
@@ -139,11 +206,54 @@ export default function VideoPanel() {
     if (el) el.currentTime = newTime
   }
 
-  const handleFullscreen = () => { videoRef.current?.requestFullscreen?.() }
+  const handleJumpToStart = () => {
+    setCurrentTime(0)
+    const el = mediaType === 'video' ? videoRef.current : audioRef.current
+    if (el) el.currentTime = 0
+  }
+
+  const handleJumpToEnd = () => {
+    setCurrentTime(duration)
+    const el = mediaType === 'video' ? videoRef.current : audioRef.current
+    if (el) el.currentTime = duration
+  }
+
+  const handleFullscreen = () => {
+    if (!containerRef.current) return
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen?.()
+      setIsFullscreen(true)
+    } else {
+      document.exitFullscreen?.()
+      setIsFullscreen(false)
+    }
+  }
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', handleFsChange)
+    return () => document.removeEventListener('fullscreenchange', handleFsChange)
+  }, [])
+
+  // Keyboard shortcuts for speed
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      const num = parseInt(e.key)
+      if (num >= 1 && num <= 4 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        // 1=1x, 2=2x, 3=3x, 4=4x
+        setPlaybackSpeed(num)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [setPlaybackSpeed])
 
   const { captions, captionStyle } = useEditorStore()
 
-  const currentCaption = showCaptions ? (() => {
+  const currentCaption = showCaptions && !trackStates.captions.muted ? (() => {
     const cap = captions.find(c => currentTime >= c.startTime - 0.1 && currentTime < c.endTime + 0.1)
     if (cap) return { text: cap.text, words: cap.words, style: cap.style, startTime: cap.startTime, endTime: cap.endTime }
     const words = transcript.flatMap(s => s.words).filter(w => currentTime >= w.start - 0.3 && currentTime < w.end + 0.3)
@@ -152,19 +262,33 @@ export default function VideoPanel() {
   })() : null
 
   const hasMedia = !!mediaBlobUrl
+  const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0
 
   return (
-    <div className="flex flex-col h-full bg-bg-deepest rounded-xl border border-white/[0.06] overflow-hidden"
-      onMouseEnter={() => setShowControls(true)}
-      onMouseLeave={() => { setShowControls(false); setShowVolume(false) }}>
+    <div
+      ref={containerRef}
+      className="flex flex-col h-full bg-bg-deepest rounded-xl border border-white/[0.06] overflow-hidden"
+      onMouseMove={resetControlsTimer}
+    >
       <div className="flex-1 bg-bg-deepest flex items-center justify-center relative overflow-hidden">
         {hasMedia && mediaType === 'video' && (
-          <video ref={videoRef} src={mediaBlobUrl!} className="w-full h-full object-contain"
-            onTimeUpdate={handleTimeUpdate} onLoadedMetadata={handleLoadedMetadata} onEnded={handleEnded} playsInline />
+          <video
+            ref={videoRef}
+            src={mediaBlobUrl!}
+            className="w-full h-full object-contain"
+            style={{
+              opacity: trackStates.video.visible ? 1 : 0,
+            }}
+            onTimeUpdate={handleTimeUpdate}
+            onLoadedMetadata={handleLoadedMetadata}
+            onEnded={handleEnded}
+            playsInline
+            muted={trackStates.audio.muted}
+          />
         )}
         {hasMedia && mediaType === 'audio' && (
           <>
-            <audio ref={audioRef} src={mediaBlobUrl!} onTimeUpdate={handleTimeUpdate} onLoadedMetadata={handleLoadedMetadata} onEnded={handleEnded} />
+            <audio ref={audioRef} src={mediaBlobUrl!} onTimeUpdate={handleTimeUpdate} onLoadedMetadata={handleLoadedMetadata} onEnded={handleEnded} muted={trackStates.audio.muted} />
             <div className="w-full h-full flex flex-col items-center justify-center">
               <Music size={48} className="text-accent-purple mb-4 opacity-50" />
               <canvas ref={canvasRef} className="w-full h-32" />
@@ -173,7 +297,7 @@ export default function VideoPanel() {
         )}
 
         {/* B-Roll overlays */}
-        {activeBRollItems.map((broll) => (
+        {trackStates.broll.visible && activeBRollItems.map((broll) => (
           <BRollOverlay key={broll.id} item={broll} currentTime={currentTime}
             isSelected={selectedBRollId === broll.id} onSelect={() => setSelectedBRollId(broll.id)} />
         ))}
@@ -188,41 +312,176 @@ export default function VideoPanel() {
           </div>
         )}
 
-        {showCaptions && currentCaption && (
+        {/* Caption overlay */}
+        {trackStates.captions.visible && showCaptions && currentCaption && (
           <CaptionOverlay caption={currentCaption} style={currentCaption.style || captionStyle} currentTime={currentTime} />
         )}
 
+        {/* Center play/pause overlay (shown when paused or hovering) */}
         <button onClick={handlePlayToggle}
-          className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200 z-20 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
-          <div className="w-16 h-16 rounded-full glass flex items-center justify-center hover:scale-110 transition-transform shadow-2xl">
+          className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 z-20 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
+          <div className={`w-16 h-16 rounded-full backdrop-blur-md bg-black/40 flex items-center justify-center transition-all duration-200 shadow-2xl border border-white/10 ${showControls ? 'hover:scale-110 hover:shadow-[0_0_20px_rgba(124,92,255,0.3)]' : ''}`}>
             {isPlaying ? <Pause size={26} className="text-white" /> : <Play size={26} className="text-white mr-[-2px]" />}
           </div>
         </button>
 
-        <div className={`absolute bottom-0 left-0 right-0 transition-all duration-200 z-40 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
-          <div className="mx-3 mb-3 glass rounded-xl p-2 space-y-2">
-            <div className="h-1 bg-white/[0.08] rounded-full overflow-hidden cursor-pointer group hover:h-1.5 transition-all" onClick={handleProgressClick}>
-              <div className="h-full bg-accent-purple rounded-full relative transition-all" style={{ width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%' }}>
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
+        {/* Bottom controls bar - glass effect */}
+        <div className={`absolute bottom-0 left-0 right-0 transition-all duration-300 z-40 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}>
+          <div className="mx-2 mb-2 backdrop-blur-md bg-black/40 rounded-xl border-t border-white/10 overflow-hidden">
+            {/* Progress bar - RTL: fills from right to left */}
+            <div
+              ref={progressBarRef}
+              className="h-[3px] bg-white/[0.08] cursor-pointer group hover:h-[8px] transition-all relative mx-1 mt-1 rounded-full"
+              onClick={handleProgressClick}
+              onMouseDown={handleProgressMouseDown}
+              onMouseMove={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const clickX = e.clientX - rect.left
+                const percentage = Math.max(0, Math.min(1, clickX / rect.width))
+                setHoverTime((1 - percentage) * duration)
+                setHoverX(clickX)
+              }}
+              onMouseLeave={() => setHoverTime(null)}
+            >
+              {/* Deleted regions markers */}
+              {deletedRegions.map((region, i) => (
+                <div
+                  key={i}
+                  className="absolute top-0 h-full bg-red-500/40 rounded-full"
+                  style={{
+                    right: `${(region.startTime / duration) * 100}%`,
+                    width: `${((region.endTime - region.startTime) / duration) * 100}%`,
+                  }}
+                />
+              ))}
+
+              {/* B-Roll markers (small purple dots above) */}
+              {bRollItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="absolute -top-1 h-1 bg-accent-purple/60 rounded-full"
+                  style={{
+                    right: `${(item.startTime / duration) * 100}%`,
+                    width: `${(item.duration / duration) * 100}%`,
+                  }}
+                />
+              ))}
+
+              {/* Progress fill - RTL: right to left */}
+              <div
+                className="absolute top-0 h-full bg-gradient-to-l from-accent-purple to-purple-400 rounded-full transition-[width] duration-75"
+                style={{
+                  right: 0,
+                  width: `${progressPct}%`,
+                }}
+              />
+
+              {/* Scrub handle */}
+              <div
+                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                style={{
+                  right: `calc(${progressPct}% - 6px)`,
+                }}
+              />
+
+              {/* Hover time tooltip */}
+              {hoverTime !== null && (
+                <div
+                  className="absolute -top-8 px-1.5 py-0.5 bg-black/80 rounded text-[10px] text-white font-mono pointer-events-none"
+                  style={{ left: `${hoverX - 20}px` }}
+                >
+                  {formatTime(hoverTime)}
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => handleSkip(-5)} className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary"><SkipBack size={14} /></button>
-              <button onClick={handlePlayToggle} className="p-1.5 hover:bg-white/[0.08] rounded transition-colors text-text-primary">{isPlaying ? <Pause size={16} /> : <Play size={16} />}</button>
-              <button onClick={() => handleSkip(5)} className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary"><SkipForward size={14} /></button>
-              <span className="text-xs text-text-muted font-mono px-1">{formatTime(currentTime)} / {formatTime(duration)}</span>
+
+            {/* Controls row */}
+            <div className="flex items-center gap-1.5 px-3 py-2" dir="rtl">
+              {/* RIGHT side (RTL start): Jump to start/end */}
+              <button onClick={handleJumpToStart} className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors text-text-secondary hover:text-text-primary" title="לתחילה">
+                <ChevronsRight size={16} />
+              </button>
+              <button onClick={handleJumpToEnd} className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors text-text-secondary hover:text-text-primary" title="לסוף">
+                <ChevronsLeft size={16} />
+              </button>
+
+              <div className="w-px h-5 bg-white/[0.08] mx-0.5" />
+
+              {/* Rewind / Play / Forward */}
+              <button onClick={() => handleSkip(-5)} className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors text-text-secondary hover:text-text-primary" title="5 שניות אחורה">
+                <SkipBack size={16} />
+              </button>
+              <button onClick={handlePlayToggle}
+                className="p-2.5 bg-white/[0.06] hover:bg-white/[0.12] rounded-xl transition-all text-white hover:scale-105 hover:shadow-[0_0_12px_rgba(124,92,255,0.3)]"
+                title={isPlaying ? 'השהה' : 'נגן'}
+              >
+                {isPlaying ? <Pause size={20} /> : <Play size={20} className="mr-[-1px]" />}
+              </button>
+              <button onClick={() => handleSkip(5)} className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors text-text-secondary hover:text-text-primary" title="5 שניות קדימה">
+                <SkipForward size={16} />
+              </button>
+
+              <div className="w-px h-5 bg-white/[0.08] mx-0.5" />
+
+              {/* Time display - monospace */}
+              <span className="text-xs text-white/70 px-1.5 font-mono tracking-tight" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
+
               <div className="flex-1" />
-              <button onClick={handleSpeedCycle} className="px-2 py-0.5 rounded-full bg-white/[0.06] text-[11px] text-text-secondary hover:text-text-primary hover:bg-white/[0.1] transition-colors font-mono">{speeds[speedIdx]}x</button>
-              <div className="relative flex items-center" onMouseEnter={() => setShowVolume(true)} onMouseLeave={() => setShowVolume(false)}>
-                <button onClick={() => setVolume(volume > 0 ? 0 : 80)} className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary">
-                  {volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}
+
+              {/* Speed selector */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+                  className="px-2 py-1 rounded-lg bg-white/[0.06] text-[11px] text-white/80 hover:text-white hover:bg-white/[0.1] transition-colors font-mono"
+                  style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                  {playbackSpeed}x
                 </button>
-                <div className={`overflow-hidden transition-all duration-200 ${showVolume ? 'w-16 opacity-100 mr-1' : 'w-0 opacity-0'}`}>
-                  <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(Number(e.target.value))} className="w-full h-1 accent-accent-purple" />
+                {showSpeedMenu && (
+                  <>
+                    <div className="fixed inset-0 z-50" onClick={() => setShowSpeedMenu(false)} />
+                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-[#1a1a2e] border border-white/[0.12] rounded-xl shadow-2xl z-50 py-1 min-w-[80px] max-h-[240px] overflow-y-auto">
+                      {allSpeeds.map((speed) => (
+                        <button
+                          key={speed}
+                          onClick={() => { setPlaybackSpeed(speed); setShowSpeedMenu(false) }}
+                          className={`w-full px-3 py-1.5 text-[11px] font-mono text-right hover:bg-white/[0.06] transition-colors ${
+                            speed === playbackSpeed ? 'text-accent-purple bg-accent-purple/10' : 'text-text-secondary'
+                          }`}
+                        >
+                          {speed}x
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Volume */}
+              <div className="relative flex items-center" onMouseEnter={() => setShowVolume(true)} onMouseLeave={() => setShowVolume(false)}>
+                <button
+                  onClick={() => setVolume(volume > 0 ? 0 : 80)}
+                  className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors text-text-secondary hover:text-text-primary"
+                  title={volume === 0 ? 'בטל השתקה' : 'השתק'}
+                >
+                  {volume === 0 || trackStates.audio.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                </button>
+                <div className={`overflow-hidden transition-all duration-200 ${showVolume ? 'w-20 opacity-100 mr-1' : 'w-0 opacity-0'}`}>
+                  <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(Number(e.target.value))} className="w-full h-1 accent-white" />
                 </div>
               </div>
-              <button onClick={() => setShowCaptions(!showCaptions)} className={`p-1 hover:bg-white/[0.08] rounded transition-colors ${showCaptions ? 'text-accent-purple' : 'text-text-secondary hover:text-text-primary'}`}><Subtitles size={14} /></button>
-              <button onClick={handleFullscreen} className="p-1 hover:bg-white/[0.08] rounded transition-colors text-text-secondary hover:text-text-primary"><Maximize size={14} /></button>
+
+              {/* Captions toggle */}
+              <button onClick={() => setShowCaptions(!showCaptions)} className={`p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors ${showCaptions ? 'text-accent-purple' : 'text-text-secondary hover:text-text-primary'}`} title="כתוביות">
+                <Subtitles size={16} />
+              </button>
+
+              {/* Fullscreen */}
+              <button onClick={handleFullscreen} className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors text-text-secondary hover:text-text-primary" title={isFullscreen ? 'צא ממסך מלא' : 'מסך מלא'}>
+                {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+              </button>
             </div>
           </div>
         </div>
@@ -242,7 +501,6 @@ function BRollOverlay({ item, currentTime, isSelected, onSelect }: {
   let animOpacity = item.opacity / 100
   let animTransform = ''
 
-  // Entrance animation
   if (elapsed - delay < animDur && elapsed >= delay && item.entranceAnimation !== 'none') {
     const p = Math.max(0, (elapsed - delay) / animDur)
     switch (item.entranceAnimation) {
@@ -255,9 +513,7 @@ function BRollOverlay({ item, currentTime, isSelected, onSelect }: {
       case 'rotate': animTransform = `rotate(${(1 - p) * 360}deg)`; animOpacity = p * (item.opacity / 100); break
       case 'bounce': { const bp = p < 0.6 ? p / 0.6 : 1 - ((p - 0.6) / 0.4) * 0.2 + 0.2; animTransform = `translateY(${(1 - bp) * 50}px)`; break }
     }
-  }
-  // Exit animation
-  else if (remaining < animDur && item.exitAnimation !== 'none') {
+  } else if (remaining < animDur && item.exitAnimation !== 'none') {
     const p = remaining / animDur
     switch (item.exitAnimation) {
       case 'fadeOut': animOpacity = p * (item.opacity / 100); break
@@ -267,9 +523,7 @@ function BRollOverlay({ item, currentTime, isSelected, onSelect }: {
       case 'slideDown': animTransform = `translateY(${(1 - p) * 100}%)`; break
       case 'zoomOut': animTransform = `scale(${0.3 + p * 0.7})`; animOpacity = p * (item.opacity / 100); break
     }
-  }
-  // Staying animation
-  else if (item.stayingAnimation && item.stayingAnimation !== 'none') {
+  } else if (item.stayingAnimation && item.stayingAnimation !== 'none') {
     const speedMap = { slow: 0.5, medium: 1, fast: 2 }
     const speed = speedMap[item.stayingSpeed || 'medium'] || 1
     const t = elapsed * speed
@@ -282,7 +536,6 @@ function BRollOverlay({ item, currentTime, isSelected, onSelect }: {
     }
   }
 
-  // Base transform (rotation + flip)
   const baseTransforms: string[] = []
   if (item.rotation) baseTransforms.push(`rotate(${item.rotation}deg)`)
   if (item.flipH) baseTransforms.push('scaleX(-1)')
@@ -305,7 +558,6 @@ function BRollOverlay({ item, currentTime, isSelected, onSelect }: {
     default: posStyle = { position: 'absolute', left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%` }
   }
 
-  // Filters
   const filterParts: string[] = []
   if (item.brightness !== undefined && item.brightness !== 100) filterParts.push(`brightness(${item.brightness}%)`)
   if (item.contrast !== undefined && item.contrast !== 100) filterParts.push(`contrast(${item.contrast}%)`)
@@ -370,7 +622,6 @@ function CaptionOverlay({ caption, style, currentTime }: {
   const captionDuration = captionEnd - captionStart
   const elapsed = currentTime - captionStart
 
-  // Modern - word by word with colored highlight
   if (style.preset === 'modern' || (style.animation === 'wordByWord' && style.preset !== 'karaoke')) {
     if (caption.words && caption.words.length > 0) {
       return (
@@ -393,7 +644,6 @@ function CaptionOverlay({ caption, style, currentTime }: {
     }
   }
 
-  // Karaoke - current word lights up
   if (style.preset === 'karaoke') {
     if (caption.words && caption.words.length > 0) {
       return (
@@ -416,7 +666,6 @@ function CaptionOverlay({ caption, style, currentTime }: {
     }
   }
 
-  // Typewriter - character by character
   if (style.animation === 'typewriter') {
     const charsToShow = captionDuration > 0 ? Math.floor(elapsed / captionDuration * caption.text.length) : caption.text.length
     return (
@@ -429,7 +678,6 @@ function CaptionOverlay({ caption, style, currentTime }: {
     )
   }
 
-  // Bounce - words bounce in staggered
   if (style.animation === 'bounce') {
     if (caption.words && caption.words.length > 0) {
       return (
@@ -455,7 +703,6 @@ function CaptionOverlay({ caption, style, currentTime }: {
     }
   }
 
-  // Minimal / slideUp
   if (style.preset === 'minimal' || style.animation === 'slideUp') {
     return (
       <div className={`absolute ${posClass} left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg max-w-[80%] z-20 animate-caption-slide-up`} style={{ backgroundColor: bgRgba }} dir="rtl">
@@ -464,7 +711,6 @@ function CaptionOverlay({ caption, style, currentTime }: {
     )
   }
 
-  // Zoom
   if (style.animation === 'zoom') {
     return (
       <div className={`absolute ${posClass} left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg max-w-[80%] z-20 animate-caption-zoom`} style={{ backgroundColor: bgRgba }} dir="rtl">
@@ -473,7 +719,6 @@ function CaptionOverlay({ caption, style, currentTime }: {
     )
   }
 
-  // Classic (default) - fade
   const animClass = style.animation === 'fade' ? 'animate-caption-fade' : ''
   return (
     <div className={`absolute ${posClass} left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg max-w-[80%] z-20 ${animClass}`} style={{ backgroundColor: bgRgba }} dir="rtl">
