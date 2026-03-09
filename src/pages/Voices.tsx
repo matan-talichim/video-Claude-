@@ -1,13 +1,8 @@
 import { useState } from 'react'
-import { Plus, Play, Pencil, Trash2, Circle, Check, AlertCircle } from 'lucide-react'
+import { Plus, Play, Pencil, Trash2, Circle, Check, AlertCircle, Mic } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import Modal from '../components/Modal'
 import { useApiStatusStore } from '../stores/apiStatusStore'
-
-const myVoices = [
-  { name: 'הקול שלי - מקצועי', date: '12/02/2026' },
-  { name: 'הקול שלי - ידידותי', date: '28/01/2026' },
-]
 
 const libraryVoices = [
   { name: 'דנה - מקצועית', initials: 'דנ', lang: 'עברית', gender: 'אישה', style: 'מקצועי' },
@@ -79,23 +74,13 @@ export default function Voices() {
             <Plus size={24} className="mx-auto mb-2 text-text-muted" />
             <span className="text-sm text-text-secondary">צור שיבוט קול חדש</span>
           </button>
-          {myVoices.map((voice, i) => (
-            <div key={i} className="flex items-center justify-between p-4 bg-bg-card rounded-xl border border-white/[0.06]">
-              <div className="flex items-center gap-3">
-                <button className="w-10 h-10 rounded-full bg-accent-blue/20 flex items-center justify-center hover:bg-accent-blue/30 transition-colors">
-                  <Play size={16} fill="white" />
-                </button>
-                <div>
-                  <p className="text-sm font-medium">{voice.name}</p>
-                  <p className="text-xs text-text-muted">{voice.date}</p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button className="p-2 hover:bg-white/10 rounded-lg transition-colors"><Pencil size={16} className="text-text-muted" /></button>
-                <button className="p-2 hover:bg-white/10 rounded-lg transition-colors"><Trash2 size={16} className="text-text-muted" /></button>
-              </div>
-            </div>
-          ))}
+
+          {/* Empty state - no fake voice clones */}
+          <div className="bg-bg-card rounded-2xl border border-white/[0.06] p-12 text-center space-y-4">
+            <Mic size={48} className="mx-auto text-text-muted opacity-30" />
+            <p className="text-sm text-text-secondary">אין קולות משובטים עדיין</p>
+            <p className="text-xs text-text-muted">צור שיבוט קול חדש כדי להתחיל</p>
+          </div>
         </div>
       )}
 
@@ -149,21 +134,10 @@ export default function Voices() {
               אני מתחייב/ת להשתמש בשיבוט הקול לצרכים חוקיים בלבד.
             </p>
             <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-                className="mt-1 w-4 h-4 rounded accent-accent-purple"
-              />
+              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-1 w-4 h-4 rounded accent-accent-purple" />
               <span className="text-sm">אני מאשר/ת ששיבוט הקול הזה הוא של הקול שלי</span>
             </label>
-            <button
-              disabled={!consent}
-              onClick={() => setWizardStep(2)}
-              className="w-full py-3 bg-accent-purple hover:bg-accent-purple/80 disabled:opacity-30 disabled:cursor-not-allowed rounded-xl font-medium transition-colors"
-            >
-              המשך
-            </button>
+            <button disabled={!consent} onClick={() => setWizardStep(2)} className="w-full py-3 bg-accent-purple hover:bg-accent-purple/80 disabled:opacity-30 disabled:cursor-not-allowed rounded-xl font-medium transition-colors">המשך</button>
           </div>
         )}
         {wizardStep === 2 && (

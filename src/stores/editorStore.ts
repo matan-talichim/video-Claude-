@@ -5,10 +5,13 @@ export interface Word {
   start: number
   end: number
   isFiller: boolean
+  isEdited?: boolean
+  isDeleted?: boolean
 }
 
 export interface Segment {
   speaker: string
+  speakerId?: number
   color: string
   startTime: string
   endTime?: string
@@ -17,115 +20,52 @@ export interface Segment {
   words: Word[]
 }
 
-const demoTranscript: Segment[] = [
-  {
-    speaker: 'דני',
-    color: 'border-blue-400',
-    startTime: '00:00',
-    words: [
-      { text: 'שלום', start: 0, end: 0.4, isFiller: false },
-      { text: 'לכולם', start: 0.4, end: 0.9, isFiller: false },
-      { text: 'וברוכים', start: 0.9, end: 1.4, isFiller: false },
-      { text: 'הבאים', start: 1.4, end: 1.8, isFiller: false },
-      { text: 'לפודקאסט', start: 1.8, end: 2.4, isFiller: false },
-      { text: 'השבועי', start: 2.4, end: 2.9, isFiller: false },
-      { text: 'שלנו.', start: 2.9, end: 3.3, isFiller: false },
-      { text: 'היום', start: 3.5, end: 3.9, isFiller: false },
-      { text: 'אנחנו', start: 3.9, end: 4.3, isFiller: false },
-      { text: 'הולכים', start: 4.3, end: 4.7, isFiller: false },
-      { text: 'לדבר', start: 4.7, end: 5.1, isFiller: false },
-      { text: 'על', start: 5.1, end: 5.3, isFiller: false },
-      { text: 'אממ', start: 5.3, end: 5.7, isFiller: true },
-      { text: 'טכנולוגיה', start: 5.7, end: 6.3, isFiller: false },
-      { text: 'ובינה', start: 6.3, end: 6.8, isFiller: false },
-      { text: 'מלאכותית.', start: 6.8, end: 7.4, isFiller: false },
-    ],
-  },
-  {
-    speaker: 'מיכל',
-    color: 'border-green-400',
-    startTime: '00:15',
-    words: [
-      { text: 'תודה', start: 15, end: 15.4, isFiller: false },
-      { text: 'דני.', start: 15.4, end: 15.8, isFiller: false },
-      { text: 'כאילו', start: 15.8, end: 16.3, isFiller: true },
-      { text: 'זה', start: 16.3, end: 16.5, isFiller: false },
-      { text: 'נושא', start: 16.5, end: 16.9, isFiller: false },
-      { text: 'מרתק.', start: 16.9, end: 17.4, isFiller: false },
-      { text: 'אני', start: 17.5, end: 17.8, isFiller: false },
-      { text: 'חושבת', start: 17.8, end: 18.2, isFiller: false },
-      { text: 'שבעצם', start: 18.2, end: 18.7, isFiller: true },
-      { text: 'יש', start: 18.7, end: 19.0, isFiller: false },
-      { text: 'הרבה', start: 19.0, end: 19.4, isFiller: false },
-      { text: 'מה', start: 19.4, end: 19.6, isFiller: false },
-      { text: 'לדבר', start: 19.6, end: 20.0, isFiller: false },
-      { text: 'על', start: 20.0, end: 20.2, isFiller: false },
-      { text: 'איך', start: 20.2, end: 20.5, isFiller: false },
-      { text: 'AI', start: 20.5, end: 20.9, isFiller: false },
-      { text: 'משנה', start: 20.9, end: 21.3, isFiller: false },
-      { text: 'את', start: 21.3, end: 21.5, isFiller: false },
-      { text: 'עולם', start: 21.5, end: 21.9, isFiller: false },
-      { text: 'יצירת', start: 21.9, end: 22.4, isFiller: false },
-      { text: 'התוכן.', start: 22.4, end: 23.0, isFiller: false },
-    ],
-  },
-  {
-    speaker: 'דני',
-    color: 'border-blue-400',
-    startTime: '00:28',
-    words: [
-      { text: 'בהחלט.', start: 28, end: 28.5, isFiller: false },
-      { text: 'אז', start: 28.5, end: 28.8, isFiller: true },
-      { text: 'נו', start: 28.8, end: 29.1, isFiller: true },
-      { text: 'בואי', start: 29.1, end: 29.5, isFiller: false },
-      { text: 'נתחיל', start: 29.5, end: 30.0, isFiller: false },
-      { text: 'מהבסיס.', start: 30.0, end: 30.6, isFiller: false },
-      { text: 'מה', start: 30.8, end: 31.0, isFiller: false },
-      { text: 'זה', start: 31.0, end: 31.2, isFiller: false },
-      { text: 'בעצם', start: 31.2, end: 31.7, isFiller: true },
-      { text: 'עריכה', start: 31.7, end: 32.2, isFiller: false },
-      { text: 'מבוססת', start: 32.2, end: 32.7, isFiller: false },
-      { text: 'טקסט?', start: 32.7, end: 33.2, isFiller: false },
-    ],
-  },
-  {
-    speaker: 'מיכל',
-    color: 'border-green-400',
-    startTime: '00:35',
-    words: [
-      { text: 'אז', start: 35, end: 35.3, isFiller: true },
-      { text: 'העיקרון', start: 35.3, end: 35.8, isFiller: false },
-      { text: 'הוא', start: 35.8, end: 36.0, isFiller: false },
-      { text: 'פשוט.', start: 36.0, end: 36.5, isFiller: false },
-      { text: 'במקום', start: 36.7, end: 37.1, isFiller: false },
-      { text: 'לעבוד', start: 37.1, end: 37.5, isFiller: false },
-      { text: 'עם', start: 37.5, end: 37.7, isFiller: false },
-      { text: 'ציר', start: 37.7, end: 38.0, isFiller: false },
-      { text: 'זמן', start: 38.0, end: 38.3, isFiller: false },
-      { text: 'מסורתי,', start: 38.3, end: 38.9, isFiller: false },
-      { text: 'אתה', start: 39.0, end: 39.3, isFiller: false },
-      { text: 'פשוט', start: 39.3, end: 39.7, isFiller: false },
-      { text: 'עורך', start: 39.7, end: 40.1, isFiller: false },
-      { text: 'את', start: 40.1, end: 40.3, isFiller: false },
-      { text: 'הטקסט', start: 40.3, end: 40.7, isFiller: false },
-      { text: 'כמו', start: 40.7, end: 41.0, isFiller: false },
-      { text: 'מסמך', start: 41.0, end: 41.4, isFiller: false },
-      { text: 'רגיל.', start: 41.4, end: 41.9, isFiller: false },
-      { text: 'מוחק', start: 42.0, end: 42.4, isFiller: false },
-      { text: 'מילה', start: 42.4, end: 42.7, isFiller: false },
-      { text: '-', start: 42.7, end: 42.8, isFiller: false },
-      { text: 'היא', start: 42.8, end: 43.1, isFiller: false },
-      { text: 'נעלמת', start: 43.1, end: 43.6, isFiller: false },
-      { text: 'מהסרטון.', start: 43.6, end: 44.2, isFiller: false },
-    ],
-  },
-]
+export interface Caption {
+  id: string
+  text: string
+  startTime: number
+  endTime: number
+  style: CaptionStyle
+  words?: { text: string; start: number; end: number }[]
+}
+
+export interface CaptionStyle {
+  preset: 'classic' | 'modern' | 'karaoke' | 'minimal'
+  fontSize: number
+  fontFamily: string
+  textColor: string
+  bgColor: string
+  bgOpacity: number
+  position: 'top' | 'center' | 'bottom'
+  alignment: 'right' | 'center' | 'left'
+  bold: boolean
+  italic: boolean
+  outline: boolean
+  outlineColor: string
+  animation: 'none' | 'fade' | 'slideUp' | 'typewriter' | 'wordByWord' | 'bounce' | 'zoom'
+}
+
+export interface BRollItem {
+  id: string
+  imageUrl: string
+  startTime: number
+  duration: number
+  source: 'ai' | 'stock' | 'upload'
+  prompt?: string
+}
 
 export interface EditHistoryEntry {
   action: string
   description: string
   timestamp: number
   previousTranscript?: Segment[]
+}
+
+export interface SpeakerInfo {
+  id: number
+  name: string
+  description?: string
+  color: string
 }
 
 interface EditorState {
@@ -142,11 +82,17 @@ interface EditorState {
   playbackSpeed: number
   volume: number
   transcript: Segment[]
-  transcriptMode: 'real' | 'demo'
   showCaptions: boolean
+  captions: Caption[]
+  captionStyle: CaptionStyle
+  bRollItems: BRollItem[]
   editHistory: EditHistoryEntry[]
+  redoHistory: EditHistoryEntry[]
   lastSavedAt: number | null
   isDirty: boolean
+  speakers: SpeakerInfo[]
+  // Editor tool settings
+  editorEffects: Record<string, any>
 
   setProjectId: (id: string | null) => void
   setProjectName: (name: string) => void
@@ -162,11 +108,17 @@ interface EditorState {
   setPlaybackSpeed: (speed: number) => void
   setVolume: (volume: number) => void
   setTranscript: (transcript: Segment[]) => void
-  setTranscriptMode: (mode: 'real' | 'demo') => void
   setShowCaptions: (show: boolean) => void
+  setCaptions: (captions: Caption[]) => void
+  setCaptionStyle: (style: Partial<CaptionStyle>) => void
+  addBRollItem: (item: BRollItem) => void
+  removeBRollItem: (id: string) => void
+  updateBRollItem: (id: string, updates: Partial<BRollItem>) => void
   addEditHistory: (entry: Omit<EditHistoryEntry, 'timestamp'>) => void
   markSaved: () => void
   setIsDirty: (dirty: boolean) => void
+  setSpeakers: (speakers: SpeakerInfo[]) => void
+  setEditorEffect: (key: string, value: any) => void
   loadProject: (opts: {
     id: string
     name: string
@@ -175,7 +127,6 @@ interface EditorState {
     mediaBlobUrl?: string | null
     mediaType?: 'video' | 'audio' | null
     transcript?: Segment[]
-    transcriptMode?: 'real' | 'demo'
     duration?: number
     editHistory?: EditHistoryEntry[]
   }) => void
@@ -183,9 +134,34 @@ interface EditorState {
   removeFillerWords: () => { removed: Record<string, number>; totalRemoved: number; timeSaved: number }
   replaceWord: (oldWord: string, newWord: string) => number
   removeTimeRange: (startTime: number, endTime: number) => void
+  deleteWords: (segIdx: number, wordIndices: number[]) => void
   undoLastEdit: () => string | null
-  getDemoTranscript: () => Segment[]
+  redoLastEdit: () => string | null
+  generateCaptionsFromTranscript: () => void
+  renameSpeaker: (oldName: string, newName: string) => void
+  reassignSegmentSpeaker: (segIdx: number, speakerId: number) => void
+  splitSegment: (segIdx: number, wordIdx: number) => void
+  mergeSegments: (segIdx1: number, segIdx2: number) => void
 }
+
+const defaultCaptionStyle: CaptionStyle = {
+  preset: 'classic',
+  fontSize: 24,
+  fontFamily: 'Heebo',
+  textColor: '#FFFFFF',
+  bgColor: '#000000',
+  bgOpacity: 0.7,
+  position: 'bottom',
+  alignment: 'center',
+  bold: false,
+  italic: false,
+  outline: false,
+  outlineColor: '#000000',
+  animation: 'none',
+}
+
+const SPEAKER_COLORS = ['border-blue-400', 'border-green-400', 'border-purple-400', 'border-orange-400']
+const SPEAKER_HEX_COLORS = ['#5C8AFF', '#4ADE80', '#FBBF24', '#F472B6']
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   projectId: null,
@@ -201,11 +177,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   playbackSpeed: 1,
   volume: 80,
   transcript: [],
-  transcriptMode: 'real',
   showCaptions: false,
+  captions: [],
+  captionStyle: { ...defaultCaptionStyle },
+  bRollItems: [],
   editHistory: [],
+  redoHistory: [],
   lastSavedAt: null,
   isDirty: false,
+  speakers: [],
+  editorEffects: {},
 
   setProjectId: (id) => set({ projectId: id }),
   setProjectName: (name) => set({ projectName: name, isDirty: true }),
@@ -221,20 +202,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   setVolume: (volume) => set({ volume }),
   setTranscript: (transcript) => set({ transcript, isDirty: true }),
-  setTranscriptMode: (mode) => {
-    if (mode === 'demo') {
-      set({ transcriptMode: mode, transcript: demoTranscript })
-    } else {
-      set({ transcriptMode: mode, transcript: [] })
-    }
-  },
   setShowCaptions: (show) => set({ showCaptions: show }),
+  setCaptions: (captions) => set({ captions }),
+  setCaptionStyle: (style) => set((s) => ({ captionStyle: { ...s.captionStyle, ...style } })),
+  addBRollItem: (item) => set((s) => ({ bRollItems: [...s.bRollItems, item], isDirty: true })),
+  removeBRollItem: (id) => set((s) => ({ bRollItems: s.bRollItems.filter((b) => b.id !== id), isDirty: true })),
+  updateBRollItem: (id, updates) => set((s) => ({
+    bRollItems: s.bRollItems.map((b) => b.id === id ? { ...b, ...updates } : b),
+    isDirty: true,
+  })),
   addEditHistory: (entry) => set((s) => ({
     editHistory: [...s.editHistory, { ...entry, timestamp: Date.now() }],
+    redoHistory: [],
     isDirty: true,
   })),
   markSaved: () => set({ lastSavedAt: Date.now(), isDirty: false }),
   setIsDirty: (dirty) => set({ isDirty: dirty }),
+  setSpeakers: (speakers) => set({ speakers }),
+  setEditorEffect: (key, value) => set((s) => ({
+    editorEffects: { ...s.editorEffects, [key]: value },
+    isDirty: true,
+  })),
 
   loadProject: (opts) => {
     const isDemo = opts.isDemo ?? false
@@ -246,17 +234,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       mediaFile: opts.mediaFile ?? null,
       mediaBlobUrl: opts.mediaBlobUrl ?? null,
       mediaType: opts.mediaType ?? null,
-      transcript: hasTranscript ? opts.transcript! : isDemo ? demoTranscript : [],
-      transcriptMode: opts.transcriptMode ?? (isDemo ? 'demo' : 'real'),
-      duration: opts.duration ?? (isDemo ? 167 : 0),
+      transcript: hasTranscript ? opts.transcript! : [],
+      duration: opts.duration ?? 0,
       editHistory: opts.editHistory ?? [],
+      redoHistory: [],
       currentTime: 0,
       isPlaying: false,
       playbackSpeed: 1,
       isDirty: false,
       lastSavedAt: null,
       showCaptions: false,
+      captions: [],
+      captionStyle: { ...defaultCaptionStyle },
+      bRollItems: [],
       waveformData: null,
+      speakers: [],
+      editorEffects: {},
     })
   },
 
@@ -264,8 +257,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     projectId: null, projectName: '', isDemo: false,
     mediaFile: null, mediaBlobUrl: null, mediaType: null, waveformData: null,
     currentTime: 0, duration: 0, isPlaying: false, playbackSpeed: 1, volume: 80,
-    transcript: [], transcriptMode: 'real', showCaptions: false,
-    editHistory: [], lastSavedAt: null, isDirty: false,
+    transcript: [], showCaptions: false, captions: [], captionStyle: { ...defaultCaptionStyle },
+    bRollItems: [], editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
+    speakers: [], editorEffects: {},
   }),
 
   removeFillerWords: () => {
@@ -290,7 +284,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     const totalRemoved = Object.values(removed).reduce((s, c) => s + c, 0)
     set({
-      transcript: newTranscript, isDirty: true,
+      transcript: newTranscript, isDirty: true, redoHistory: [],
       editHistory: [...editHistory, { action: 'removeFillerWords', description: `הוסרו ${totalRemoved} מילות מילוי`, timestamp: Date.now(), previousTranscript }],
     })
     return { removed, totalRemoved, timeSaved }
@@ -307,14 +301,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (w.text === oldWord || clean === oldWord) {
           count++
           const suffix = w.text.slice(clean.length)
-          return { ...w, text: newWord + suffix }
+          return { ...w, text: newWord + suffix, isEdited: true }
         }
         return w
       }),
     }))
     if (count > 0) {
       set({
-        transcript: newTranscript, isDirty: true,
+        transcript: newTranscript, isDirty: true, redoHistory: [],
         editHistory: [...editHistory, { action: 'replaceWord', description: `הוחלפו ${count} מופעים של '${oldWord}' ב-'${newWord}'`, timestamp: Date.now(), previousTranscript }],
       })
     }
@@ -329,20 +323,163 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       words: seg.words.filter((w) => w.start < startTime || w.end > endTime),
     })).filter((seg) => seg.words.length > 0)
     set({
-      transcript: newTranscript, isDirty: true,
+      transcript: newTranscript, isDirty: true, redoHistory: [],
       editHistory: [...editHistory, { action: 'removeTimeRange', description: `נמחק קטע מ-${startTime.toFixed(1)} עד ${endTime.toFixed(1)}`, timestamp: Date.now(), previousTranscript }],
     })
   },
 
+  deleteWords: (segIdx, wordIndices) => {
+    const { transcript, editHistory } = get()
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    const newTranscript = transcript.map((seg, si) => {
+      if (si !== segIdx) return seg
+      return {
+        ...seg,
+        words: seg.words.filter((_, wi) => !wordIndices.includes(wi)),
+      }
+    }).filter((seg) => seg.words.length > 0)
+    set({
+      transcript: newTranscript, isDirty: true, redoHistory: [],
+      editHistory: [...editHistory, { action: 'deleteWords', description: `נמחקו ${wordIndices.length} מילים`, timestamp: Date.now(), previousTranscript }],
+    })
+  },
+
   undoLastEdit: () => {
-    const { editHistory } = get()
+    const { editHistory, transcript, redoHistory } = get()
     if (editHistory.length === 0) return null
     const lastEdit = editHistory[editHistory.length - 1]
     if (lastEdit.previousTranscript) {
-      set({ transcript: lastEdit.previousTranscript, editHistory: editHistory.slice(0, -1), isDirty: true })
+      set({
+        transcript: lastEdit.previousTranscript,
+        editHistory: editHistory.slice(0, -1),
+        redoHistory: [...redoHistory, { ...lastEdit, previousTranscript: JSON.parse(JSON.stringify(transcript)) }],
+        isDirty: true,
+      })
     }
     return lastEdit.description
   },
 
-  getDemoTranscript: () => demoTranscript,
+  redoLastEdit: () => {
+    const { redoHistory, transcript, editHistory } = get()
+    if (redoHistory.length === 0) return null
+    const lastRedo = redoHistory[redoHistory.length - 1]
+    if (lastRedo.previousTranscript) {
+      set({
+        transcript: lastRedo.previousTranscript,
+        redoHistory: redoHistory.slice(0, -1),
+        editHistory: [...editHistory, { ...lastRedo, previousTranscript: JSON.parse(JSON.stringify(transcript)) }],
+        isDirty: true,
+      })
+    }
+    return lastRedo.description
+  },
+
+  generateCaptionsFromTranscript: () => {
+    const { transcript, captionStyle } = get()
+    const captions: Caption[] = []
+    const MAX_CHARS = 42
+    const MAX_LINES = 2
+
+    for (const seg of transcript) {
+      let currentWords: Word[] = []
+      let currentLine = ''
+
+      for (const word of seg.words) {
+        const testLine = currentLine ? `${currentLine} ${word.text}` : word.text
+        if (testLine.length > MAX_CHARS && currentWords.length > 0) {
+          const captionId = `cap-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`
+          captions.push({
+            id: captionId,
+            text: currentWords.map((w) => w.text).join(' '),
+            startTime: currentWords[0].start,
+            endTime: currentWords[currentWords.length - 1].end,
+            style: { ...captionStyle },
+            words: currentWords.map((w) => ({ text: w.text, start: w.start, end: w.end })),
+          })
+          currentWords = [word]
+          currentLine = word.text
+        } else {
+          currentWords.push(word)
+          currentLine = testLine
+        }
+      }
+      if (currentWords.length > 0) {
+        const captionId = `cap-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`
+        captions.push({
+          id: captionId,
+          text: currentWords.map((w) => w.text).join(' '),
+          startTime: currentWords[0].start,
+          endTime: currentWords[currentWords.length - 1].end,
+          style: { ...captionStyle },
+          words: currentWords.map((w) => ({ text: w.text, start: w.start, end: w.end })),
+        })
+      }
+    }
+
+    set({ captions, showCaptions: true })
+  },
+
+  renameSpeaker: (oldName, newName) => {
+    const { transcript, speakers } = get()
+    const newTranscript = transcript.map((seg) =>
+      seg.speaker === oldName ? { ...seg, speaker: newName } : seg
+    )
+    const newSpeakers = speakers.map((s) =>
+      s.name === oldName ? { ...s, name: newName } : s
+    )
+    set({ transcript: newTranscript, speakers: newSpeakers, isDirty: true })
+  },
+
+  reassignSegmentSpeaker: (segIdx, speakerId) => {
+    const { transcript, speakers } = get()
+    const speaker = speakers.find((s) => s.id === speakerId)
+    if (!speaker) return
+    const colorIdx = (speakerId - 1) % SPEAKER_COLORS.length
+    const newTranscript = transcript.map((seg, i) =>
+      i === segIdx
+        ? { ...seg, speaker: speaker.name, speakerId, color: SPEAKER_COLORS[colorIdx] }
+        : seg
+    )
+    set({ transcript: newTranscript, isDirty: true })
+  },
+
+  splitSegment: (segIdx, wordIdx) => {
+    const { transcript, editHistory } = get()
+    if (segIdx < 0 || segIdx >= transcript.length) return
+    const seg = transcript[segIdx]
+    if (wordIdx <= 0 || wordIdx >= seg.words.length) return
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    const firstWords = seg.words.slice(0, wordIdx)
+    const secondWords = seg.words.slice(wordIdx)
+    const formatTs = (s: number) => {
+      const m = Math.floor(s / 60); const sec = Math.floor(s % 60)
+      return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+    }
+    const seg1: Segment = { ...seg, words: firstWords, endTime: formatTs(firstWords[firstWords.length - 1]?.end ?? 0), segEnd: firstWords[firstWords.length - 1]?.end }
+    const seg2: Segment = { ...seg, words: secondWords, startTime: formatTs(secondWords[0]?.start ?? 0), segStart: secondWords[0]?.start }
+    const newTranscript = [...transcript.slice(0, segIdx), seg1, seg2, ...transcript.slice(segIdx + 1)]
+    set({
+      transcript: newTranscript, isDirty: true, redoHistory: [],
+      editHistory: [...editHistory, { action: 'splitSegment', description: `פוצל קטע ${segIdx + 1}`, timestamp: Date.now(), previousTranscript }],
+    })
+  },
+
+  mergeSegments: (segIdx1, segIdx2) => {
+    const { transcript, editHistory } = get()
+    const idx1 = Math.min(segIdx1, segIdx2)
+    const idx2 = Math.max(segIdx1, segIdx2)
+    if (idx1 < 0 || idx2 >= transcript.length || idx1 === idx2) return
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    const merged: Segment = {
+      ...transcript[idx1],
+      words: [...transcript[idx1].words, ...transcript[idx2].words],
+      endTime: transcript[idx2].endTime,
+      segEnd: transcript[idx2].segEnd,
+    }
+    const newTranscript = [...transcript.slice(0, idx1), merged, ...transcript.slice(idx2 + 1)]
+    set({
+      transcript: newTranscript, isDirty: true, redoHistory: [],
+      editHistory: [...editHistory, { action: 'mergeSegments', description: `מוזגו קטעות ${idx1 + 1} ו-${idx2 + 1}`, timestamp: Date.now(), previousTranscript }],
+    })
+  },
 }))

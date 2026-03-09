@@ -1,35 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Search, X, Upload, Link2, Loader2, Pencil, Download, RefreshCw, Clock } from 'lucide-react'
+import { Search, X, Upload, Link2, Loader2, Pencil, Download, RefreshCw, Clock, Trash2, Scissors, Copy, FileText, ChevronDown, Merge, SplitSquareVertical } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useUsageStore } from '../../stores/usageStore'
 import { useApiStatusStore } from '../../stores/apiStatusStore'
 import { api, ApiError } from '../../services/api'
 
-const speakerColors: Record<string, string> = {
-  'border-blue-400': 'bg-blue-500',
-  'border-green-400': 'bg-green-500',
-  'border-purple-400': 'bg-purple-500',
-  'border-orange-400': 'bg-orange-500',
-}
-
-const speakerDots: Record<string, string> = {
-  'border-blue-400': '🔵',
-  'border-green-400': '🟢',
-  'border-purple-400': '🟣',
-  'border-orange-400': '🟠',
-}
-
-function getInitial(name: string): string {
-  return name.charAt(0)
-}
-
-function getSpeakerBg(color: string): string {
-  return speakerColors[color] || 'bg-accent-purple'
-}
-
-function getSpeakerDot(color: string): string {
-  return speakerDots[color] || '🔵'
+const SPEAKER_COLORS: Record<string, string> = {
+  'border-blue-400': '#5C8AFF',
+  'border-green-400': '#4ADE80',
+  'border-purple-400': '#FBBF24',
+  'border-orange-400': '#F472B6',
 }
 
 function formatTimestamp(seconds: number): string {
@@ -55,7 +36,11 @@ function timeAgo(timestamp: number): string {
 const FILLER_WORDS = ['אממ', 'אההה', 'כאילו', 'נו', 'בעצם', 'אז', 'סתם', 'יודע', 'יודעת']
 
 export default function TranscriptPanel() {
-  const { transcript, currentTime, duration, setCurrentTime, transcriptMode, setTranscriptMode, isDemo, mediaBlobUrl, mediaFile, setTranscript } = useEditorStore()
+  const {
+    transcript, currentTime, duration, setCurrentTime, mediaBlobUrl,
+    mediaFile, setTranscript, speakers, setSpeakers, reassignSegmentSpeaker,
+    renameSpeaker, deleteWords, splitSegment, mergeSegments,
+  } = useEditorStore()
   const { addToast } = useUIStore()
   const addWhisperUsage = useUsageStore((s) => s.addWhisperUsage)
   const openaiConnected = useApiStatusStore((s) => s.openai.connected)
@@ -70,11 +55,13 @@ export default function TranscriptPanel() {
   const [transcribedAt, setTranscribedAt] = useState<number | null>(null)
   const [editingSpeaker, setEditingSpeaker] = useState<number | null>(null)
   const [speakerEditValue, setSpeakerEditValue] = useState('')
+  const [speakerDropdown, setSpeakerDropdown] = useState<number | null>(null)
+  const [selectedWords, setSelectedWords] = useState<{ segIdx: number; wordIndices: number[] } | null>(null)
+  const [floatingToolbar, setFloatingToolbar] = useState<{ x: number; y: number } | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
   const autoTranscribeTriggered = useRef(false)
   const transcriptContainerRef = useRef<HTMLDivElement>(null)
 
-  // Find currently active segment based on video time
   const activeSegmentIdx = transcript.findIndex((seg, i) => {
     const segStart = seg.words[0]?.start ?? 0
     const nextSeg = transcript[i + 1]
@@ -82,15 +69,33 @@ export default function TranscriptPanel() {
     return currentTime >= segStart && currentTime < segEnd
   })
 
-  // Auto-scroll to active segment
   useEffect(() => {
     if (activeSegmentIdx >= 0 && transcriptContainerRef.current) {
       const el = transcriptContainerRef.current.querySelector(`[data-segment="${activeSegmentIdx}"]`)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-      }
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
   }, [activeSegmentIdx])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        const desc = useEditorStore.getState().undoLastEdit()
+        if (desc) addToast(`בוטל: ${desc}`, 'info')
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) {
+        e.preventDefault()
+        const desc = useEditorStore.getState().redoLastEdit()
+        if (desc) addToast(`שוחזר: ${desc}`, 'info')
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedWords) {
+        e.preventDefault()
+        handleDeleteSelected()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selectedWords])
 
   const handleImportTranscript = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -126,37 +131,20 @@ export default function TranscriptPanel() {
       return
     }
     setIsTranscribing(true)
-
     const fileSizeMB = mediaFile.size / (1024 * 1024)
-
-    if (fileSizeMB > 100) {
-      setTranscribeProgress('מתמלל קובץ גדול מאוד... ⏳ (עד 10 דקות)')
-    } else if (fileSizeMB > 25) {
-      setTranscribeProgress('מתמלל קובץ גדול... ⏳ (עד 3 דקות)')
-    } else {
-      setTranscribeProgress('מעלה לשרת...')
-    }
+    if (fileSizeMB > 100) setTranscribeProgress('מתמלל קובץ גדול מאוד... (עד 10 דקות)')
+    else if (fileSizeMB > 25) setTranscribeProgress('מתמלל קובץ גדול... (עד 3 דקות)')
+    else setTranscribeProgress('מעלה לשרת...')
 
     await new Promise(r => setTimeout(r, 500))
-
     const ext = mediaFile.name.split('.').pop()?.toLowerCase() || ''
     const supportedFormats = ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']
-    const needsConversion = !supportedFormats.includes(ext)
-
-    if (needsConversion) {
-      setTranscribeProgress('ממיר פורמט...')
-    } else {
-      setTranscribeProgress('מתמלל את הקובץ... ⏳')
-    }
+    setTranscribeProgress(supportedFormats.includes(ext) ? 'מתמלל את הקובץ...' : 'ממיר פורמט...')
 
     try {
       const result = await api.transcribe(mediaFile)
-
       setTranscribeProgress('מעבד תוצאות...')
-
-      if (result.duration) {
-        addWhisperUsage(result.duration / 60)
-      }
+      if (result.duration) addWhisperUsage(result.duration / 60)
 
       const fillerList = FILLER_WORDS
       const colorList = ['border-blue-400', 'border-green-400', 'border-purple-400', 'border-orange-400']
@@ -165,36 +153,28 @@ export default function TranscriptPanel() {
         const segments = result.segments.map((seg: any, i: number) => {
           const words = (seg.words || []).map((w: any) => {
             const clean = (w.word || '').replace(/[.,!?]/g, '')
-            return {
-              text: w.word || '',
-              start: w.start || 0,
-              end: w.end || 0,
-              isFiller: fillerList.includes(clean),
-            }
+            return { text: w.word || '', start: w.start || 0, end: w.end || 0, isFiller: fillerList.includes(clean) }
           })
           if (words.length === 0 && seg.text) {
             const textWords = seg.text.split(/\s+/).filter(Boolean)
             const segDuration = (seg.end || 0) - (seg.start || 0)
             const wordDuration = segDuration / textWords.length
             textWords.forEach((w: string, wi: number) => {
-              const clean = w.replace(/[.,!?]/g, '')
               words.push({
                 text: w,
                 start: (seg.start || 0) + wi * wordDuration,
                 end: (seg.start || 0) + (wi + 1) * wordDuration,
-                isFiller: fillerList.includes(clean),
+                isFiller: fillerList.includes(w.replace(/[.,!?]/g, '')),
               })
             })
           }
-          const mins = Math.floor((seg.start || 0) / 60)
-          const secs = Math.floor((seg.start || 0) % 60)
-          const endMins = Math.floor((seg.end || 0) / 60)
-          const endSecs = Math.floor((seg.end || 0) % 60)
+          const speakerId = seg.speakerId || 1
           return {
-            speaker: seg.speaker || `דובר ${(i % 2) + 1}`,
-            color: colorList[i % colorList.length],
-            startTime: `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`,
-            endTime: `${endMins.toString().padStart(2, '0')}:${endSecs.toString().padStart(2, '0')}`,
+            speaker: seg.speaker || `דובר ${speakerId}`,
+            speakerId,
+            color: colorList[(speakerId - 1) % colorList.length],
+            startTime: formatTimestamp(seg.start || 0),
+            endTime: formatTimestamp(seg.end || 0),
             segStart: seg.start || 0,
             segEnd: seg.end || 0,
             words,
@@ -202,111 +182,112 @@ export default function TranscriptPanel() {
         }).filter((s: any) => s.words.length > 0)
 
         setTranscript(segments)
+        if (result.speakers?.length > 0) {
+          setSpeakers(result.speakers.map((s: any, i: number) => ({
+            id: s.id || i + 1,
+            name: s.name || `דובר ${i + 1}`,
+            description: s.description || '',
+            color: ['#5C8AFF', '#4ADE80', '#FBBF24', '#F472B6'][(s.id || i + 1) - 1 % 4],
+          })))
+        }
         setTranscribedAt(Date.now())
         const wordCount = segments.reduce((s: number, seg: any) => s + seg.words.length, 0)
         addToast(`התמלול הושלם! נמצאו ${wordCount} מילים`, 'success')
       } else if (result.text) {
         const words = result.words?.length
-          ? result.words.map((w: any) => {
-              const clean = (w.word || '').replace(/[.,!?]/g, '')
-              return { text: w.word, start: w.start || 0, end: w.end || 0, isFiller: fillerList.includes(clean) }
-            })
-          : result.text.split(/\s+/).map((w: string, i: number) => ({
-              text: w, start: i * 0.5, end: (i + 1) * 0.5, isFiller: fillerList.includes(w.replace(/[.,!?]/g, '')),
-            }))
+          ? result.words.map((w: any) => ({ text: w.word, start: w.start || 0, end: w.end || 0, isFiller: fillerList.includes((w.word || '').replace(/[.,!?]/g, '')) }))
+          : result.text.split(/\s+/).map((w: string, i: number) => ({ text: w, start: i * 0.5, end: (i + 1) * 0.5, isFiller: fillerList.includes(w.replace(/[.,!?]/g, '')) }))
         setTranscript([{ speaker: 'דובר 1', color: 'border-blue-400', startTime: '00:00', words }])
         setTranscribedAt(Date.now())
         addToast('התמלול הושלם!', 'success')
       }
-
-      setTranscribeProgress('מזהה דוברים...')
-      try {
-        await api.detectSpeakers(result.text, result.segments)
-      } catch {
-        // Speaker detection is optional
-      }
-
       setTranscribeProgress('מוכן!')
       await new Promise(r => setTimeout(r, 800))
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : 'שגיאה בתמלול. נסה שוב.'
-      addToast(message, 'error')
+      addToast(err instanceof ApiError ? err.message : 'שגיאה בתמלול. נסה שוב.', 'error')
     }
     setIsTranscribing(false)
     setTranscribeProgress('')
   }
 
-  // Auto-transcribe when API is connected and media file is available
   useEffect(() => {
-    if (
-      apiChecked &&
-      openaiConnected &&
-      mediaFile &&
-      !isDemo &&
-      transcriptMode === 'real' &&
-      transcript.length === 0 &&
-      !isTranscribing &&
-      !autoTranscribeTriggered.current
-    ) {
+    if (apiChecked && openaiConnected && mediaFile && transcript.length === 0 && !isTranscribing && !autoTranscribeTriggered.current) {
       autoTranscribeTriggered.current = true
       handleAutoTranscribe()
     }
-  }, [apiChecked, openaiConnected, mediaFile, isDemo, transcriptMode, transcript.length, isTranscribing])
+  }, [apiChecked, openaiConnected, mediaFile, transcript.length, isTranscribing])
 
   const handleSpeakerRename = (segIdx: number) => {
-    if (!speakerEditValue.trim()) {
-      setEditingSpeaker(null)
-      return
-    }
-    const newTranscript = [...transcript]
-    const oldName = newTranscript[segIdx].speaker
-    // Rename all segments with the same speaker name
-    newTranscript.forEach((seg, i) => {
-      if (seg.speaker === oldName) {
-        newTranscript[i] = { ...seg, speaker: speakerEditValue.trim() }
-      }
-    })
-    setTranscript(newTranscript)
+    if (!speakerEditValue.trim()) { setEditingSpeaker(null); return }
+    renameSpeaker(transcript[segIdx].speaker, speakerEditValue.trim())
     setEditingSpeaker(null)
   }
 
   const handleWordEdit = useCallback((segIdx: number, wordIdx: number, newText: string) => {
-    const newTranscript = [...transcript]
-    const seg = { ...newTranscript[segIdx] }
-    const words = [...seg.words]
-    words[wordIdx] = { ...words[wordIdx], text: newText }
-    seg.words = words
-    newTranscript[segIdx] = seg
-    setTranscript(newTranscript)
-  }, [transcript, setTranscript])
+    const { transcript: t, editHistory } = useEditorStore.getState()
+    const prev = JSON.parse(JSON.stringify(t))
+    const nt = [...t]; const seg = { ...nt[segIdx] }; const words = [...seg.words]
+    words[wordIdx] = { ...words[wordIdx], text: newText, isEdited: true }
+    seg.words = words; nt[segIdx] = seg
+    useEditorStore.setState({ transcript: nt, isDirty: true, editHistory: [...editHistory, { action: 'editWord', description: `שונתה מילה ל-'${newText}'`, timestamp: Date.now(), previousTranscript: prev }], redoHistory: [] })
+  }, [])
 
   const handleExportTranscript = () => {
-    const text = transcript.map((seg) => {
-      const time = seg.startTime
-      return `[${time}] ${seg.speaker}:\n${seg.words.map(w => w.text).join(' ')}`
-    }).join('\n\n')
-
+    const text = transcript.map((seg) => `[${seg.startTime}] ${seg.speaker}:\n${seg.words.map(w => w.text).join(' ')}`).join('\n\n')
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'transcript.txt'
-    a.click()
+    const a = document.createElement('a'); a.href = url; a.download = 'transcript.txt'; a.click()
     URL.revokeObjectURL(url)
   }
 
   const handleFillerClick = (segIdx: number, wordIdx: number) => {
-    const newTranscript = [...transcript]
-    const seg = { ...newTranscript[segIdx] }
-    const words = seg.words.filter((_, i) => i !== wordIdx)
-    seg.words = words
-    newTranscript[segIdx] = seg
-    setTranscript(newTranscript.filter(s => s.words.length > 0))
+    const { transcript: t, editHistory } = useEditorStore.getState()
+    const prev = JSON.parse(JSON.stringify(t))
+    const nt = [...t]; const seg = { ...nt[segIdx] }
+    seg.words = seg.words.filter((_, i) => i !== wordIdx); nt[segIdx] = seg
+    useEditorStore.setState({ transcript: nt.filter(s => s.words.length > 0), isDirty: true, editHistory: [...editHistory, { action: 'deleteFiller', description: 'נמחקה מילת מילוי', timestamp: Date.now(), previousTranscript: prev }], redoHistory: [] })
   }
 
-  const hasRealMedia = !!mediaBlobUrl && !isDemo
-  const showApiPrompt = transcriptMode === 'real' && transcript.length === 0 && hasRealMedia && !isTranscribing && !openaiConnected && apiChecked
-  const showTranscribeButton = transcriptMode === 'real' && transcript.length === 0 && hasRealMedia && !isTranscribing && openaiConnected && apiChecked
+  const handleDeleteSelected = () => {
+    if (!selectedWords) return
+    deleteWords(selectedWords.segIdx, selectedWords.wordIndices)
+    setSelectedWords(null); setFloatingToolbar(null)
+    addToast(`נמחקו ${selectedWords.wordIndices.length} מילים`, 'info')
+  }
+
+  const handleCopySelected = () => {
+    if (!selectedWords) return
+    const seg = transcript[selectedWords.segIdx]
+    const text = selectedWords.wordIndices.map((wi) => seg.words[wi]?.text || '').join(' ')
+    navigator.clipboard.writeText(text).catch(() => {})
+    addToast('הטקסט הועתק!', 'success')
+    setFloatingToolbar(null)
+  }
+
+  const handleTextSelection = (segIdx: number) => {
+    const selection = window.getSelection()
+    if (!selection || selection.isCollapsed) { setSelectedWords(null); setFloatingToolbar(null); return }
+    const container = transcriptContainerRef.current?.querySelector(`[data-segment="${segIdx}"] .segment-text`)
+    if (!container) return
+    const wordSpans = container.querySelectorAll('[data-word-idx]')
+    const indices: number[] = []
+    wordSpans.forEach((span) => {
+      if (selection.containsNode(span, true)) {
+        const idx = parseInt(span.getAttribute('data-word-idx') || '-1')
+        if (idx >= 0) indices.push(idx)
+      }
+    })
+    if (indices.length > 0) {
+      setSelectedWords({ segIdx, wordIndices: indices })
+      const range = selection.getRangeAt(0)
+      const rect = range.getBoundingClientRect()
+      setFloatingToolbar({ x: rect.left + rect.width / 2, y: rect.top - 10 })
+    }
+  }
+
+  const hasRealMedia = !!mediaBlobUrl
+  const showApiPrompt = transcript.length === 0 && hasRealMedia && !isTranscribing && !openaiConnected && apiChecked
+  const showTranscribeButton = transcript.length === 0 && hasRealMedia && !isTranscribing && openaiConnected && apiChecked
 
   return (
     <div className="flex flex-col h-full bg-bg-panel rounded-xl border border-white/[0.06] overflow-hidden">
@@ -316,24 +297,9 @@ export default function TranscriptPanel() {
           {totalWords > 0 && <span className="text-xs text-text-muted">{totalWords} מילים</span>}
           {duration > 0 && transcript.length > 0 && <span className="text-xs text-text-muted">{formatDuration(duration)}</span>}
           {transcript.length > 0 && (
-            <button onClick={handleExportTranscript} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-text-primary" title="ייצא תמלול">
-              <Download size={14} />
-            </button>
+            <button onClick={handleExportTranscript} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-text-primary" title="ייצא תמלול"><Download size={14} /></button>
           )}
-          <button onClick={() => setShowSearch(!showSearch)} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-text-primary">
-            <Search size={14} />
-          </button>
-        </div>
-      </div>
-
-      <div className="px-4 py-2 border-b border-white/[0.06] shrink-0">
-        <div className="flex bg-white/[0.04] rounded-lg p-0.5">
-          <button onClick={() => setTranscriptMode('real')} className={`flex-1 py-1 text-xs rounded-md transition-all font-medium ${transcriptMode === 'real' ? 'bg-accent-purple text-white shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
-            מצב אמיתי
-          </button>
-          <button onClick={() => setTranscriptMode('demo')} className={`flex-1 py-1 text-xs rounded-md transition-all font-medium ${transcriptMode === 'demo' ? 'bg-accent-purple text-white shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
-            מצב דמו
-          </button>
+          <button onClick={() => setShowSearch(!showSearch)} className="p-1 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-text-primary"><Search size={14} /></button>
         </div>
       </div>
 
@@ -347,20 +313,27 @@ export default function TranscriptPanel() {
         </div>
       )}
 
+      {floatingToolbar && selectedWords && (
+        <div className="fixed z-50 flex items-center gap-1 px-2 py-1 glass rounded-lg shadow-xl animate-scale-in" style={{ left: floatingToolbar.x, top: floatingToolbar.y, transform: 'translate(-50%, -100%)', border: '1px solid rgba(255,255,255,0.1)' }}>
+          <button onClick={handleDeleteSelected} className="flex items-center gap-1 px-2 py-1 text-xs text-red-400 hover:bg-red-500/10 rounded transition-colors"><Trash2 size={12} /> מחק</button>
+          <button onClick={() => { handleCopySelected(); handleDeleteSelected() }} className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:bg-white/[0.06] rounded transition-colors"><Scissors size={12} /> חתוך</button>
+          <button onClick={handleCopySelected} className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:bg-white/[0.06] rounded transition-colors"><Copy size={12} /> העתק</button>
+          {selectedWords && selectedWords.wordIndices.length > 0 && selectedWords.wordIndices[0] > 0 && (
+            <button onClick={() => { splitSegment(selectedWords.segIdx, selectedWords.wordIndices[0]); setSelectedWords(null); setFloatingToolbar(null); addToast('הקטע פוצל', 'info') }} className="flex items-center gap-1 px-2 py-1 text-xs text-accent-purple hover:bg-accent-purple/10 rounded transition-colors"><SplitSquareVertical size={12} /> פצל</button>
+          )}
+        </div>
+      )}
+
       <div ref={transcriptContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Loading state while transcribing */}
         {isTranscribing && (
           <div className="text-center py-12 space-y-4">
             <Loader2 size={32} className="mx-auto text-accent-purple animate-spin" />
-            <p className="text-sm text-text-primary font-medium">{transcribeProgress || 'מתמלל את הקובץ... ⏳'}</p>
+            <p className="text-sm text-text-primary font-medium">{transcribeProgress || 'מתמלל את הקובץ...'}</p>
             <p className="text-xs text-text-muted">זה יכול לקחת עד דקה</p>
-            <div className="max-w-[200px] mx-auto h-1 bg-white/[0.06] rounded-full overflow-hidden">
-              <div className="h-full bg-accent-purple rounded-full animate-pulse" style={{ width: '60%' }} />
-            </div>
+            <div className="max-w-[200px] mx-auto h-1 bg-white/[0.06] rounded-full overflow-hidden"><div className="h-full bg-accent-purple rounded-full animate-pulse" style={{ width: '60%' }} /></div>
           </div>
         )}
 
-        {/* API not connected - show connect prompt */}
         {showApiPrompt && (
           <div className="space-y-4">
             <div className="p-4 bg-accent-purple/5 border border-accent-purple/20 rounded-xl text-center space-y-3">
@@ -374,109 +347,86 @@ export default function TranscriptPanel() {
               <div className="flex items-center gap-2">
                 <button onClick={handleManualSave} disabled={!manualText.trim()} className="px-4 py-2 bg-accent-purple hover:bg-accent-purple/90 rounded-lg text-sm font-medium transition-all disabled:opacity-50">שמור תמלול</button>
                 <input ref={importRef} type="file" accept=".srt,.vtt,.txt" className="hidden" onChange={handleImportTranscript} />
-                <button onClick={() => importRef.current?.click()} className="flex items-center gap-1.5 px-4 py-2 bg-white/[0.06] hover:bg-white/[0.1] rounded-lg text-sm text-text-secondary transition-colors border border-white/[0.06]">
-                  <Upload size={14} /> ייבא תמלול
-                </button>
+                <button onClick={() => importRef.current?.click()} className="flex items-center gap-1.5 px-4 py-2 bg-white/[0.06] hover:bg-white/[0.1] rounded-lg text-sm text-text-secondary transition-colors border border-white/[0.06]"><Upload size={14} /> ייבא תמלול</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* API connected - show transcribe button */}
         {showTranscribeButton && (
           <div className="text-center py-8 space-y-4">
-            <button
-              onClick={handleAutoTranscribe}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-accent-purple hover:bg-accent-purple/90 text-white rounded-xl text-base font-medium transition-all shadow-lg shadow-accent-purple/20"
-            >
+            <button onClick={handleAutoTranscribe} className="inline-flex items-center gap-2 px-6 py-3 bg-accent-purple hover:bg-accent-purple/90 text-white rounded-xl text-base font-medium transition-all shadow-lg shadow-accent-purple/20">
               <span className="text-xl">🎙️</span> תמלל אוטומטית
             </button>
             <p className="text-xs text-text-muted">לחץ להתחלת תמלול אוטומטי עם OpenAI Whisper</p>
           </div>
         )}
 
-        {/* Transcript content - editable segments */}
         {transcript.map((segment, si) => {
           const isActive = si === activeSegmentIdx
           const segStartTime = segment.words[0]?.start ?? 0
           const segEndTime = segment.words[segment.words.length - 1]?.end ?? 0
+          const speakerColor = SPEAKER_COLORS[segment.color] || '#5C8AFF'
 
           return (
-            <div
-              key={si}
-              data-segment={si}
-              className={`rounded-xl border transition-all ${isActive ? 'bg-accent-purple/10 border-accent-purple/30' : 'border-white/[0.06] hover:border-white/[0.12]'}`}
-            >
-              {/* Segment header */}
+            <div key={si} data-segment={si} className={`rounded-xl border transition-all ${isActive ? 'bg-accent-purple/10 border-accent-purple/30' : 'border-white/[0.06] hover:border-white/[0.12]'}`}>
               <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.04]">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">{getSpeakerDot(segment.color)}</span>
+                <div className="flex items-center gap-2 relative">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: speakerColor }} />
                   {editingSpeaker === si ? (
-                    <input
-                      value={speakerEditValue}
-                      onChange={(e) => setSpeakerEditValue(e.target.value)}
-                      onBlur={() => handleSpeakerRename(si)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSpeakerRename(si)}
-                      className="bg-white/[0.06] rounded px-2 py-0.5 text-xs text-text-primary outline-none border border-accent-purple/30 w-24"
-                      autoFocus
-                    />
+                    <input value={speakerEditValue} onChange={(e) => setSpeakerEditValue(e.target.value)} onBlur={() => handleSpeakerRename(si)} onKeyDown={(e) => e.key === 'Enter' && handleSpeakerRename(si)} className="bg-white/[0.06] rounded px-2 py-0.5 text-xs text-text-primary outline-none border border-accent-purple/30 w-24" autoFocus />
                   ) : (
-                    <button
-                      onClick={() => { setEditingSpeaker(si); setSpeakerEditValue(segment.speaker) }}
-                      className="text-xs font-medium text-text-primary hover:text-accent-purple transition-colors"
-                      title="לחץ לשנות שם דובר"
-                    >
-                      {segment.speaker}
-                    </button>
+                    <div className="relative">
+                      <button onClick={() => { if (speakers.length > 1) setSpeakerDropdown(speakerDropdown === si ? null : si); else { setEditingSpeaker(si); setSpeakerEditValue(segment.speaker) } }} className="text-xs font-medium text-text-primary hover:text-accent-purple transition-colors" title="לחץ לשנות שם דובר">
+                        {segment.speaker}
+                        {speakers.length > 1 && <ChevronDown size={10} className="inline mr-1" />}
+                      </button>
+                      {speakerDropdown === si && speakers.length > 1 && (
+                        <div className="absolute top-full mt-1 right-0 z-20 glass rounded-lg py-1 min-w-[140px] animate-scale-in" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+                          {speakers.map((s) => (
+                            <button key={s.id} onClick={() => { reassignSegmentSpeaker(si, s.id); setSpeakerDropdown(null) }} className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-white/[0.06] transition-colors ${segment.speakerId === s.id ? 'text-accent-purple' : 'text-text-secondary'}`}>
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
+                              {s.name}
+                            </button>
+                          ))}
+                          <div className="border-t border-white/[0.06] mt-1 pt-1">
+                            <button onClick={() => { setSpeakerDropdown(null); setEditingSpeaker(si); setSpeakerEditValue(segment.speaker) }} className="w-full text-right px-3 py-1.5 text-xs text-text-muted hover:bg-white/[0.06] transition-colors">שנה שם...</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-                <button
-                  onClick={() => setCurrentTime(segStartTime)}
-                  className="px-2 py-0.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[10px] font-mono text-text-muted hover:text-accent-purple transition-colors"
-                  title="לחץ לדלג לזמן זה"
-                >
-                  {formatTimestamp(segStartTime)} - {formatTimestamp(segEndTime)}
-                </button>
+                <div className="flex items-center gap-1">
+                  {si < transcript.length - 1 && (
+                    <button onClick={() => { mergeSegments(si, si + 1); addToast('הקטעים מוזגו', 'info') }} className="p-0.5 hover:bg-white/[0.06] rounded transition-colors text-text-muted hover:text-accent-purple" title="מזג עם הקטע הבא"><Merge size={11} /></button>
+                  )}
+                  <button onClick={() => setCurrentTime(segStartTime)} className="px-2 py-0.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[10px] font-mono text-text-muted hover:text-accent-purple transition-colors" title="לחץ לדלג לזמן זה">
+                    {formatTimestamp(segStartTime)} - {formatTimestamp(segEndTime)}
+                  </button>
+                </div>
               </div>
-
-              {/* Segment text */}
               <div className="px-3 py-2">
-                <p className="text-body leading-[1.8]" dir="rtl">
+                <p className="text-body leading-[1.8] segment-text" dir="rtl" onMouseUp={() => handleTextSelection(si)}>
                   {segment.words.map((word, wi) => {
                     const isPlaying = currentTime >= word.start && currentTime < word.end
                     const matchesSearch = searchQuery && word.text.includes(searchQuery)
+                    const isSelected = selectedWords?.segIdx === si && selectedWords.wordIndices.includes(wi)
                     return (
-                      <span
-                        key={wi}
-                        onClick={() => {
-                          if (word.isFiller) return
-                          setCurrentTime(word.start)
-                        }}
-                        contentEditable={!word.isFiller}
-                        suppressContentEditableWarning
-                        onBlur={(e) => {
-                          const newText = e.currentTarget.textContent || ''
-                          if (newText !== word.text) {
-                            handleWordEdit(si, wi, newText)
-                          }
-                        }}
+                      <span key={wi} data-word-idx={wi} onClick={() => { if (!word.isFiller) setCurrentTime(word.start) }} contentEditable={!word.isFiller} suppressContentEditableWarning onBlur={(e) => { const nt = e.currentTarget.textContent || ''; if (nt !== word.text) handleWordEdit(si, wi, nt) }}
                         className={`cursor-pointer rounded px-0.5 transition-all duration-150 inline-block outline-none focus:ring-1 focus:ring-accent-purple/40 ${
-                          isPlaying
-                            ? 'bg-accent-purple/30 text-white'
-                            : word.isFiller
-                              ? 'bg-warning/15 text-warning relative group/filler cursor-pointer'
-                              : matchesSearch
-                                ? 'bg-accent-blue/20 text-accent-blue'
-                                : 'hover:bg-white/[0.06] text-text-primary'
+                          isSelected ? 'bg-accent-blue/30 text-accent-blue'
+                            : isPlaying ? 'bg-accent-purple/30 text-white'
+                            : word.isFiller ? 'bg-warning/15 text-warning relative group/filler cursor-pointer'
+                            : word.isEdited ? 'border-b border-dashed border-accent-blue/50 hover:bg-white/[0.06] text-text-primary'
+                            : matchesSearch ? 'bg-accent-blue/20 text-accent-blue'
+                            : 'hover:bg-white/[0.06] text-text-primary'
                         }`}
                         title={word.isFiller ? 'מילת מילוי - לחץ למחיקה' : undefined}
                       >
                         {word.text}
                         {word.isFiller && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleFillerClick(si, wi) }}
-                            className="absolute -top-1 -left-1 w-3.5 h-3.5 bg-warning/80 rounded-full flex items-center justify-center opacity-0 group-hover/filler:opacity-100 transition-opacity"
-                          >
+                          <button onClick={(e) => { e.stopPropagation(); handleFillerClick(si, wi) }} className="absolute -top-1 -left-1 w-3.5 h-3.5 bg-warning/80 rounded-full flex items-center justify-center opacity-0 group-hover/filler:opacity-100 transition-opacity">
                             <X size={8} className="text-bg-deepest" />
                           </button>
                         )}
@@ -490,31 +440,14 @@ export default function TranscriptPanel() {
           )
         })}
 
-        {/* Manual edit link when transcript is showing */}
         {transcript.length > 0 && !showManualInput && (
           <div className="flex items-center gap-3 pt-2 border-t border-white/[0.06]">
-            <button
-              onClick={() => setShowManualInput(true)}
-              className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors"
-            >
-              <Pencil size={12} /> ערוך תמלול ידנית
-            </button>
-            <button
-              onClick={handleAutoTranscribe}
-              disabled={isTranscribing || !mediaFile}
-              className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors disabled:opacity-50"
-            >
-              <RefreshCw size={12} /> תמלל מחדש
-            </button>
-            {transcribedAt && (
-              <span className="flex items-center gap-1 text-[10px] text-text-muted">
-                <Clock size={10} /> תומלל {timeAgo(transcribedAt)}
-              </span>
-            )}
+            <button onClick={() => setShowManualInput(true)} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors"><Pencil size={12} /> ערוך תמלול ידנית</button>
+            <button onClick={handleAutoTranscribe} disabled={isTranscribing || !mediaFile} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors disabled:opacity-50"><RefreshCw size={12} /> תמלל מחדש</button>
+            {transcribedAt && <span className="flex items-center gap-1 text-[10px] text-text-muted"><Clock size={10} /> תומלל {timeAgo(transcribedAt)}</span>}
           </div>
         )}
 
-        {/* Manual input fallback (shown by link click) */}
         {showManualInput && transcript.length > 0 && (
           <div className="space-y-2 border-t border-white/[0.06] pt-4">
             <textarea value={manualText} onChange={(e) => setManualText(e.target.value)} placeholder="הקלד או הדבק תמלול כאן..." className="w-full h-24 px-3 py-2 bg-bg-card rounded-xl border border-white/[0.06] text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-purple/30 resize-none leading-relaxed" />
@@ -526,7 +459,11 @@ export default function TranscriptPanel() {
         )}
 
         {transcript.length === 0 && !showApiPrompt && !showTranscribeButton && !isTranscribing && (
-          <div className="text-center py-8 text-text-muted text-sm">אין תמלול זמין</div>
+          <div className="text-center py-8 space-y-3">
+            <FileText size={32} className="mx-auto text-text-muted opacity-30" />
+            <p className="text-text-muted text-sm">אין תמלול זמין</p>
+            <p className="text-text-muted text-xs">העלה קובץ מדיה ותמלל אותו</p>
+          </div>
         )}
       </div>
     </div>

@@ -67,35 +67,11 @@ export default function EditorModals() {
       </Modal>
 
       <Modal isOpen={activeModal === 'silence'} onClose={closeModal} title="קצר שתיקות">
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm text-text-muted block mb-2">משך שתיקה מקסימלי (שניות)</label>
-            <input type="range" min="0.1" max="2" step="0.1" defaultValue={0.5} className="w-full accent-accent-purple" />
-            <div className="flex justify-between text-xs text-text-muted mt-1"><span>0.1</span><span>2.0</span></div>
-          </div>
-          <div className="p-4 bg-accent-purple/5 border border-accent-purple/10 rounded-xl text-sm text-center">
-            <p>נמצאו <span className="text-accent-purple font-bold">23</span> פערים</p>
-            <p className="text-text-muted mt-1">חיסכון: 0:45</p>
-          </div>
-          <AIActionButton label="קצר שתיקות" message="שתיקות קוצרו בהצלחה!" />
-        </div>
+        <SilenceContent />
       </Modal>
 
       <Modal isOpen={activeModal === 'chapters'} onClose={closeModal} title="פרקים אוטומטיים" size="md">
-        <div className="space-y-3">
-          {[
-            { time: '0:00', title: 'פתיחה והקדמה' },
-            { time: '0:35', title: 'מהי עריכה מבוססת טקסט?' },
-            { time: '1:15', title: 'יתרונות הטכנולוגיה' },
-            { time: '2:10', title: 'סיכום וסגירה' },
-          ].map((chapter, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
-              <span className="text-xs text-text-muted font-mono w-10">{chapter.time}</span>
-              <input defaultValue={chapter.title} className="flex-1 bg-transparent text-sm text-text-primary focus:outline-none border-b border-transparent focus:border-accent-purple/30 transition-colors" />
-            </div>
-          ))}
-          <AIActionButton label="שמור פרקים" message="פרקים נוספו בהצלחה!" />
-        </div>
+        <ChaptersContent />
       </Modal>
 
       <Modal isOpen={activeModal === 'eyeContact'} onClose={closeModal} title="קשר עין">
@@ -193,21 +169,186 @@ function ToggleOption({ label, defaultOn = false }: { label: string; defaultOn?:
 }
 
 function RetakesContent() {
-  const { isProcessing, run } = useAIAction()
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [retakes, setRetakes] = useState<Array<{ title: string; range: string; startTime: number; endTime: number }>>([])
+  const [error, setError] = useState<string | null>(null)
+  const transcript = useEditorStore((s) => s.transcript)
+  const { addToast, closeModal } = useUIStore()
+
+  // Detect retakes from transcript (find similar consecutive segments)
+  useState(() => {
+    const detected: Array<{ title: string; range: string; startTime: number; endTime: number }> = []
+    for (let i = 1; i < transcript.length; i++) {
+      const prevText = transcript[i - 1].words.map((w) => w.text).join(' ')
+      const currText = transcript[i].words.map((w) => w.text).join(' ')
+      if (prevText && currText && prevText.length > 10) {
+        const overlap = prevText.split(' ').filter((w) => currText.includes(w)).length
+        const ratio = overlap / Math.max(prevText.split(' ').length, 1)
+        if (ratio > 0.5) {
+          const start = transcript[i].words[0]?.start ?? 0
+          const end = transcript[i].words[transcript[i].words.length - 1]?.end ?? 0
+          const fmtS = `${Math.floor(start / 60)}:${Math.floor(start % 60).toString().padStart(2, '0')}`
+          const fmtE = `${Math.floor(end / 60)}:${Math.floor(end % 60).toString().padStart(2, '0')}`
+          detected.push({ title: `חזרה #${detected.length + 1}`, range: `${fmtS}-${fmtE}`, startTime: start, endTime: end })
+        }
+      }
+    }
+    setRetakes(detected)
+  })
+
+  if (transcript.length === 0) {
+    return (
+      <div className="py-8 text-center text-text-muted text-sm">
+        <p>אין תמלול זמין. תמלל קובץ כדי לזהות חזרות.</p>
+      </div>
+    )
+  }
+
+  if (retakes.length === 0) {
+    return (
+      <div className="py-8 text-center text-text-muted text-sm">
+        <p>לא נמצאו חזרות בתמלול.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-3">
-      {['משפט חוזר #1 (0:23-0:28)', 'משפט חוזר #2 (1:05-1:12)', 'משפט חוזר #3 (2:01-2:08)'].map((retake, i) => (
+      {retakes.map((retake, i) => (
         <div key={i} className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
           <div className="flex items-center gap-2">
             <button className="p-1.5 bg-white/[0.06] rounded-lg hover:bg-white/[0.1] transition-colors text-text-secondary"><Play size={12} /></button>
-            <span className="text-sm text-text-primary">{retake}</span>
+            <span className="text-sm text-text-primary">{retake.title} ({retake.range})</span>
           </div>
           <button className="px-3 py-1 bg-accent-purple/10 hover:bg-accent-purple/20 text-accent-purple rounded-lg text-xs transition-colors">שמור את זה</button>
         </div>
       ))}
-      <button onClick={() => run('חזרות הוסרו בהצלחה!')} disabled={isProcessing} className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">
-        {isProcessing ? <><Loader2 size={16} className="animate-spin" /> מעבד...</> : 'הסר חזרות'}
-      </button>
+      <AIActionButton label="הסר חזרות" message="חזרות הוסרו בהצלחה!" />
+    </div>
+  )
+}
+
+function ChaptersContent() {
+  const [chapters, setChapters] = useState<Array<{ title: string; startTime: number }>>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const transcript = useEditorStore((s) => s.transcript)
+  const { addToast } = useUIStore()
+
+  const handleGenerate = async () => {
+    const text = transcript.flatMap((s) => s.words).map((w) => w.text).join(' ')
+    if (!text) {
+      addToast('אין תמלול זמין ליצירת פרקים', 'warning')
+      return
+    }
+    setIsLoading(true)
+    try {
+      const segments = transcript.map((s, i) => ({
+        id: i,
+        text: s.words.map((w) => w.text).join(' '),
+        start: s.words[0]?.start ?? 0,
+        end: s.words[s.words.length - 1]?.end ?? 0,
+      }))
+      const result = await api.chapters(text, segments)
+      const chapArr = Array.isArray(result) ? result : result.chapters || []
+      setChapters(chapArr.map((c: any) => ({
+        title: c.title || '',
+        startTime: c.startTime ?? 0,
+      })))
+    } catch {
+      addToast('שגיאה ביצירת פרקים. נסה שוב.', 'error')
+    }
+    setIsLoading(false)
+  }
+
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
+
+  if (transcript.length === 0) {
+    return (
+      <div className="py-8 text-center text-text-muted text-sm">
+        <p>אין תמלול זמין. תמלל קובץ כדי ליצור פרקים.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {chapters.length === 0 && !isLoading && (
+        <div className="py-4 text-center text-text-muted text-sm">
+          <p>לחץ ליצירת פרקים אוטומטיים מהתמלול</p>
+        </div>
+      )}
+      {isLoading && (
+        <div className="py-8 text-center">
+          <Loader2 size={24} className="mx-auto text-accent-purple animate-spin" />
+          <p className="text-sm text-text-muted mt-2">מייצר פרקים...</p>
+        </div>
+      )}
+      {chapters.map((chapter, i) => (
+        <div key={i} className="flex items-center gap-3 p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
+          <span className="text-xs text-text-muted font-mono w-10">{fmtTime(chapter.startTime)}</span>
+          <input
+            value={chapter.title}
+            onChange={(e) => {
+              const updated = [...chapters]
+              updated[i] = { ...updated[i], title: e.target.value }
+              setChapters(updated)
+            }}
+            className="flex-1 bg-transparent text-sm text-text-primary focus:outline-none border-b border-transparent focus:border-accent-purple/30 transition-colors"
+          />
+        </div>
+      ))}
+      {chapters.length === 0 ? (
+        <button onClick={handleGenerate} disabled={isLoading} className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">
+          {isLoading ? <><Loader2 size={16} className="animate-spin" /> מייצר...</> : 'צור פרקים'}
+        </button>
+      ) : (
+        <AIActionButton label="שמור פרקים" message="פרקים נוספו בהצלחה!" />
+      )}
+    </div>
+  )
+}
+
+function SilenceContent() {
+  const [maxSilence, setMaxSilence] = useState(0.5)
+  const transcript = useEditorStore((s) => s.transcript)
+
+  // Count silence gaps from transcript data
+  const gaps = (() => {
+    const allWords = transcript.flatMap((s) => s.words)
+    let count = 0
+    let totalSaved = 0
+    for (let i = 1; i < allWords.length; i++) {
+      const gap = allWords[i].start - allWords[i - 1].end
+      if (gap > maxSilence) {
+        count++
+        totalSaved += gap - maxSilence
+      }
+    }
+    return { count, totalSaved }
+  })()
+
+  if (transcript.length === 0) {
+    return (
+      <div className="py-8 text-center text-text-muted text-sm">
+        <p>אין תמלול זמין. תמלל קובץ כדי לזהות שתיקות.</p>
+      </div>
+    )
+  }
+
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="text-sm text-text-muted block mb-2">משך שתיקה מקסימלי ({maxSilence.toFixed(1)} שניות)</label>
+        <input type="range" min="0.1" max="2" step="0.1" value={maxSilence} onChange={(e) => setMaxSilence(Number(e.target.value))} className="w-full accent-accent-purple" />
+        <div className="flex justify-between text-xs text-text-muted mt-1"><span>0.1</span><span>2.0</span></div>
+      </div>
+      <div className="p-4 bg-accent-purple/5 border border-accent-purple/10 rounded-xl text-sm text-center">
+        <p>נמצאו <span className="text-accent-purple font-bold">{gaps.count}</span> פערים</p>
+        <p className="text-text-muted mt-1">חיסכון: {fmtTime(gaps.totalSaved)}</p>
+      </div>
+      <AIActionButton label="קצר שתיקות" message="שתיקות קוצרו בהצלחה!" />
     </div>
   )
 }
@@ -299,7 +440,8 @@ function ReframeContent() {
 
 function ShareContent() {
   const { addToast } = useUIStore()
-  const shareUrl = 'https://studio-ai.app/v/podcast-47'
+  const projectId = useEditorStore((s) => s.projectId)
+  const shareUrl = projectId ? `${window.location.origin}/editor/${projectId}` : ''
   const copyLink = () => {
     navigator.clipboard.writeText(shareUrl).catch(() => {})
     addToast('הקישור הועתק!', 'success')
@@ -574,9 +716,9 @@ function PublishContent({ defaultTab = 'web' }: { defaultTab?: 'web' | 'export' 
       {tab === 'youtube' && (
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-red-500 mb-2"><span className="text-xl">▶️</span><span className="font-bold">YouTube</span></div>
-          <div><label className="text-xs text-text-muted block mb-1.5">כותרת</label><input defaultValue="פודקאסט שבועי #47 - AI ויצירת תוכן" className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary" /></div>
-          <div><label className="text-xs text-text-muted block mb-1.5">תיאור</label><textarea defaultValue="בפרק הזה אנחנו מדברים על AI ויצירת תוכן..." className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary h-20 resize-none" /></div>
-          <div><label className="text-xs text-text-muted block mb-1.5">תגיות</label><input defaultValue="AI, פודקאסט, טכנולוגיה, יצירת תוכן" className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary" /></div>
+          <div><label className="text-xs text-text-muted block mb-1.5">כותרת</label><input placeholder="כותרת הסרטון..." className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary placeholder-text-muted" /></div>
+          <div><label className="text-xs text-text-muted block mb-1.5">תיאור</label><textarea placeholder="תיאור הסרטון..." className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary placeholder-text-muted h-20 resize-none" /></div>
+          <div><label className="text-xs text-text-muted block mb-1.5">תגיות</label><input placeholder="תגיות מופרדות בפסיקים..." className="w-full px-3 py-2 bg-white/[0.04] rounded-lg border border-white/[0.06] text-sm text-text-primary placeholder-text-muted" /></div>
           <button onClick={() => addToast('הסרטון פורסם ליוטיוב!', 'success')} className="w-full py-2.5 bg-red-600 hover:bg-red-700 rounded-xl text-sm font-medium transition-colors">פרסם ליוטיוב</button>
         </div>
       )}
@@ -680,26 +822,75 @@ function GenerateContent() {
 
 function ClipsContent() {
   const { addToast } = useUIStore()
-  const clips = [
-    { title: 'AI ועריכת טקסט', range: '00:15-00:45', stars: 4, duration: '0:30' },
-    { title: 'מילות מילוי אוטומטיות', range: '00:45-01:20', stars: 5, duration: '0:35' },
-    { title: 'השוואה לעריכה מסורתית', range: '01:20-01:50', stars: 3, duration: '0:30' },
-    { title: 'עתיד יצירת התוכן', range: '02:00-02:35', stars: 4, duration: '0:35' },
-  ]
+  const transcript = useEditorStore((s) => s.transcript)
+  const duration = useEditorStore((s) => s.duration)
+  const [clips, setClips] = useState<Array<{ title: string; startTime: number; endTime: number; viralScore: number; reason?: string }>>([])
+  const [isLoading, setIsLoading] = useState(false)
+
+  const handleGenerate = async () => {
+    const text = transcript.flatMap((s) => s.words).map((w) => w.text).join(' ')
+    if (!text) {
+      addToast('אין תמלול זמין ליצירת קליפים', 'warning')
+      return
+    }
+    setIsLoading(true)
+    try {
+      const segments = transcript.map((s, i) => ({
+        id: i,
+        text: s.words.map((w) => w.text).join(' '),
+        start: s.words[0]?.start ?? 0,
+        end: s.words[s.words.length - 1]?.end ?? 0,
+      }))
+      const result = await api.suggestClips(text, segments, duration)
+      const clipArr = Array.isArray(result) ? result : result.clips || []
+      setClips(clipArr)
+    } catch {
+      addToast('שגיאה ביצירת קליפים. נסה שוב.', 'error')
+    }
+    setIsLoading(false)
+  }
+
+  const fmtTime = (s: number) => {
+    const m = Math.floor(s / 60).toString().padStart(2, '0')
+    const sec = Math.floor(s % 60).toString().padStart(2, '0')
+    return `${m}:${sec}`
+  }
+
+  if (transcript.length === 0) {
+    return (
+      <div className="py-8 text-center text-text-muted text-sm">
+        <p>אין תמלול זמין. תמלל קובץ כדי ליצור קליפים.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
+      {clips.length === 0 && !isLoading && (
+        <div className="py-4 text-center text-text-muted text-sm">
+          <p>לחץ ליצירת קליפים מהתמלול באמצעות AI</p>
+        </div>
+      )}
+      {isLoading && (
+        <div className="py-8 text-center">
+          <Loader2 size={24} className="mx-auto text-accent-purple animate-spin" />
+          <p className="text-sm text-text-muted mt-2">מייצר קליפים...</p>
+        </div>
+      )}
       {clips.map((clip, i) => (
         <div key={i} className="p-4 bg-white/[0.04] rounded-xl border border-white/[0.06] space-y-3">
           <div className="flex items-start justify-between">
             <div>
               <h4 className="font-medium text-sm text-text-primary">{clip.title}</h4>
               <div className="flex items-center gap-2 text-xs text-text-muted mt-1">
-                <span className="font-mono">{clip.range}</span><span>({clip.duration})</span>
+                <span className="font-mono">{fmtTime(clip.startTime)}-{fmtTime(clip.endTime)}</span>
+                <span>({fmtTime(clip.endTime - clip.startTime)})</span>
               </div>
+              {clip.reason && <p className="text-xs text-text-muted mt-1">{clip.reason}</p>}
             </div>
             <div className="flex">
               {Array.from({ length: 5 }).map((_, si) => (
-                <Star key={si} size={12} className={si < clip.stars ? 'text-warning fill-warning' : 'text-text-muted/30'} />
+                <Star key={si} size={12} className={si < (clip.viralScore || 0) ? 'text-warning fill-warning' : 'text-text-muted/30'} />
               ))}
             </div>
           </div>
@@ -708,9 +899,15 @@ function ClipsContent() {
           </button>
         </div>
       ))}
-      <button onClick={() => addToast('כל הקליפים ייוצאו!', 'success')} className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">
-        <Download size={16} /> ייצא הכל
-      </button>
+      {clips.length === 0 ? (
+        <button onClick={handleGenerate} disabled={isLoading} className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-60 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">
+          {isLoading ? <><Loader2 size={16} className="animate-spin" /> מייצר...</> : <><Film size={16} /> צור קליפים</>}
+        </button>
+      ) : (
+        <button onClick={() => addToast('כל הקליפים ייוצאו!', 'success')} className="w-full py-2.5 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent-purple/20">
+          <Download size={16} /> ייצא הכל
+        </button>
+      )}
     </div>
   )
 }

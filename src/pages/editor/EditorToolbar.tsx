@@ -78,13 +78,20 @@ function Dropdown({ label, emoji, items, accentColor }: { label: string; emoji: 
 }
 
 export default function EditorToolbar() {
-  const { projectName, setProjectName, undoLastEdit, editHistory } = useEditorStore()
+  const { projectName, setProjectName, undoLastEdit, redoLastEdit, editHistory, redoHistory } = useEditorStore()
   const { openModal, addToast } = useUIStore()
 
   const handleUndo = () => {
     const desc = undoLastEdit()
     if (desc) {
       addToast(`בוטל: ${desc}`, 'info')
+    }
+  }
+
+  const handleRedo = () => {
+    const desc = redoLastEdit()
+    if (desc) {
+      addToast(`שוחזר: ${desc}`, 'info')
     }
   }
 
@@ -102,7 +109,12 @@ export default function EditorToolbar() {
         >
           <Undo2 size={15} />
         </button>
-        <button className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary opacity-30" title="⌘⇧Z">
+        <button
+          onClick={handleRedo}
+          disabled={redoHistory.length === 0}
+          className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary disabled:opacity-30"
+          title="⌘⇧Z"
+        >
           <Redo2 size={15} />
         </button>
       </div>

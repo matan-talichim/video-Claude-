@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Subtitles, Music } from 'lucide-react'
-import { useEditorStore } from '../../stores/editorStore'
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Subtitles, Music, Film } from 'lucide-react'
+import { useEditorStore, CaptionStyle } from '../../stores/editorStore'
 
 const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 export default function VideoPanel() {
   const {
     currentTime, duration, isPlaying, volume, playbackSpeed,
-    mediaBlobUrl, mediaType, isDemo, showCaptions, transcript,
+    mediaBlobUrl, mediaType, showCaptions, transcript,
     togglePlay, setPlaybackSpeed, setVolume, setCurrentTime,
     setDuration, setIsPlaying, setShowCaptions,
   } = useEditorStore()
@@ -131,6 +131,11 @@ export default function VideoPanel() {
     return () => cancelAnimationFrame(animFrameRef.current)
   }, [mediaType, mediaBlobUrl, currentTime, duration])
 
+  const bRollItems = useEditorStore((s) => s.bRollItems)
+
+  // Find active B-Roll item
+  const activeBRoll = bRollItems.find(b => currentTime >= b.startTime && currentTime < b.startTime + b.duration)
+
   const handleSpeedCycle = () => {
     const nextIdx = (speedIdx + 1) % speeds.length
     setSpeedIdx(nextIdx)
@@ -163,12 +168,23 @@ export default function VideoPanel() {
     }
   }
 
-  // Find current caption text
-  const captionText = showCaptions ? transcript.flatMap(s => s.words)
-    .filter(w => currentTime >= w.start - 0.3 && currentTime < w.end + 0.3)
-    .map(w => w.text).join(' ') : ''
+  const { captions, captionStyle } = useEditorStore()
+
+  // Find current caption from captions array or fallback to transcript words
+  const currentCaption = showCaptions ? (() => {
+    // Try captions array first
+    const cap = captions.find(c => currentTime >= c.startTime - 0.1 && currentTime < c.endTime + 0.1)
+    if (cap) return { text: cap.text, words: cap.words, style: cap.style }
+    // Fallback: words from transcript
+    const words = transcript.flatMap(s => s.words)
+      .filter(w => currentTime >= w.start - 0.3 && currentTime < w.end + 0.3)
+    if (words.length === 0) return null
+    return { text: words.map(w => w.text).join(' '), words: words.map(w => ({ text: w.text, start: w.start, end: w.end })), style: captionStyle }
+  })() : null
 
   const hasMedia = !!mediaBlobUrl
+
+  const captionPositionClass = captionStyle.position === 'top' ? 'top-4' : captionStyle.position === 'center' ? 'top-1/2 -translate-y-1/2' : 'bottom-16'
 
   return (
     <div
@@ -208,28 +224,25 @@ export default function VideoPanel() {
           </>
         )}
 
-        {/* Demo/No media placeholder */}
-        {!hasMedia && (
-          <div className="w-full h-full bg-gradient-to-br from-bg-panel to-bg-deepest rounded-lg flex flex-col items-center justify-center">
-            {isDemo ? (
-              <>
-                <div className="text-4xl mb-2 opacity-30">🎬</div>
-                <div className="text-text-muted text-sm">פרויקט דמו</div>
-              </>
-            ) : (
-              <>
-                <div className="text-text-muted text-sm">אין מדיה טעונה</div>
-                <div className="text-text-muted text-xs mt-1">חבר API ליצירת קריינות</div>
-              </>
-            )}
+        {/* B-Roll overlay */}
+        {activeBRoll && (
+          <div className="absolute inset-0 z-10">
+            <img src={activeBRoll.imageUrl} alt="B-Roll" className="w-full h-full object-cover" />
           </div>
         )}
 
-        {/* Captions overlay */}
-        {showCaptions && captionText && (
-          <div className="absolute bottom-16 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/70 rounded-lg max-w-[80%]">
-            <p className="text-white text-sm text-center" dir="rtl">{captionText}</p>
+        {/* No media placeholder */}
+        {!hasMedia && (
+          <div className="w-full h-full bg-gradient-to-br from-bg-panel to-bg-deepest rounded-lg flex flex-col items-center justify-center">
+            <Film size={48} className="text-text-muted opacity-20 mb-3" />
+            <div className="text-text-muted text-sm">אין מדיה טעונה</div>
+            <div className="text-text-muted text-xs mt-1">העלה קובץ וידאו או אודיו להתחלה</div>
           </div>
+        )}
+
+        {/* Styled captions overlay */}
+        {showCaptions && currentCaption && (
+          <CaptionOverlay caption={currentCaption} style={currentCaption.style || captionStyle} currentTime={currentTime} />
         )}
 
         {/* Center play button overlay */}
@@ -323,6 +336,83 @@ export default function VideoPanel() {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// Styled Caption Overlay with animations
+function CaptionOverlay({ caption, style, currentTime }: {
+  caption: { text: string; words?: { text: string; start: number; end: number }[] }
+  style: CaptionStyle
+  currentTime: number
+}) {
+  const posClass = style.position === 'top' ? 'top-4' : style.position === 'center' ? 'top-1/2 -translate-y-1/2' : 'bottom-16'
+  const alignClass = style.alignment === 'right' ? 'text-right' : style.alignment === 'left' ? 'text-left' : 'text-center'
+
+  const bgRgba = (() => {
+    const hex = style.bgColor || '#000000'
+    const r = parseInt(hex.slice(1, 3), 16)
+    const g = parseInt(hex.slice(3, 5), 16)
+    const b = parseInt(hex.slice(5, 7), 16)
+    return `rgba(${r},${g},${b},${style.bgOpacity})`
+  })()
+
+  const textStyle: React.CSSProperties = {
+    color: style.textColor,
+    fontSize: `${style.fontSize}px`,
+    fontFamily: style.fontFamily || 'Heebo',
+    fontWeight: style.bold ? 'bold' : 'normal',
+    fontStyle: style.italic ? 'italic' : 'normal',
+    textShadow: style.outline ? `1px 1px 2px ${style.outlineColor}, -1px -1px 2px ${style.outlineColor}, 1px -1px 2px ${style.outlineColor}, -1px 1px 2px ${style.outlineColor}` : undefined,
+  }
+
+  const animClass = (() => {
+    switch (style.animation) {
+      case 'fade': return 'animate-caption-fade'
+      case 'slideUp': return 'animate-caption-slide-up'
+      case 'bounce': return 'animate-caption-bounce'
+      case 'zoom': return 'animate-caption-zoom'
+      default: return ''
+    }
+  })()
+
+  // Karaoke / word-by-word rendering
+  if ((style.animation === 'wordByWord' || style.preset === 'karaoke') && caption.words && caption.words.length > 0) {
+    return (
+      <div className={`absolute ${posClass} left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg max-w-[80%] z-20`} style={{ backgroundColor: bgRgba }} dir="rtl">
+        <p className={alignClass} style={{ ...textStyle, fontSize: `${style.fontSize}px` }}>
+          {caption.words.map((w, i) => {
+            const isActive = currentTime >= w.start - 0.05 && currentTime < w.end + 0.1
+            return (
+              <span key={i} style={{
+                ...textStyle,
+                color: isActive ? '#FBBF24' : style.textColor,
+                transition: 'color 0.15s',
+              }}>
+                {w.text}{' '}
+              </span>
+            )
+          })}
+        </p>
+      </div>
+    )
+  }
+
+  // Typewriter rendering
+  if (style.animation === 'typewriter' && caption.words && caption.words.length > 0) {
+    const visibleWords = caption.words.filter(w => currentTime >= w.start - 0.05)
+    return (
+      <div className={`absolute ${posClass} left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg max-w-[80%] z-20`} style={{ backgroundColor: bgRgba }} dir="rtl">
+        <p className={alignClass} style={textStyle}>
+          {visibleWords.map(w => w.text).join(' ')}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`absolute ${posClass} left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg max-w-[80%] z-20 ${animClass}`} style={{ backgroundColor: bgRgba }} dir="rtl">
+      <p className={alignClass} style={textStyle}>{caption.text}</p>
     </div>
   )
 }
