@@ -1,10 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Bot, Send, Volume2, Scissors, Subtitles, Languages, Wand2, Film, ImageMinus, Eye, X, Paperclip, Mic, Copy, ChevronDown, ChevronUp, AlertCircle, ExternalLink } from 'lucide-react'
+import { Bot, Send, Volume2, Scissors, Subtitles, Languages, Wand2, Film, Eye, X, Paperclip, Mic, Copy, ChevronDown, ChevronUp, AlertCircle, ExternalLink, Image, Undo2, ThumbsUp } from 'lucide-react'
 import { useAIStore } from '../../stores/aiStore'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUsageStore } from '../../stores/usageStore'
 import { useApiStatusStore } from '../../stores/apiStatusStore'
 import { api, ApiError } from '../../services/api'
+import { executeAiActions, formatActionResults } from '../../services/aiActionExecutor'
+import type { AIAction } from '../../services/aiActionExecutor'
 
 const quickActions = [
   { label: 'נקה אודיו', icon: Volume2 },
@@ -13,13 +15,14 @@ const quickActions = [
   { label: 'תרגם', icon: Languages },
   { label: 'עצב', icon: Wand2 },
   { label: 'קליפים', icon: Film },
-  { label: 'הסר רקע', icon: ImageMinus },
+  { label: 'B-Roll', icon: Image },
   { label: 'שפר מבט', icon: Eye },
 ]
 
 const smartSuggestions = [
   { emoji: '✂️', label: 'הסר מילות מילוי' },
   { emoji: '📝', label: 'הוסף כתוביות' },
+  { emoji: '🖼️', label: 'הוסף B-Roll לכל הסרטון' },
   { emoji: '💡', label: 'מה אתה ממליץ?' },
 ]
 
@@ -36,6 +39,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
   const apiConnected = useApiStatusStore((s) => s.openai.connected)
   const apiChecked = useApiStatusStore((s) => s.checked)
   const [showQuickActions, setShowQuickActions] = useState(false)
+  const [lastBatchActions, setLastBatchActions] = useState<AIAction[] | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -48,6 +52,40 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       .map((w) => w.text)
       .join(' ')
   }, [editor.transcript])
+
+  const getEditorContext = useCallback(() => {
+    return {
+      projectName: editor.projectName,
+      duration: editor.duration,
+      transcript: getTranscriptText(),
+      segments: editor.transcript,
+      speakers: [...new Set(editor.transcript.map(s => s.speaker))],
+      brollItems: editor.bRollItems.map(b => ({
+        id: b.id,
+        prompt: b.prompt,
+        start: b.startTime,
+        end: b.startTime + b.duration,
+        position: b.displayMode,
+      })),
+      captions: { enabled: editor.showCaptions, style: editor.captionStyle.preset, language: 'he' },
+      editPoints: editor.deletedRegions,
+      deletedDuration: editor.deletedRegions.reduce((s, r) => s + (r.endTime - r.startTime), 0),
+      fillerWordsCount: editor.transcript.reduce((s, seg) => s + seg.words.filter(w => w.isFiller).length, 0),
+      hasMusic: false,
+      exportFormat: null,
+    }
+  }, [editor, getTranscriptText])
+
+  // Proactive suggestions based on current state
+  const getProactiveSuggestions = useCallback(() => {
+    const suggestions: Array<{ emoji: string; label: string; action: string }> = []
+    const fillerCount = editor.transcript.reduce((s, seg) => s + seg.words.filter(w => w.isFiller).length, 0)
+    if (fillerCount > 0) suggestions.push({ emoji: '✂️', label: `יש ${fillerCount} מילות מילוי. להסיר?`, action: 'הסר מילות מילוי' })
+    if (!editor.showCaptions && editor.transcript.length > 0) suggestions.push({ emoji: '📝', label: 'אין כתוביות. להוסיף?', action: 'הוסף כתוביות מודרניות' })
+    if (editor.bRollItems.length === 0 && editor.transcript.length > 0) suggestions.push({ emoji: '🖼️', label: 'רוצה שאוסיף B-Roll מתאים?', action: 'הוסף B-Roll לכל הסרטון' })
+    if (editor.duration > 300) suggestions.push({ emoji: '⏱️', label: `הסרטון ארוך (${formatSeconds(editor.duration)}). ליצור קליפים?`, action: 'פצל את הסרטון לקליפים' })
+    return suggestions
+  }, [editor])
 
   // Local fallback commands (when no API)
   const processLocalCommand = useCallback((input: string, processingId: string) => {
@@ -66,10 +104,65 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
 
     // Add captions
     if (input.includes('כתוביות') || input.includes('הוסף כתוביות')) {
+      if (input.includes('מודרני') || input.includes('מודרניות')) {
+        editor.setCaptionStyle({ preset: 'modern' })
+      } else if (input.includes('קריוקי')) {
+        editor.setCaptionStyle({ preset: 'karaoke' })
+      } else if (input.includes('מינימלי') || input.includes('מינימליסטי')) {
+        editor.setCaptionStyle({ preset: 'minimal' })
+      }
+      editor.generateCaptionsFromTranscript()
       editor.setShowCaptions(true)
       const lineCount = editor.transcript.reduce((s, seg) => s + seg.words.length, 0)
       updateMessage(processingId,
         `✅ נוספו כתוביות\n\nנוספו כתוביות (${lineCount} מילים) המסונכרנות עם הסרטון.`)
+      return
+    }
+
+    // Change caption style
+    if (input.includes('שנה') && input.includes('כתוביות') && input.includes('סגנון')) {
+      if (input.includes('קריוקי')) {
+        editor.setCaptionStyle({ preset: 'karaoke' })
+        updateMessage(processingId, '✅ סגנון הכתוביות שונה לקריוקי')
+      } else if (input.includes('מודרני')) {
+        editor.setCaptionStyle({ preset: 'modern' })
+        updateMessage(processingId, '✅ סגנון הכתוביות שונה למודרני')
+      } else {
+        updateMessage(processingId, 'ציין סגנון: מודרני, קריוקי, מינימלי, קלאסי')
+      }
+      return
+    }
+
+    // Caption color
+    if ((input.includes('צבע') || input.includes('שנה')) && input.includes('כתוביות')) {
+      const colorMap: Record<string, string> = { 'צהוב': '#FFFF00', 'לבן': '#FFFFFF', 'אדום': '#FF0000', 'ירוק': '#00FF00', 'כחול': '#0000FF' }
+      for (const [name, hex] of Object.entries(colorMap)) {
+        if (input.includes(name)) {
+          editor.setCaptionStyle({ textColor: hex })
+          updateMessage(processingId, `✅ צבע הכתוביות שונה ל${name}`)
+          return
+        }
+      }
+      updateMessage(processingId, 'ציין צבע: צהוב, לבן, אדום, ירוק, כחול')
+      return
+    }
+
+    // Caption size
+    if (input.includes('הגדל') && input.includes('כתוביות')) {
+      editor.setCaptionStyle({ fontSize: editor.captionStyle.fontSize + 8 })
+      updateMessage(processingId, `✅ גודל הכתוביות הוגדל ל-${editor.captionStyle.fontSize + 8}px`)
+      return
+    }
+    if (input.includes('הקטן') && input.includes('כתוביות')) {
+      editor.setCaptionStyle({ fontSize: Math.max(12, editor.captionStyle.fontSize - 8) })
+      updateMessage(processingId, `✅ גודל הכתוביות הוקטן ל-${Math.max(12, editor.captionStyle.fontSize - 8)}px`)
+      return
+    }
+
+    // Delete all B-Roll
+    if (input.includes('מחק') && input.includes('B-Roll') || (input.includes('מחק') && input.includes('בירול'))) {
+      editor.removeAllBRollItems()
+      updateMessage(processingId, '✅ הוסרו כל תמונות ה-B-Roll')
       return
     }
 
@@ -94,12 +187,37 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       return
     }
 
+    // Cut/trim
+    if (input.includes('חתוך') || input.includes('מחק קטע')) {
+      const match = input.match(/(\d{1,2}):(\d{2}).*?(\d{1,2}):(\d{2})/)
+      if (match) {
+        const start = parseInt(match[1]) * 60 + parseInt(match[2])
+        const end = parseInt(match[3]) * 60 + parseInt(match[4])
+        editor.removeTimeRange(start, end)
+        updateMessage(processingId, `✅ נחתך קטע של ${end - start} שניות (${match[1]}:${match[2]}-${match[3]}:${match[4]})`)
+        return
+      }
+    }
+
+    // Mute
+    if (input.includes('השתק')) {
+      const match = input.match(/(\d{1,2}):(\d{2}).*?(\d{1,2}):(\d{2})/)
+      if (match) {
+        const start = parseInt(match[1]) * 60 + parseInt(match[2])
+        const end = parseInt(match[3]) * 60 + parseInt(match[4])
+        editor.muteTimeRange(start, end)
+        updateMessage(processingId, `✅ האודיו הושתק בין ${match[1]}:${match[2]}-${match[3]}:${match[4]}`)
+        return
+      }
+    }
+
     // Recommendations (local)
     if (input.includes('ממליץ') || input.includes('מה לעשות')) {
       const suggestions: string[] = []
       const fillerCount = editor.transcript.reduce((s, seg) => s + seg.words.filter(w => w.isFiller).length, 0)
       if (fillerCount > 0) suggestions.push(`✂️ יש ${fillerCount} מילות מילוי. רוצה שאסיר?`)
       if (!editor.showCaptions) suggestions.push('📝 אין כתוביות. רוצה שאוסיף?')
+      if (editor.bRollItems.length === 0) suggestions.push('🖼️ אין B-Roll. רוצה שאוסיף תמונות מתאימות?')
       if (editor.duration > 300) suggestions.push(`⏱️ הסרטון ארוך (${formatSeconds(editor.duration)}). רוצה שאצור קליפים?`)
       if (suggestions.length === 0) suggestions.push('✅ הכל נראה טוב! הסרטון מוכן.')
       updateMessage(processingId, `💡 המלצות:\n\n${suggestions.join('\n')}`)
@@ -112,7 +230,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       const wordCount = editor.transcript.reduce((s, seg) => s + seg.words.length, 0)
       const fillerCount = editor.transcript.reduce((s, seg) => s + seg.words.filter(w => w.isFiller).length, 0)
       updateMessage(processingId,
-        `📊 סיכום הפרויקט:\n\n• ${speakers.length} דוברים: ${speakers.join(', ')}\n• ${wordCount} מילים\n• ${fillerCount} מילות מילוי\n• משך: ${formatSeconds(editor.duration)}`)
+        `📊 סיכום הפרויקט:\n\n• ${speakers.length} דוברים: ${speakers.join(', ')}\n• ${wordCount} מילים\n• ${fillerCount} מילות מילוי\n• ${editor.bRollItems.length} פריטי B-Roll\n• כתוביות: ${editor.showCaptions ? 'פעילות' : 'כבויות'}\n• משך: ${formatSeconds(editor.duration)}`)
       return
     }
 
@@ -158,7 +276,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
 
     // Default - no API connected
     updateMessage(processingId,
-      `כדי לקבל תשובות AI חכמות, חבר OpenAI API בהגדרות 🔗\n\nאני יכול לעזור גם בלי API עם:\n• הסר מילות מילוי\n• הוסף כתוביות\n• החלף X ב-Y\n• סיכום / המלצות\n• בטל (undo)`)
+      `כדי לקבל תשובות AI חכמות, חבר OpenAI API בהגדרות 🔗\n\nאני יכול לעזור גם בלי API עם:\n• הסר מילות מילוי\n• הוסף כתוביות / שנה סגנון כתוביות\n• הוסף B-Roll / מחק B-Roll\n• החלף X ב-Y\n• חתוך מ-XX:XX עד XX:XX\n• השתק מ-XX:XX עד XX:XX\n• סיכום / המלצות\n• בטל (undo)`)
   }, [editor, updateMessage])
 
   const processCommand = useCallback(async (text: string) => {
@@ -167,24 +285,26 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     const processingId = addMessage('assistant', '🔄 מעבד...', true)
 
     // Commands that always work locally (no API needed)
-    const localOnlyCommands = ['בטל', 'undo', 'הוסף כתוביות', 'כתוביות']
+    const localOnlyCommands = ['בטל', 'undo', 'הוסף כתוביות', 'כתוביות', 'מחק', 'השתק', 'חתוך']
     const isLocalCommand = localOnlyCommands.some((cmd) => input.includes(cmd) || input === cmd)
     const isFillerRemoval = input.includes('מילות מילוי') || input.includes('הסר מילוי')
     const isReplace = input.includes('החלף')
+    const isCaptionCommand = input.includes('כתוביות') && (input.includes('שנה') || input.includes('הגדל') || input.includes('הקטן') || input.includes('צבע'))
+    const isBrollDelete = (input.includes('מחק') && (input.includes('B-Roll') || input.includes('בירול')))
 
     // Handle locally if it's a local-only command or no API
-    if (isLocalCommand || isReplace) {
+    if (isLocalCommand || isReplace || isCaptionCommand || isBrollDelete) {
       await new Promise(r => setTimeout(r, 400))
       processLocalCommand(input, processingId)
       setIsProcessing(false)
       return
     }
 
-    // Try API if connected
+    // Try enhanced API if connected
     if (apiConnected) {
       try {
-        const transcriptText = getTranscriptText()
-        const result = await api.chat(input, transcriptText, editor.projectName, editor.duration)
+        const context = getEditorContext()
+        const result = await api.enhancedChat(input, context)
 
         // Track usage
         if (result.usage?.totalTokens) {
@@ -193,25 +313,44 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
 
         const response = result.response
 
-        if (response.type === 'action') {
-          // Execute edit action locally
+        // Handle multi-action responses
+        if (response.type === 'action' && response.actions && Array.isArray(response.actions)) {
+          let progressText = response.summary ? `🔄 ${response.summary}\n\n` : '🔄 מבצע פעולות...\n\n'
+          updateMessage(processingId, progressText)
+
+          const actionResults = await executeAiActions(response.actions, (step, total, desc) => {
+            progressText = `${response.summary || 'מבצע פעולות...'}\n\n${desc}\n(${step}/${total})`
+            updateMessage(processingId, progressText)
+          })
+
+          setLastBatchActions(response.actions)
+          const summary = formatActionResults(actionResults)
+          updateMessage(processingId, `✅ ${response.summary || 'הפעולות הושלמו!'}\n\n${summary}`)
+        }
+        // Handle single action (backward compat)
+        else if (response.type === 'action' && response.action) {
           if (response.action === 'remove_filler_words' || isFillerRemoval) {
             const editResult = editor.removeFillerWords()
             const entries = Object.entries(editResult.removed).map(([w, c]) => `${w}: ${c}`).join(' | ')
             updateMessage(processingId,
               `✅ ${response.summary || 'הוסרו מילות מילוי'}\n\n${entries}\n\nסה"כ: ${editResult.totalRemoved} מילים\nנחסכו: ${formatSeconds(editResult.timeSaved)}`)
           } else {
-            updateMessage(processingId,
-              `✅ ${response.summary || 'הפעולה בוצעה'}\n\n${response.stats ? Object.entries(response.stats).map(([k, v]) => `${k}: ${v}`).join('\n') : ''}`)
+            // Execute single action via executor
+            const actionResults = await executeAiActions([{ action: response.action, params: response.params || {} }])
+            const summary = formatActionResults(actionResults)
+            updateMessage(processingId, `✅ ${response.summary || 'הפעולה בוצעה'}\n\n${summary}`)
           }
-        } else if (response.type === 'content') {
+        }
+        else if (response.type === 'content') {
           updateMessage(processingId, `✅ ${response.summary || 'תוכן נוצר'}:\n\n${response.content}`)
-        } else if (response.type === 'analysis') {
+        }
+        else if (response.type === 'analysis') {
           const suggestions = response.suggestions?.join('\n• ') || ''
           updateMessage(processingId, `💡 ${response.summary || 'ניתוח'}:\n\n• ${suggestions}`)
-        } else {
+        }
+        else {
           // Plain text response
-          updateMessage(processingId, response.content || result.rawContent || 'לא התקבלה תשובה.')
+          updateMessage(processingId, response.content || result.rawContent || response.summary || 'לא התקבלה תשובה.')
         }
       } catch (err) {
         const message = err instanceof ApiError ? err.message : 'שגיאה בחיבור לשרת.'
@@ -224,7 +363,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     }
 
     setIsProcessing(false)
-  }, [editor, apiConnected, addMessage, updateMessage, setIsProcessing, getTranscriptText, processLocalCommand, addGptUsage])
+  }, [editor, apiConnected, addMessage, updateMessage, setIsProcessing, getTranscriptText, processLocalCommand, addGptUsage, getEditorContext])
 
   const handleSend = useCallback(() => {
     if (!inputValue.trim()) return
@@ -238,9 +377,25 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     processCommand(label)
   }, [addMessage, processCommand])
 
+  const handleUndoBatch = useCallback(() => {
+    if (!lastBatchActions) return
+    // Undo multiple times for batch actions
+    let undone = 0
+    for (let i = 0; i < lastBatchActions.length; i++) {
+      const desc = editor.undoLastEdit()
+      if (desc) undone++
+    }
+    if (undone > 0) {
+      addMessage('assistant', `↩️ בוטלו ${undone} פעולות`)
+    }
+    setLastBatchActions(null)
+  }, [lastBatchActions, editor, addMessage])
+
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text).catch(() => {})
   }
+
+  const proactiveSuggestions = getProactiveSuggestions()
 
   return (
     <div className="flex flex-col h-full glass rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -279,12 +434,31 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
+      {/* Proactive Suggestions */}
+      {proactiveSuggestions.length > 0 && messages.length === 0 && (
+        <div className="mx-3 mb-1 p-2 rounded-lg bg-accent-purple/5 border border-accent-purple/10">
+          <p className="text-[10px] text-accent-purple font-medium mb-1.5">💡 הצעות לשיפור הסרטון:</p>
+          <div className="space-y-1">
+            {proactiveSuggestions.map((s, i) => (
+              <button key={i} onClick={() => handleSuggestionClick(s.action)}
+                className="w-full flex items-center gap-2 px-2 py-1 rounded bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] text-right transition-all">
+                <span className="text-[10px]">{s.emoji}</span>
+                <span className="text-[10px] text-text-secondary flex-1">{s.label}</span>
+                <span className="text-[9px] px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded">כן</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 && (
           <div className="text-center py-8 text-text-muted text-xs">
             <Bot size={32} className="mx-auto mb-2 opacity-30" />
             <p>שלח פקודה או שאל שאלה</p>
-            <p className="mt-1">נסה: "הסר מילות מילוי" או "מה אתה ממליץ?"</p>
+            <p className="mt-1 text-[10px]">נסה: "הוסף B-Roll לכל הסרטון"</p>
+            <p className="text-[10px]">"ערוך את הסרטון בסגנון מקצועי"</p>
+            <p className="text-[10px]">"הכן 3 קליפים לאינסטגרם"</p>
           </div>
         )}
 
@@ -303,15 +477,30 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
               )}
             </div>
             {!msg.isProcessing && msg.role === 'assistant' && (
-              <button
-                onClick={() => handleCopy(msg.content)}
-                className="absolute top-2 left-2 p-1 rounded bg-white/[0.06] opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
-              >
-                <Copy size={11} />
-              </button>
+              <div className="absolute top-2 left-2 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => handleCopy(msg.content)}
+                  className="p-1 rounded bg-white/[0.06] text-text-muted hover:text-text-primary">
+                  <Copy size={11} />
+                </button>
+              </div>
             )}
           </div>
         ))}
+
+        {/* Undo batch button */}
+        {lastBatchActions && messages.length > 0 && (
+          <div className="flex gap-2 justify-center">
+            <button onClick={handleUndoBatch}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-xs text-text-secondary transition-all">
+              <Undo2 size={12} /> בטל הכל
+            </button>
+            <button onClick={() => setLastBatchActions(null)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 rounded-lg text-xs text-green-400 transition-all">
+              <ThumbsUp size={12} /> מעולה
+            </button>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

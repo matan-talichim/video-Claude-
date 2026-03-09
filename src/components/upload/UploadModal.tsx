@@ -194,7 +194,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
 
     // Simulate upload progress with visual feedback
     let progress = 0
-    const projectNames = files.map((f, i) => {
+    const projectNames = files.map((_f, i) => {
       if (mergeEnabled || files.length === 1) return projectName.trim()
       return files.length > 1 ? `${projectName.trim()} (${i + 1})` : projectName.trim()
     })

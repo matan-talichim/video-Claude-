@@ -70,11 +70,39 @@ export const api = {
     })
   },
 
-  generateImage: async (prompt: string, size = '1024x1024') => {
+  generateImage: async (prompt: string, size = '1024x1024', style?: string) => {
     return apiCall('/generate-image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, size }),
+      body: JSON.stringify({ prompt, size, style }),
+    })
+  },
+
+  generateVideo: async (prompt: string, provider: string, options?: { duration?: number; style?: string; motion?: number; camera?: string }) => {
+    return apiCall('/generate-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, provider, ...options }),
+    })
+  },
+
+  searchStock: async (query: string, source: string, page = 1) => {
+    return apiCall(`/stock/search?q=${encodeURIComponent(query)}&source=${source}&page=${page}`, { method: 'GET' })
+  },
+
+  suggestBRoll: async (transcript: string, segments?: any[]) => {
+    return apiCall('/suggest-broll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript, segments }),
+    })
+  },
+
+  enhancedChat: async (message: string, context: any) => {
+    return apiCall('/chat/enhanced', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, context }),
     })
   },
 
@@ -128,6 +156,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ segments, sourceLang, targetLang }),
     })
+  },
+
+  mergeVideos: async (files: File[]) => {
+    const formData = new FormData()
+    files.forEach(f => formData.append('files', f))
+    return apiCall('/merge', { method: 'POST', body: formData })
   },
 
   checkApiStatus: async () => {

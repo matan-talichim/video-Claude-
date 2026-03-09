@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowRight, Bot, Save, Check, Subtitles, Image } from 'lucide-react'
+import { ArrowRight, Bot, Save, Check, Subtitles, Image, Film } from 'lucide-react'
 import EditorToolbar from './EditorToolbar'
 import TranscriptPanel from './TranscriptPanel'
 import VideoPanel from './VideoPanel'
@@ -8,6 +8,7 @@ import TimelinePanel from './TimelinePanel'
 import AISidebar from './AISidebar'
 import CaptionsPanel from './CaptionsPanel'
 import BRollPanel from './BRollPanel'
+import MediaSidebar from './MediaSidebar'
 import EditorModals from './EditorModals'
 import ToastContainer from '../../components/Toast'
 import { useEditorStore } from '../../stores/editorStore'
@@ -20,6 +21,7 @@ export default function Editor() {
   const [showAI, setShowAI] = useState(true)
   const [showCaptionsPanel, setShowCaptionsPanel] = useState(false)
   const [showBRollPanel, setShowBRollPanel] = useState(false)
+  const [showMediaSidebar, setShowMediaSidebar] = useState(false)
   const [timelineExpanded, setTimelineExpanded] = useState(true)
   const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved'>('idle')
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -143,6 +145,15 @@ export default function Editor() {
         </div>
 
         <div className="flex-1" />
+        {!showMediaSidebar && (
+          <button
+            onClick={() => setShowMediaSidebar(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-sm text-text-secondary hover:text-text-primary transition-all"
+          >
+            <Film size={14} />
+            מדיה
+          </button>
+        )}
         {!showCaptionsPanel && (
           <button
             onClick={() => setShowCaptionsPanel(true)}
@@ -206,13 +217,18 @@ export default function Editor() {
           )}
         </div>
 
+        {showMediaSidebar && (
+          <div className="w-72 shrink-0 p-2 animate-slide-in-right">
+            <MediaSidebar onClose={() => setShowMediaSidebar(false)} />
+          </div>
+        )}
         {showCaptionsPanel && (
           <div className="w-72 shrink-0 p-2 animate-slide-in-right">
             <CaptionsPanel onClose={() => setShowCaptionsPanel(false)} />
           </div>
         )}
         {showBRollPanel && (
-          <div className="w-72 shrink-0 p-2 animate-slide-in-right">
+          <div className="w-80 shrink-0 p-2 animate-slide-in-right">
             <BRollPanel onClose={() => setShowBRollPanel(false)} />
           </div>
         )}
