@@ -11,6 +11,9 @@ export interface Segment {
   speaker: string
   color: string
   startTime: string
+  endTime?: string
+  segStart?: number
+  segEnd?: number
   words: Word[]
 }
 

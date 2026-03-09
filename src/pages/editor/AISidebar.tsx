@@ -34,6 +34,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
   const editor = useEditorStore()
   const addGptUsage = useUsageStore((s) => s.addGptUsage)
   const apiConnected = useApiStatusStore((s) => s.openai.connected)
+  const apiChecked = useApiStatusStore((s) => s.checked)
   const [showQuickActions, setShowQuickActions] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -259,7 +260,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      {apiConnected === false && (
+      {apiConnected === false && apiChecked && (
         <div className="mx-3 mt-2 p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-300 flex items-start gap-2">
           <AlertCircle size={14} className="shrink-0 mt-0.5" />
           <div>
