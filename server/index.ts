@@ -63,6 +63,9 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 * 1024 } })
 // Serve audio/video files from uploads
 app.use('/api/audio', express.static(uploadsDir))
 
+// Serve uploaded files statically (for auto-editor local mode)
+app.use('/uploads', express.static(uploadsDir))
+
 // ==================== API STATUS ====================
 
 app.get('/api/status', async (_req, res) => {
@@ -71,6 +74,8 @@ app.get('/api/status', async (_req, res) => {
     elevenlabs: { connected: !!process.env.ELEVENLABS_API_KEY },
     deepl: { connected: !!process.env.DEEPL_API_KEY },
     gemini: { connected: !!process.env.GEMINI_API_KEY },
+    seedance: { connected: !!process.env.SEEDANCE_API_KEY },
+    pixabay: { connected: !!process.env.PIXABAY_API_KEY },
   }
   res.json(status)
 })
@@ -1818,31 +1823,44 @@ app.post('/api/chatgpt-plan', async (req, res) => {
   }
 })
 
-// POST /api/generate-background — Nano Banana image generation proxy
+// POST /api/generate-background — Nano Banana (Gemini) image generation
 app.post('/api/generate-background', async (req, res) => {
   try {
-    const apiKey = process.env.NANO_BANANA_API_KEY
-    if (!apiKey) return res.status(400).json({ message: 'NANO_BANANA_API_KEY לא מוגדר בשרת' })
+    const ai = getGemini()
+    if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
 
-    const { prompt, aspectRatio = '9:16', style = 'cinematic' } = req.body
+    const { prompt, aspectRatio = '9:16' } = req.body
     if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
-    const response = await fetch('https://api.nanobanana.ai/generate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ prompt, aspect_ratio: aspectRatio, style }),
+    console.log('[NANO BANANA] Generating image with Gemini...')
+
+    const response = await ai.models.generateImages({
+      model: 'imagen-3.0-generate-002',
+      prompt,
+      config: { numberOfImages: 1, aspectRatio },
     })
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}))
-      return res.status(response.status).json({ message: err.message || response.statusText })
+    const imageData = response.generatedImages?.[0]?.image
+    if (!imageData) {
+      return res.status(500).json({ message: 'Nano Banana לא החזיר תמונה' })
     }
 
-    const data = await response.json()
-    res.json(data)
+    // Save image to uploads and return URL
+    const filename = `bg_${Date.now()}.png`
+    const filePath = path.join(uploadsDir, filename)
+
+    if (imageData.imageBytes) {
+      fs.writeFileSync(filePath, Buffer.from(imageData.imageBytes, 'base64'))
+    } else if (imageData.uri) {
+      return res.json({ url: imageData.uri, imageUrl: imageData.uri })
+    } else {
+      return res.status(500).json({ message: 'פורמט תשובה לא צפוי מ-Gemini' })
+    }
+
+    const imageUrl = `http://localhost:${PORT}/uploads/${filename}`
+    console.log('[NANO BANANA] Image saved:', imageUrl)
+
+    res.json({ url: imageUrl, imageUrl })
   } catch (err: any) {
     console.error('Generate background error:', err.message)
     res.status(500).json({ message: err.message || 'שגיאת יצירת רקע' })
@@ -1899,51 +1917,38 @@ app.post('/api/generate-broll', async (req, res) => {
       }
       return res.status(504).json({ message: 'Seedance: זמן המתנה חרג' })
     } else {
-      // VEO provider
-      const apiKey = process.env.VEO_API_KEY
-      if (!apiKey) return res.status(400).json({ message: 'VEO_API_KEY לא מוגדר בשרת' })
+      // VEO provider — uses GEMINI_API_KEY (same key as Nano Banana)
+      const ai = getGemini()
+      if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
 
-      const startResponse = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/videos:generate',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            prompt,
-            duration_seconds: duration,
-            aspect_ratio: '9:16',
-          }),
-        }
-      )
+      console.log('[VEO] Starting video generation with Gemini SDK...')
 
-      if (!startResponse.ok) {
-        const err = await startResponse.json().catch(() => ({}))
-        return res.status(startResponse.status).json({ message: err.message || err.error?.message || startResponse.statusText })
-      }
+      // Use GoogleGenAI SDK for Veo
+      const operation = await ai.models.generateVideos({
+        model: 'veo-3.1-generate-preview',
+        prompt,
+        config: { aspectRatio: '9:16' },
+      })
 
-      const startData = await startResponse.json()
-      const operationId = startData.operationId || startData.name
-
-      // Poll for result
+      // Poll until done
+      let result = operation
       for (let i = 0; i < 60; i++) {
-        const pollResponse = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/operations/${operationId}`,
-          { headers: { Authorization: `Bearer ${apiKey}` } }
-        )
-        const pollData = await pollResponse.json()
-
-        if (pollData.done && pollData.response?.videoUrl) {
-          return res.json({ url: pollData.response.videoUrl })
-        }
-        if (pollData.error) {
-          return res.status(500).json({ message: pollData.error.message || 'VEO נכשל' })
-        }
+        if (result.done) break
         await new Promise((r) => setTimeout(r, 5000))
+        result = await ai.operations.get({ operation: result })
       }
-      return res.status(504).json({ message: 'VEO: זמן המתנה חרג' })
+
+      if (!result.done) {
+        return res.status(504).json({ message: 'VEO: זמן המתנה חרג' })
+      }
+
+      // Extract video URL from result
+      const videoUrl = result.response?.generatedVideos?.[0]?.video?.uri
+      if (!videoUrl) {
+        return res.status(500).json({ message: 'VEO לא החזיר סרטון' })
+      }
+
+      return res.json({ url: videoUrl })
     }
   } catch (err: any) {
     console.error('Generate B-Roll error:', err.message)
@@ -1991,7 +1996,18 @@ app.post('/api/find-music', async (req, res) => {
   }
 })
 
-// POST /api/auto-editor/transcribe — Proxy transcription for auto-editor (accepts URL instead of file)
+// POST /api/upload-temp — Upload file to server temp storage (for auto-editor local mode)
+app.post('/api/upload-temp', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'לא התקבל קובץ' })
+
+  const fileUrl = `http://localhost:${PORT}/uploads/${path.basename(req.file.path)}`
+  console.log('[TEMP UPLOAD]', req.file.originalname, '->', fileUrl)
+
+  res.json({ url: fileUrl, filename: req.file.filename })
+})
+
+// POST /api/auto-editor/transcribe — Proxy transcription for auto-editor
+// Supports: local server URLs (http://localhost:3001/uploads/...) and remote URLs (R2, etc.)
 app.post('/api/auto-editor/transcribe', async (req, res) => {
   try {
     const ai = await getOpenAI()
@@ -2000,45 +2016,67 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
     const { fileUrl } = req.body
     if (!fileUrl) return res.status(400).json({ message: 'חסר fileUrl' })
 
-    // Download the file from the URL
-    const fileResponse = await fetch(fileUrl)
-    if (!fileResponse.ok) {
-      return res.status(400).json({ message: `שגיאה בהורדת הקובץ: ${fileResponse.statusText}` })
+    console.log('[AUTO-TRANSCRIBE] Processing:', fileUrl)
+
+    let filePath: string
+    let isTemp = false
+
+    if (fileUrl.startsWith(`http://localhost:${PORT}/uploads/`) || fileUrl.startsWith('/uploads/')) {
+      // LOCAL FILE — already on server, resolve to disk path
+      const filename = path.basename(new URL(fileUrl, `http://localhost:${PORT}`).pathname)
+      filePath = path.join(uploadsDir, filename)
+      console.log('[AUTO-TRANSCRIBE] Local file:', filePath)
+    } else if (fileUrl.startsWith('http')) {
+      // REMOTE URL (R2 or other) — download first
+      console.log('[AUTO-TRANSCRIBE] Downloading from remote URL...')
+      const fileResponse = await fetch(fileUrl)
+      if (!fileResponse.ok) {
+        return res.status(400).json({ message: `שגיאה בהורדת הקובץ: ${fileResponse.statusText}` })
+      }
+      const fileBuffer = Buffer.from(await fileResponse.arrayBuffer())
+      filePath = path.join(uploadsDir, `temp-${Date.now()}-download.mp4`)
+      fs.writeFileSync(filePath, fileBuffer)
+      isTemp = true
+    } else {
+      return res.status(400).json({ message: 'פורמט URL לא תקין: ' + fileUrl })
     }
 
-    const fileBuffer = Buffer.from(await fileResponse.arrayBuffer())
-    const fileName = fileUrl.split('/').pop() || 'audio.mp4'
-    const tempPath = path.join(uploadsDir, `temp-${Date.now()}-${fileName}`)
-    const mp3Path = tempPath.replace(/\.[^.]+$/, '') + '_audio.mp3'
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ message: 'הקובץ לא נמצא בשרת' })
+    }
 
-    fs.writeFileSync(tempPath, fileBuffer)
+    console.log('[AUTO-TRANSCRIBE] File path:', filePath, '| Size:', (fs.statSync(filePath).size / 1024 / 1024).toFixed(1), 'MB')
 
     // Extract audio as compressed MP3
+    const mp3Path = filePath.replace(/\.[^.]+$/, '') + '_audio.mp3'
     const ffmpeg = getFFmpeg()
     try {
-      execSync(`"${ffmpeg}" -i "${tempPath}" -vn -acodec libmp3lame -ab 64k -ar 16000 -ac 1 "${mp3Path}" -y`, {
+      execSync(`"${ffmpeg}" -i "${filePath}" -vn -acodec libmp3lame -ab 64k -ar 16000 -ac 1 "${mp3Path}" -y`, {
         timeout: 300000,
         stdio: ['pipe', 'pipe', 'pipe'],
       })
     } catch {
-      // If ffmpeg fails, try sending original file
       if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path)
     }
 
-    const audioPath = fs.existsSync(mp3Path) ? mp3Path : tempPath
-    const audioSize = fs.statSync(audioPath).size
+    const audioPath = fs.existsSync(mp3Path) ? mp3Path : filePath
+
+    console.log('[AUTO-TRANSCRIBE] Sending to Whisper...')
 
     // Transcribe with Whisper
     const transcription = await ai.audio.transcriptions.create({
       file: fs.createReadStream(audioPath),
       model: 'whisper-1',
+      language: 'he',
       response_format: 'verbose_json',
-      timestamp_granularities: ['word', 'segment'],
+      timestamp_granularities: ['segment'],
     })
 
     // Clean up temp files
-    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
-    if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path)
+    if (fs.existsSync(mp3Path)) try { fs.unlinkSync(mp3Path) } catch {}
+    if (isTemp && fs.existsSync(filePath)) try { fs.unlinkSync(filePath) } catch {}
+
+    console.log('[AUTO-TRANSCRIBE] Done:', (transcription.segments || []).length, 'segments,', transcription.duration?.toFixed(1), 'sec')
 
     res.json({
       segments: transcription.segments || [],
@@ -2046,8 +2084,8 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       text: transcription.text || '',
     })
   } catch (err: any) {
-    console.error('Auto-editor transcribe error:', err.message)
-    res.status(500).json({ message: err.message || 'שגיאת תמלול' })
+    console.error('[AUTO-TRANSCRIBE ERROR]', err.message)
+    res.status(500).json({ message: 'שגיאה בתמלול: ' + err.message })
   }
 })
 
@@ -2055,15 +2093,12 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 סטודיו AI Server running on port ${PORT}`)
-  console.log(`   OpenAI:     ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   ElevenLabs: ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   DeepL:      ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   Unsplash:   ${process.env.UNSPLASH_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   Pexels:     ${process.env.PEXELS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   Pixabay:    ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   Veo:        ${process.env.VEO_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   Seedance:   ${process.env.SEEDANCE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   Gemini:     ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   OpenAI:                     ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   ElevenLabs:                 ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   DeepL:                      ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Gemini (Nano Banana + Veo): ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Seedance:                   ${process.env.SEEDANCE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Pixabay (Music):            ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
 
   // Check FFmpeg availability
   console.log('Checking FFmpeg...')

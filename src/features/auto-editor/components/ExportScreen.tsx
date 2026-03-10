@@ -59,7 +59,8 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto">
+    <div className="min-h-screen flex flex-col items-center py-8 px-4 max-w-2xl mx-auto space-y-6 animate-fade-in" dir="rtl">
       {/* Header */}
       <div className="text-center space-y-2">
         <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-green-500/20 to-emerald-500/20 flex items-center justify-center border border-green-500/20">
@@ -151,7 +152,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
       </div>
 
       {/* Start over */}
-      <div className="text-center pt-2">
+      <div className="text-center pt-2 pb-8">
         <button
           onClick={onReset}
           className="text-sm text-text-muted hover:text-text-primary transition-colors"
@@ -159,6 +160,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
           ← התחל מחדש
         </button>
       </div>
+    </div>
     </div>
   )
 }
