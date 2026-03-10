@@ -193,6 +193,15 @@ export const api = {
     })
   },
 
+  autoEdit: async (files: File[], purpose: string, preferences: Record<string, any>, customInstructions: string) => {
+    const formData = new FormData()
+    files.forEach((f) => formData.append('files', f))
+    formData.append('purpose', purpose)
+    formData.append('preferences', JSON.stringify(preferences))
+    formData.append('customInstructions', customInstructions)
+    return apiCall('/auto-edit', { method: 'POST', body: formData })
+  },
+
   checkApiStatus: async () => {
     return apiCall('/status', { method: 'GET' })
   },
