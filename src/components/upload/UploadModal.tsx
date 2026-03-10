@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CloudUpload, X, GripVertical, Video, Music, Plus, Merge, ArrowLeftRight, AlertCircle, Check } from 'lucide-react'
+import { CloudUpload, X, GripVertical, Video, Music, Plus, Merge, ArrowLeftRight, AlertCircle, Check, Pencil, Bot } from 'lucide-react'
 import Modal from '../Modal'
+import AutoEditWizard from './AutoEditWizard'
 import { useUploadsStore } from '../../stores/uploadsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -67,6 +68,8 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [dropIdx, setDropIdx] = useState<number | null>(null)
   const [projectName, setProjectName] = useState('')
   const [nameError, setNameError] = useState(false)
+  const [showChoice, setShowChoice] = useState(false)
+  const [showAutoEdit, setShowAutoEdit] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [isMerging, setIsMerging] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -287,6 +290,8 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
     setTransition('none')
     setProjectName('')
     setNameError(false)
+    setShowChoice(false)
+    setShowAutoEdit(false)
     onClose()
   }
 
@@ -315,7 +320,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
           </div>
         )}
 
-        {!isUploading && (
+        {!isUploading && !showChoice && !showAutoEdit && (
           <>
             {/* Drop zone */}
             <div
@@ -527,15 +532,22 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
               </div>
             )}
 
-            {/* Action buttons */}
+            {/* Action buttons - show "Continue" to go to choice */}
             {files.length > 0 && (
               <div className="flex items-center gap-3 pt-2">
                 <button
-                  onClick={handleStartUpload}
+                  onClick={() => {
+                    if (!projectName.trim()) {
+                      setNameError(true)
+                      return
+                    }
+                    setNameError(false)
+                    setShowChoice(true)
+                  }}
                   disabled={!projectName.trim()}
                   className="flex items-center gap-2 px-6 py-3 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <CloudUpload size={18} /> התחל העלאה
+                  <CloudUpload size={18} /> המשך
                 </button>
                 <button
                   onClick={handleClose}
@@ -547,7 +559,69 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
             )}
           </>
         )}
+
+        {/* Choice screen: Editor vs Auto-Edit */}
+        {!isUploading && showChoice && !showAutoEdit && (
+          <div className="space-y-6 py-4">
+            <h3 className="text-center text-xl font-bold text-text-primary">מה תרצה לעשות עם הקבצים?</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
+              <button
+                onClick={() => {
+                  setShowChoice(false)
+                  handleStartUpload()
+                }}
+                className="p-6 rounded-2xl border-2 border-white/[0.06] hover:border-accent-blue/40 bg-gradient-to-br from-blue-600/10 to-blue-400/5 hover:from-blue-600/20 hover:to-blue-400/10 text-center transition-all hover:-translate-y-1 group"
+              >
+                <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-accent-blue/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Pencil size={24} className="text-accent-blue" />
+                </div>
+                <div className="text-base font-bold text-text-primary mb-2">העבר לעורך</div>
+                <div className="text-sm text-text-muted leading-relaxed">
+                  אעלה את הקבצים ואערוך ידנית בעורך
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setShowChoice(false)
+                  setShowAutoEdit(true)
+                }}
+                className="p-6 rounded-2xl border-2 border-white/[0.06] hover:border-accent-purple/40 bg-gradient-to-br from-purple-600/10 to-purple-400/5 hover:from-purple-600/20 hover:to-purple-400/10 text-center transition-all hover:-translate-y-1 group relative overflow-hidden"
+              >
+                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-accent-purple/20 text-[10px] text-accent-purple font-medium">
+                  AI
+                </div>
+                <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-accent-purple/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Bot size={24} className="text-accent-purple" />
+                </div>
+                <div className="text-base font-bold text-text-primary mb-2">עריכה אוטומטית</div>
+                <div className="text-sm text-text-muted leading-relaxed">
+                  AI יערוך את הסרטון אוטומטית לפי ההעדפות שלי
+                </div>
+              </button>
+            </div>
+            <div className="text-center">
+              <button
+                onClick={() => setShowChoice(false)}
+                className="text-sm text-text-muted hover:text-text-primary transition-colors"
+              >
+                ← חזרה לבחירת קבצים
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Auto-Edit Wizard */}
+      <AutoEditWizard
+        isOpen={showAutoEdit}
+        onClose={handleClose}
+        onBack={() => {
+          setShowAutoEdit(false)
+          setShowChoice(true)
+        }}
+        files={files}
+        projectName={projectName}
+      />
     </Modal>
   )
 }
