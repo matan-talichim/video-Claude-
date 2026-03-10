@@ -78,11 +78,38 @@ const voiceTones = [
 
 const voiceLanguages = [
   { id: 'he', label: 'עברית' },
-  { id: 'en', label: 'English' },
+  { id: 'en', label: 'אנגלית' },
   { id: 'ar', label: 'ערבית' },
   { id: 'ru', label: 'רוסית' },
   { id: 'fr', label: 'צרפתית' },
   { id: 'es', label: 'ספרדית' },
+  { id: 'de', label: 'גרמנית' },
+  { id: 'ja', label: 'יפנית' },
+  { id: 'zh', label: 'סינית' },
+  { id: 'ko', label: 'קוריאנית' },
+  { id: 'hi', label: 'הינדי' },
+  { id: 'tr', label: 'טורקית' },
+  { id: 'pt', label: 'פורטוגזית' },
+  { id: 'it', label: 'איטלקית' },
+  { id: 'nl', label: 'הולנדית' },
+  { id: 'pl', label: 'פולנית' },
+  { id: 'cs', label: 'צ\'כית' },
+  { id: 'ro', label: 'רומנית' },
+  { id: 'bg', label: 'בולגרית' },
+  { id: 'el', label: 'יוונית' },
+  { id: 'fi', label: 'פינית' },
+  { id: 'sv', label: 'שוודית' },
+  { id: 'da', label: 'דנית' },
+  { id: 'uk', label: 'אוקראינית' },
+  { id: 'id', label: 'אינדונזית' },
+  { id: 'hu', label: 'הונגרית' },
+  { id: 'nb', label: 'נורווגית' },
+  { id: 'vi', label: 'וייטנאמית' },
+  { id: 'sk', label: 'סלובקית' },
+  { id: 'hr', label: 'קרואטית' },
+  { id: 'ms', label: 'מלאית' },
+  { id: 'ta', label: 'טמילית' },
+  { id: 'fil', label: 'פיליפינית' },
 ]
 
 const captionStyles = [
@@ -92,6 +119,42 @@ const captionStyles = [
   { id: 'minimal', label: 'מינימלי' },
   { id: 'typewriter', label: 'הקלדה' },
   { id: 'bounce', label: 'קפיצה' },
+]
+
+const captionLanguageOptions = [
+  { id: 'he', label: 'עברית' },
+  { id: 'en', label: 'אנגלית' },
+  { id: 'ar', label: 'ערבית' },
+  { id: 'ru', label: 'רוסית' },
+  { id: 'fr', label: 'צרפתית' },
+  { id: 'es', label: 'ספרדית' },
+  { id: 'de', label: 'גרמנית' },
+  { id: 'ja', label: 'יפנית' },
+  { id: 'zh', label: 'סינית' },
+  { id: 'ko', label: 'קוריאנית' },
+  { id: 'hi', label: 'הינדי' },
+  { id: 'tr', label: 'טורקית' },
+  { id: 'pt', label: 'פורטוגזית' },
+  { id: 'it', label: 'איטלקית' },
+  { id: 'nl', label: 'הולנדית' },
+  { id: 'pl', label: 'פולנית' },
+  { id: 'cs', label: 'צ\'כית' },
+  { id: 'ro', label: 'רומנית' },
+  { id: 'bg', label: 'בולגרית' },
+  { id: 'el', label: 'יוונית' },
+  { id: 'fi', label: 'פינית' },
+  { id: 'sv', label: 'שוודית' },
+  { id: 'da', label: 'דנית' },
+  { id: 'uk', label: 'אוקראינית' },
+  { id: 'id', label: 'אינדונזית' },
+  { id: 'hu', label: 'הונגרית' },
+  { id: 'nb', label: 'נורווגית' },
+  { id: 'vi', label: 'וייטנאמית' },
+  { id: 'sk', label: 'סלובקית' },
+  { id: 'sl', label: 'סלובנית' },
+  { id: 'et', label: 'אסטונית' },
+  { id: 'lv', label: 'לטבית' },
+  { id: 'lt', label: 'ליטאית' },
 ]
 
 const musicMoods = [
@@ -186,6 +249,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
 
   const [brandOpen, setBrandOpen] = useState(false)
   const [newMessage, setNewMessage] = useState('')
+  const [maxVisitedStep, setMaxVisitedStep] = useState(1)
 
   const update = useCallback((partial: Partial<WizardState>) => {
     setState((prev) => ({ ...prev, ...partial }))
@@ -205,7 +269,13 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
     })
     setBrandOpen(false)
     setNewMessage('')
+    setMaxVisitedStep(1)
     onClose()
+  }
+
+  const goToStep = (nextStep: number) => {
+    update({ step: nextStep })
+    setMaxVisitedStep((prev) => Math.max(prev, nextStep))
   }
 
   const sceneCount = Math.ceil(state.duration / (state.platform === 'images' ? 5 : 4))
@@ -442,22 +512,36 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
           <div className="flex flex-col items-center gap-3">
             <h2 className="text-lg font-bold text-text-primary">צור מפרומפט</h2>
             <div className="flex items-center gap-2">
-              {stepLabels.map((label, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="flex flex-col items-center gap-1">
-                    <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                      i + 1 === state.step ? 'bg-accent-purple scale-125 shadow-lg shadow-accent-purple/40'
-                        : i + 1 < state.step ? 'bg-accent-purple/60' : 'bg-white/[0.12]'
-                    }`} />
-                    <span className={`text-[10px] whitespace-nowrap hidden md:block ${
-                      i + 1 === state.step ? 'text-text-primary' : 'text-text-muted'
-                    }`}>{label}</span>
+              {stepLabels.map((label, i) => {
+                const stepNum = i + 1
+                const isCurrent = stepNum === state.step
+                const isVisited = stepNum <= maxVisitedStep
+                const canClick = isVisited && !state.generating && stepNum <= 5
+                return (
+                  <div key={i} className="flex items-center gap-2">
+                    <button
+                      onClick={() => canClick && goToStep(stepNum)}
+                      disabled={!canClick}
+                      className={`flex flex-col items-center gap-1 ${
+                        isCurrent ? 'text-purple-400' :
+                        isVisited ? 'text-gray-300 hover:text-purple-300 cursor-pointer' :
+                        'text-gray-600 cursor-not-allowed'
+                      }`}
+                    >
+                      <div className={`w-3 h-3 rounded-full transition-all duration-300 ${
+                        isCurrent ? 'bg-purple-500 scale-125 shadow-lg shadow-accent-purple/40'
+                          : stepNum < state.step ? 'bg-purple-400' : 'bg-gray-700'
+                      }`} />
+                      <span className={`text-[10px] whitespace-nowrap hidden md:block ${
+                        isCurrent ? 'text-text-primary' : isVisited ? 'text-gray-300' : 'text-text-muted'
+                      }`}>{label}</span>
+                    </button>
+                    {i < stepLabels.length - 1 && (
+                      <div className={`w-6 h-px mt-[-14px] hidden md:block ${i + 1 < state.step ? 'bg-accent-purple/60' : 'bg-white/[0.08]'}`} />
+                    )}
                   </div>
-                  {i < stepLabels.length - 1 && (
-                    <div className={`w-6 h-px mt-[-14px] hidden md:block ${i + 1 < state.step ? 'bg-accent-purple/60' : 'bg-white/[0.08]'}`} />
-                  )}
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
           <div className="w-24 flex justify-end">
@@ -498,7 +582,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
                 ))}
               </div>
               <button
-                onClick={() => update({ step: 2 })}
+                onClick={() => goToStep(2)}
                 disabled={!state.videoType}
                 className="w-full max-w-md mx-auto block px-6 py-3 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20 disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -616,7 +700,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
               </div>
 
               <button
-                onClick={() => update({ step: 3 })}
+                onClick={() => goToStep(3)}
                 className="w-full max-w-md mx-auto block px-6 py-3 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20"
               >
                 המשך
@@ -749,7 +833,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
               </div>
 
               <button
-                onClick={() => update({ step: 4 })}
+                onClick={() => goToStep(4)}
                 disabled={!state.prompt.trim()}
                 className="w-full max-w-md mx-auto block px-6 py-3 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20 disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -849,46 +933,78 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
               {/* Captions */}
               <div>
                 <h3 className="text-subtitle font-bold text-text-primary mb-4">💬 האם תרצה כתוביות?</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { langs: ['he'], label: 'כן, בעברית', icon: '✅' },
-                    { langs: ['en'], label: 'כן, באנגלית', icon: '✅' },
-                    { langs: ['he', 'en'], label: 'כן, בשתי שפות', icon: '✅' },
-                    { langs: [] as string[], label: 'לא', icon: '❌' },
-                  ].map((opt) => (
-                    <button
-                      key={opt.label}
-                      onClick={() => update({ captionsEnabled: opt.langs.length > 0, captionLanguages: opt.langs })}
-                      className={`p-3 rounded-xl border-2 text-center transition-all ${
-                        (state.captionsEnabled && JSON.stringify(state.captionLanguages) === JSON.stringify(opt.langs)) ||
-                        (!state.captionsEnabled && opt.langs.length === 0)
-                          ? 'border-accent-purple bg-accent-purple/5'
-                          : 'border-white/[0.06] hover:border-white/[0.15] bg-bg-card'
-                      }`}
-                    >
-                      <div className="text-lg mb-1">{opt.icon}</div>
-                      <div className="text-xs text-text-secondary">{opt.label}</div>
-                    </button>
-                  ))}
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => update({ captionsEnabled: true, captionLanguages: state.captionLanguages.length > 0 ? state.captionLanguages : ['he'] })}
+                    className={`p-4 rounded-xl border-2 text-center transition-all ${
+                      state.captionsEnabled
+                        ? 'border-accent-purple bg-accent-purple/5'
+                        : 'border-white/[0.06] hover:border-white/[0.15] bg-bg-card'
+                    }`}
+                  >
+                    <div className="text-2xl mb-2">✅</div>
+                    <div className="text-sm font-medium text-text-primary">כן, אני רוצה כתוביות</div>
+                  </button>
+                  <button
+                    onClick={() => update({ captionsEnabled: false, captionLanguages: [] })}
+                    className={`p-4 rounded-xl border-2 text-center transition-all ${
+                      !state.captionsEnabled
+                        ? 'border-accent-purple bg-accent-purple/5'
+                        : 'border-white/[0.06] hover:border-white/[0.15] bg-bg-card'
+                    }`}
+                  >
+                    <div className="text-2xl mb-2">❌</div>
+                    <div className="text-sm font-medium text-text-primary">לא</div>
+                  </button>
                 </div>
 
                 {state.captionsEnabled && (
-                  <div className="mt-4">
-                    <label className="text-xs text-text-muted mb-2 block">סגנון כתוביות:</label>
-                    <div className="flex flex-wrap gap-2">
-                      {captionStyles.map((s) => (
-                        <button
-                          key={s.id}
-                          onClick={() => update({ captionStyle: s.id })}
-                          className={`px-4 py-2 rounded-lg text-xs transition-all ${
-                            state.captionStyle === s.id
-                              ? 'bg-accent-purple/20 text-accent-purple border border-accent-purple/30'
-                              : 'bg-white/[0.04] text-text-secondary border border-white/[0.06] hover:bg-white/[0.08]'
-                          }`}
-                        >
-                          {s.label}
-                        </button>
-                      ))}
+                  <div className="mt-6 space-y-5">
+                    <div>
+                      <label className="text-sm text-text-secondary mb-3 block">באיזו שפה? (ניתן לבחור יותר מאחת)</label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
+                        {captionLanguageOptions.map((lang) => (
+                          <label
+                            key={lang.id}
+                            className={`flex items-center gap-2 p-2.5 rounded-lg cursor-pointer transition-colors ${
+                              state.captionLanguages.includes(lang.id) ? 'bg-accent-purple/15 border border-accent-purple/30' : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={state.captionLanguages.includes(lang.id)}
+                              onChange={() => {
+                                const langs = state.captionLanguages.includes(lang.id)
+                                  ? state.captionLanguages.filter((l) => l !== lang.id)
+                                  : [...state.captionLanguages, lang.id]
+                                update({ captionLanguages: langs, captionsEnabled: langs.length > 0 })
+                              }}
+                              className="w-4 h-4 rounded accent-accent-purple"
+                            />
+                            <span className="text-sm text-text-primary">{lang.label}</span>
+                            <span className="text-[10px] text-text-muted uppercase">({lang.id})</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-text-muted mb-2 block">סגנון כתוביות:</label>
+                      <div className="flex flex-wrap gap-2">
+                        {captionStyles.map((s) => (
+                          <button
+                            key={s.id}
+                            onClick={() => update({ captionStyle: s.id })}
+                            className={`px-4 py-2 rounded-lg text-xs transition-all ${
+                              state.captionStyle === s.id
+                                ? 'bg-accent-purple/20 text-accent-purple border border-accent-purple/30'
+                                : 'bg-white/[0.04] text-text-secondary border border-white/[0.06] hover:bg-white/[0.08]'
+                            }`}
+                          >
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -943,7 +1059,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
               </div>
 
               <button
-                onClick={() => update({ step: 5 })}
+                onClick={() => goToStep(5)}
                 className="w-full max-w-md mx-auto block px-6 py-3 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20"
               >
                 המשך
@@ -953,71 +1069,35 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
 
           {/* ======== STEP 5: REVIEW ======== */}
           {state.step === 5 && (
-            <div className="max-w-2xl mx-auto py-4">
-              <div className="rounded-2xl border border-white/[0.06] bg-bg-card overflow-hidden">
-                <div className="p-5 border-b border-white/[0.06]">
-                  <h3 className="text-lg font-bold text-text-primary">📋 סיכום הסרטון</h3>
-                </div>
-                <div className="p-5 space-y-3 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-text-muted">סוג:</span>
-                    <span className="text-text-primary font-medium">{getVideoTypeLabel()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-muted">מנוע:</span>
-                    <span className="text-text-primary font-medium">{getPlatformLabel()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-muted">סגנון:</span>
-                    <span className="text-text-primary font-medium">{getStyleLabel()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-muted">פורמט:</span>
-                    <span className="text-text-primary font-medium">{state.format} ({getFormatLabel()})</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-muted">משך:</span>
-                    <span className="text-text-primary font-medium">{formatDuration(state.duration)} (~{sceneCount} סצנות)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-muted">דיבור:</span>
-                    <span className="text-text-primary font-medium">
-                      {state.voiceType === 'ai' ? `קריינות AI ב${voiceLanguages.find((l) => l.id === state.voiceLanguage)?.label}` :
-                       state.voiceType === 'upload' ? 'הקלטה עצמית' : 'ללא דיבור'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-muted">כתוביות:</span>
-                    <span className="text-text-primary font-medium">
-                      {state.captionsEnabled
-                        ? `${state.captionLanguages.map((l) => voiceLanguages.find((v) => v.id === l)?.label).join(' + ')}, סגנון ${captionStyles.find((s) => s.id === state.captionStyle)?.label}`
-                        : 'ללא'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-muted">מוזיקה:</span>
-                    <span className="text-text-primary font-medium">
-                      {state.musicType === 'auto' ? 'אוטומטית' :
-                       state.musicType === 'manual' ? musicMoods.find((m) => m.id === state.musicMood)?.label :
-                       state.musicType === 'upload' ? 'מוזיקה מותאמת' : 'ללא'}
-                    </span>
-                  </div>
-
-                  {state.brandName && (
-                    <div className="flex justify-between">
-                      <span className="text-text-muted">מותג:</span>
-                      <span className="text-text-primary font-medium">{state.brandName}</span>
+            <div className="max-w-2xl mx-auto w-full py-4">
+              <div className="bg-[#1A1A28] rounded-xl p-6" dir="rtl">
+                <h3 className="text-xl font-bold mb-4">📋 סיכום הסרטון</h3>
+                <div className="space-y-3">
+                  {[
+                    { label: 'סוג', value: getVideoTypeLabel() },
+                    { label: 'מנוע', value: getPlatformLabel() },
+                    { label: 'סגנון', value: getStyleLabel() },
+                    { label: 'פורמט', value: `${state.format} (${getFormatLabel()})` },
+                    { label: 'משך', value: `${formatDuration(state.duration)} (~${sceneCount} סצנות)` },
+                    { label: 'דיבור', value: state.voiceType === 'ai' ? `קריינות AI ב${voiceLanguages.find((l) => l.id === state.voiceLanguage)?.label}` : state.voiceType === 'upload' ? 'הקלטה עצמית' : 'ללא דיבור' },
+                    { label: 'כתוביות', value: state.captionsEnabled ? `${state.captionLanguages.map((l) => captionLanguageOptions.find((v) => v.id === l)?.label || l).join(', ')} | סגנון ${captionStyles.find((s) => s.id === state.captionStyle)?.label}` : 'ללא' },
+                    { label: 'מוזיקה', value: state.musicType === 'auto' ? 'אוטומטית' : state.musicType === 'manual' ? musicMoods.find((m) => m.id === state.musicMood)?.label || '' : state.musicType === 'upload' ? 'מוזיקה מותאמת' : 'ללא' },
+                    ...(state.brandName ? [{ label: 'מותג', value: state.brandName }] : []),
+                  ].map((item) => (
+                    <div key={item.label} className="flex justify-between items-start gap-4 py-2 border-b border-white/5">
+                      <span className="text-gray-400 text-sm whitespace-nowrap min-w-[80px]">{item.label}:</span>
+                      <span className="text-white text-sm text-left flex-1">{item.value}</span>
                     </div>
-                  )}
+                  ))}
 
-                  <div className="pt-3 border-t border-white/[0.06]">
-                    <div className="text-text-muted text-xs mb-1">פרומפט:</div>
-                    <div className="text-text-primary text-sm bg-bg-deepest p-3 rounded-lg">{state.prompt}</div>
+                  <div className="pt-3">
+                    <div className="text-gray-400 text-xs mb-1">פרומפט:</div>
+                    <div className="text-white text-sm bg-bg-deepest p-3 rounded-lg break-words">{state.prompt}</div>
                   </div>
 
                   {state.keyMessages.length > 0 && (
                     <div className="pt-2">
-                      <div className="text-text-muted text-xs mb-1">מסרים:</div>
+                      <div className="text-gray-400 text-xs mb-1">מסרים:</div>
                       <div className="flex flex-wrap gap-1">
                         {state.keyMessages.map((m, i) => (
                           <span key={i} className="px-2 py-1 rounded-full text-[11px] bg-accent-purple/10 text-accent-purple">{m}</span>
@@ -1026,14 +1106,14 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
                     </div>
                   )}
 
-                  <div className="pt-3 border-t border-white/[0.06] flex justify-between items-center">
+                  <div className="pt-3 border-t border-white/5 flex justify-between items-center">
                     <div>
-                      <div className="text-text-muted text-xs">עלות משוערת</div>
-                      <div className="text-text-primary font-bold">~${estimatedCost()}</div>
+                      <div className="text-gray-400 text-xs">עלות משוערת</div>
+                      <div className="text-white font-bold">~${estimatedCost()}</div>
                     </div>
                     <div className="text-left">
-                      <div className="text-text-muted text-xs">זמן יצירה</div>
-                      <div className="text-text-primary font-bold">~3-5 דקות</div>
+                      <div className="text-gray-400 text-xs">זמן יצירה</div>
+                      <div className="text-white font-bold">~3-5 דקות</div>
                     </div>
                   </div>
                 </div>
@@ -1041,11 +1121,11 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
 
               <div className="flex items-center justify-between mt-6 gap-4">
                 <button
-                  onClick={() => update({ step: 1 })}
+                  onClick={() => update({ step: state.step - 1 })}
                   className="flex items-center gap-1 px-4 py-2.5 text-sm text-text-muted hover:text-text-primary transition-colors"
                 >
                   <ChevronRight size={16} />
-                  חזור לעריכה
+                  חזור לשלב הקודם
                 </button>
                 <button
                   onClick={startGeneration}
