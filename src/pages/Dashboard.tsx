@@ -1,21 +1,17 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Sparkles, Upload, Monitor, FileText, MoreVertical, Play,
+  Sparkles, Upload, MoreVertical, Play,
   Clock, Zap, ArrowLeft, Copy, Share2, Trash2, FolderOpen
 } from 'lucide-react'
 import { useProjectsStore } from '../stores/projectsStore'
 import { useUIStore } from '../stores/uiStore'
 import UploadModal from '../components/upload/UploadModal'
-import RecordingModal from '../components/recording/RecordingModal'
 import PromptWizard from './editor/PromptWizard'
-import PasteScriptModal from '../components/generate/PasteScriptModal'
 
 const quickActions = [
   { label: 'העלה קובץ', desc: 'העלה וידאו או אודיו', icon: Upload, gradient: 'from-blue-600/20 to-blue-400/5', hoverGradient: 'from-blue-600/30 to-blue-400/10', iconColor: 'text-accent-blue', action: 'upload' },
-  { label: 'הקלט מסך', desc: 'הקלטת מסך עם מצלמה', icon: Monitor, gradient: 'from-green-600/20 to-green-400/5', hoverGradient: 'from-green-600/30 to-green-400/10', iconColor: 'text-success', action: 'screenRecord' },
   { label: 'צור מפרומפט', desc: 'AI ייצור עבורך וידאו', icon: Sparkles, gradient: 'from-purple-600/20 to-purple-400/5', hoverGradient: 'from-purple-600/30 to-purple-400/10', iconColor: 'text-accent-purple', action: 'generatePrompt' },
-  { label: 'הדבק סקריפט', desc: 'הפוך טקסט לווידאו', icon: FileText, gradient: 'from-orange-600/20 to-orange-400/5', hoverGradient: 'from-orange-600/30 to-orange-400/10', iconColor: 'text-warning', action: 'pasteScript' },
 ]
 
 const statusConfig: Record<string, { dot: string; label: string }> = {
@@ -86,7 +82,7 @@ export default function Dashboard() {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
         {quickActions.map((action) => {
           const Icon = action.icon
           return (
@@ -256,9 +252,7 @@ export default function Dashboard() {
 
       {/* Modals */}
       <UploadModal isOpen={activeModal === 'upload'} onClose={closeModal} />
-      <RecordingModal isOpen={activeModal === 'screenRecord'} onClose={closeModal} />
       <PromptWizard isOpen={activeModal === 'generatePrompt'} onClose={closeModal} />
-      <PasteScriptModal isOpen={activeModal === 'pasteScript'} onClose={closeModal} />
     </div>
   )
 }

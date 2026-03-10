@@ -206,6 +206,38 @@ interface EditorState {
     broll: TrackState
   }
 
+  // Audio panel settings
+  masterVolume: number
+  noiseReduction: boolean
+  noiseReductionIntensity: number
+  eq: { bass: number; mid: number; treble: number; preset: string }
+  fadeIn: number
+  fadeOut: number
+
+  // Background music
+  backgroundMusic: {
+    file: File | null
+    blobUrl: string
+    name: string
+    duration: number
+    volume: number
+    startOffset: number
+    ducking: boolean
+    fadeOut: boolean
+    trackId: string
+  } | null
+
+  setMasterVolume: (v: number) => void
+  setNoiseReduction: (enabled: boolean) => void
+  setNoiseReductionIntensity: (v: number) => void
+  setEq: (eq: { bass: number; mid: number; treble: number; preset: string }) => void
+  setFadeIn: (seconds: number) => void
+  setFadeOut: (seconds: number) => void
+  setBackgroundMusic: (music: EditorState['backgroundMusic']) => void
+  setMusicVolume: (volume: number) => void
+  setMusicDucking: (enabled: boolean) => void
+  removeBackgroundMusic: () => void
+
   setProjectId: (id: string | null) => void
   setProjectName: (name: string) => void
   setIsDemo: (demo: boolean) => void
@@ -363,6 +395,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   appliedEdits: [],
   editedFiles: [],
 
+  // Audio panel defaults
+  masterVolume: 80,
+  noiseReduction: false,
+  noiseReductionIntensity: 50,
+  eq: { bass: 0, mid: 0, treble: 0, preset: 'standard' },
+  fadeIn: 0,
+  fadeOut: 0,
+  backgroundMusic: null,
+
   setProjectId: (id) => set({ projectId: id }),
   setProjectName: (name) => set({ projectName: name, isDirty: true }),
   setIsDemo: (demo) => set({ isDemo: demo }),
@@ -377,6 +418,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   setVolume: (volume) => set({ volume }),
+  setMasterVolume: (v) => set({ masterVolume: v }),
+  setNoiseReduction: (enabled) => set({ noiseReduction: enabled }),
+  setNoiseReductionIntensity: (v) => set({ noiseReductionIntensity: v }),
+  setEq: (eq) => set({ eq }),
+  setFadeIn: (seconds) => set({ fadeIn: seconds }),
+  setFadeOut: (seconds) => set({ fadeOut: seconds }),
+  setBackgroundMusic: (music) => set({ backgroundMusic: music }),
+  setMusicVolume: (volume) => set((s) => s.backgroundMusic ? { backgroundMusic: { ...s.backgroundMusic, volume } } : {}),
+  setMusicDucking: (enabled) => set((s) => s.backgroundMusic ? { backgroundMusic: { ...s.backgroundMusic, ducking: enabled } } : {}),
+  removeBackgroundMusic: () => set((s) => {
+    if (s.backgroundMusic?.blobUrl) URL.revokeObjectURL(s.backgroundMusic.blobUrl)
+    return { backgroundMusic: null }
+  }),
   setTranscript: (transcript) => set({ transcript, isDirty: true }),
   setShowCaptions: (show) => set({ showCaptions: show }),
   setCaptions: (captions) => set({ captions }),
@@ -606,6 +660,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     rangeStart: null, rangeEnd: null, editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
     speakers: [], editorEffects: {}, deletedRegions: [], chapters: [], enhancedAudioBuffer: null,
     appliedEdits: [],
+    masterVolume: 80, noiseReduction: false, noiseReductionIntensity: 50,
+    eq: { bass: 0, mid: 0, treble: 0, preset: 'standard' },
+    fadeIn: 0, fadeOut: 0, backgroundMusic: null,
   }),
 
   removeFillerWords: () => {
