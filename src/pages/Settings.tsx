@@ -26,6 +26,8 @@ interface ApiStatus {
   elevenlabs: { connected: boolean }
   deepl: { connected: boolean }
   gemini: { connected: boolean }
+  seedance: { connected: boolean }
+  pixabay: { connected: boolean }
 }
 
 export default function Settings() {
@@ -40,6 +42,8 @@ export default function Settings() {
     elevenlabs: { connected: apiStatusStore.elevenlabs.connected },
     deepl: { connected: apiStatusStore.deepl.connected },
     gemini: { connected: apiStatusStore.gemini.connected },
+    seedance: { connected: apiStatusStore.seedance.connected },
+    pixabay: { connected: apiStatusStore.pixabay.connected },
   } : null
 
   const checkApiStatus = async () => {
@@ -80,7 +84,21 @@ export default function Settings() {
       icon: '🍌',
       key: 'gemini' as const,
       features: ['Nano Banana (תמונות)', 'Veo 3.1 (סרטונים)', 'תמונה לסרטון'],
-      description: 'יצירת תמונות וסרטוני AI מתקדמים',
+      description: 'כולל: Nano Banana (תמונות) + Veo (סרטונים)',
+    },
+    {
+      name: 'Seedance',
+      icon: '🎬',
+      key: 'seedance' as const,
+      features: ['B-Roll AI (סרטונים)', 'Seedance 1.5 Pro'],
+      description: 'יצירת סרטוני B-Roll באמצעות AI',
+    },
+    {
+      name: 'Pixabay',
+      icon: '🎵',
+      key: 'pixabay' as const,
+      features: ['חיפוש מוזיקה', 'מוזיקת רקע חינמית'],
+      description: 'מוזיקת רקע חינמית לסרטונים',
     },
   ]
 
