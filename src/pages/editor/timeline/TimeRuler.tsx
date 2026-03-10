@@ -12,7 +12,6 @@ export default function TimeRuler() {
   const removeMarker = useTimelineStore((s) => s.removeMarker)
 
   const pixelsPerSecond = zoom / 100 * 80 // base: 80px per second at 100% zoom
-  const totalWidth = duration * pixelsPerSecond
 
   const getTimeFromX = useCallback((clientX: number) => {
     if (!rulerRef.current || duration <= 0) return 0

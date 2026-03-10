@@ -10,7 +10,7 @@ export default function TimelineToolbar() {
     rippleEnabled, toggleRipple,
     speedTrimEnabled, toggleSpeedTrim,
     selectedClipIds, removeSelectedClips,
-    copySelected, cutSelected,
+    copySelected, cutSelected: _cutSelected,
     clipboard,
   } = useTimelineStore()
 

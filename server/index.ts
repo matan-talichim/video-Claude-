@@ -2158,6 +2158,104 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
   }
 })
 
+// ==================== AUTO-EDITOR: VIDEO PROCESSING ====================
+
+app.post('/api/auto-editor/process-video', async (req, res) => {
+  try {
+    const { videoPlan, backgroundImage, brollClips, music, sourceUrls, filters } = req.body
+
+    if (!videoPlan || !sourceUrls?.length) {
+      return res.status(400).json({ message: 'חסרים נתונים לעיבוד הסרטון' })
+    }
+
+    const ffmpeg = getFFmpeg()
+    const outputPath = path.join(uploadsDir, `auto-edited-${Date.now()}.mp4`)
+
+    // Build FFmpeg filter combining: cuts + color grade + subtitles + audio cleanup
+    const inputFile = sourceUrls[0].replace(`http://localhost:${PORT}/uploads/`, '')
+    const inputPath = path.join(uploadsDir, inputFile.split('/').pop() || inputFile)
+
+    if (!fs.existsSync(inputPath)) {
+      return res.status(404).json({ message: 'קובץ המקור לא נמצא בשרת' })
+    }
+
+    // Apply cuts and color grading with a single FFmpeg command
+    const cutFilters = (filters?.cuts || []).map((c: any, i: number) =>
+      `between(t,${c.startTime},${c.endTime})`
+    ).join('+')
+
+    const selectFilter = cutFilters ? `select='${cutFilters}',setpts=N/FRAME_RATE/TB` : ''
+    const colorFilter = filters?.colorGrade || ''
+    const audioCleanup = filters?.audioCleanup || ''
+
+    const vfParts = [selectFilter, colorFilter].filter(Boolean).join(',')
+    const afParts = [cutFilters ? `aselect='${cutFilters}',asetpts=N/SR/TB` : '', audioCleanup].filter(Boolean).join(',')
+
+    const vf = vfParts ? `-vf "${vfParts}"` : ''
+    const af = afParts ? `-af "${afParts}"` : ''
+
+    console.log(`[AUTO-EDIT] Processing video ${videoPlan.videoIndex}...`)
+
+    execSync(
+      `"${ffmpeg}" -i "${inputPath}" ${vf} ${af} -c:v libx264 -preset fast -c:a aac "${outputPath}" -y`,
+      { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+
+    const outputFilename = path.basename(outputPath)
+    console.log(`[AUTO-EDIT] Done: ${outputFilename}`)
+
+    res.json({
+      url: `http://localhost:${PORT}/uploads/${outputFilename}`,
+      outputUrl: `/uploads/${outputFilename}`,
+    })
+  } catch (err: any) {
+    console.error('[AUTO-EDIT ERROR]', err.message)
+    res.status(500).json({ message: 'שגיאה בעיבוד הסרטון: ' + err.message })
+  }
+})
+
+// ==================== AUTO-EDITOR: EXPORT ====================
+
+app.post('/api/auto-editor/export', async (req, res) => {
+  try {
+    const { videoUrl, platform, width, height, fps, videoIndex } = req.body
+
+    if (!videoUrl) {
+      return res.status(400).json({ message: 'חסר URL של הסרטון' })
+    }
+
+    const ffmpeg = getFFmpeg()
+
+    // Resolve input path
+    const inputFile = videoUrl.replace(`http://localhost:${PORT}/uploads/`, '').replace('/uploads/', '')
+    const inputPath = path.join(uploadsDir, inputFile.split('/').pop() || inputFile)
+
+    if (!fs.existsSync(inputPath)) {
+      return res.status(404).json({ message: 'קובץ המקור לא נמצא' })
+    }
+
+    const outputPath = path.join(uploadsDir, `export-${platform}-v${videoIndex}-${Date.now()}.mp4`)
+
+    console.log(`[EXPORT] Video ${videoIndex} -> ${platform} (${width}x${height})`)
+
+    execSync(
+      `"${ffmpeg}" -i "${inputPath}" -vf "scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2" -r ${fps || 30} -c:v libx264 -preset fast -c:a aac "${outputPath}" -y`,
+      { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+
+    const outputFilename = path.basename(outputPath)
+    console.log(`[EXPORT] Done: ${outputFilename}`)
+
+    res.json({
+      url: `http://localhost:${PORT}/uploads/${outputFilename}`,
+      outputUrl: `/uploads/${outputFilename}`,
+    })
+  } catch (err: any) {
+    console.error('[EXPORT ERROR]', err.message)
+    res.status(500).json({ message: 'שגיאת ייצוא: ' + err.message })
+  }
+})
+
 // ==================== START SERVER ====================
 
 app.listen(PORT, () => {

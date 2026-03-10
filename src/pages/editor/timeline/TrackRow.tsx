@@ -383,7 +383,7 @@ export default function TrackRow({ track }: TrackRowProps) {
 }
 
 // ─── Draggable Clip Block (used for ALL clip types) ───
-function DraggableClipBlock({ id, startTime, endTime, color, label, trackLocked, pixelsPerSecond, scrollLeft, selected, duration, snapEnabled, getSnapPoints, onClick, onContextMenu, onMove, onTrimStart, onTrimEnd, hasThumb, thumbUrl, small }: {
+function DraggableClipBlock({ id: _id, startTime, endTime, color, label, trackLocked, pixelsPerSecond, scrollLeft, selected, duration, snapEnabled, getSnapPoints, onClick, onContextMenu, onMove, onTrimStart, onTrimEnd, hasThumb, thumbUrl, small }: {
   id: string
   startTime: number
   endTime: number

@@ -27,7 +27,7 @@ export default function TimelinePanel() {
   const {
     currentTime, duration, setCurrentTime,
     splitAtPlayhead, isPlaying, setIsPlaying,
-    mediaFile, waveformData, setWaveformData,
+    mediaFile, waveformData: _waveformData, setWaveformData,
   } = useEditorStore()
 
   const { addToast } = useUIStore()

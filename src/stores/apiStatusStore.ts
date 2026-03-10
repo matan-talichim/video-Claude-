@@ -10,10 +10,13 @@ interface ApiStatusState {
   pixabay: { connected: boolean }
   loading: boolean
   checked: boolean
+  lastCheckedAt: number
   checkStatus: () => Promise<void>
 }
 
-export const useApiStatusStore = create<ApiStatusState>((set) => ({
+const STATUS_CACHE_TTL = 60000 // 60 seconds
+
+export const useApiStatusStore = create<ApiStatusState>((set, get) => ({
   openai: { connected: false },
   elevenlabs: { connected: false },
   deepl: { connected: false },
@@ -22,7 +25,13 @@ export const useApiStatusStore = create<ApiStatusState>((set) => ({
   pixabay: { connected: false },
   loading: false,
   checked: false,
+  lastCheckedAt: 0,
   checkStatus: async () => {
+    const state = get()
+    // Cache: skip if checked within last 60 seconds
+    if (state.checked && Date.now() - state.lastCheckedAt < STATUS_CACHE_TTL) {
+      return
+    }
     set({ loading: true })
     try {
       const status = await api.checkApiStatus()
@@ -35,6 +44,7 @@ export const useApiStatusStore = create<ApiStatusState>((set) => ({
         pixabay: { connected: status.pixabay?.connected || false },
         loading: false,
         checked: true,
+        lastCheckedAt: Date.now(),
       })
     } catch {
       set({
@@ -46,6 +56,7 @@ export const useApiStatusStore = create<ApiStatusState>((set) => ({
         pixabay: { connected: false },
         loading: false,
         checked: true,
+        lastCheckedAt: Date.now(),
       })
     }
   },

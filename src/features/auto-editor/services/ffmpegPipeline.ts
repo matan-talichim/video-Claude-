@@ -64,7 +64,7 @@ export async function processVideo(input: ProcessVideoInput): Promise<string> {
     videoPlan.sourceSegments.map((seg) => ({
       start: seg.start,
       end: seg.end,
-      text: '', // Text from transcript segments
+      text: seg.text || '',
     }))
   )
 
@@ -75,7 +75,7 @@ export async function processVideo(input: ProcessVideoInput): Promise<string> {
 
   // In production, these FFmpeg commands would run in a Web Worker
   // For now, we send the processing plan to the backend
-  const response = await fetch('http://localhost:3001/api/auto-edit/process-video', {
+  const response = await fetch('http://localhost:3001/api/auto-editor/process-video', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

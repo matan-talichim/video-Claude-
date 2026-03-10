@@ -23,6 +23,26 @@ async function apiCall(endpoint: string, options?: RequestInit) {
   }
 }
 
+// Retry wrapper with exponential backoff for retryable errors (429, 500+)
+export async function apiCallWithRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3
+): Promise<T> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn()
+    } catch (err: unknown) {
+      const status = err instanceof ApiError ? err.status : 0
+      // Don't retry on client errors (400, 401, 403)
+      if (status === 400 || status === 401 || status === 403) throw err
+      if (i === maxRetries - 1) throw err
+      // Exponential backoff: 1s, 2s, 4s
+      await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000))
+    }
+  }
+  throw new Error('מספר הניסיונות נגמר')
+}
+
 export const api = {
   transcribe: async (file: File) => {
     const formData = new FormData()

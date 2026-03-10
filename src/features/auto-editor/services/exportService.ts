@@ -23,7 +23,7 @@ async function exportForPlatform(
 
   log(`מייצא סרטון ${videoIndex} ל-${platform} (${spec.w}x${spec.h})...`)
 
-  const response = await fetch('http://localhost:3001/api/auto-edit/export', {
+  const response = await fetch('http://localhost:3001/api/auto-editor/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -58,13 +58,32 @@ export async function exportAllPlatforms(editedVideoUrls: string[]): Promise<Exp
 
   log(`מייצא ${editedVideoUrls.length} סרטונים ל-${Object.keys(PLATFORMS).length} פלטפורמות...`)
 
-  const allExports = await Promise.all(
-    editedVideoUrls.flatMap((videoUrl, i) =>
-      Object.entries(PLATFORMS).map(([platform, spec]) =>
-        exportForPlatform(videoUrl, platform, spec, i + 1)
-      )
-    )
-  )
+  const allExports: ExportResult[] = []
+
+  for (let i = 0; i < editedVideoUrls.length; i++) {
+    const videoUrl = editedVideoUrls[i]
+    const videoIndex = i + 1
+
+    // TikTok, Reels, YouTube Shorts all use 1080x1920 — encode ONCE, reuse for all three
+    const verticalResult = await exportForPlatform(videoUrl, 'tiktok', PLATFORMS.tiktok, videoIndex)
+    allExports.push(verticalResult)
+
+    // Reuse the same encoded output for reels and shorts (same dimensions)
+    allExports.push({
+      ...verticalResult,
+      platform: 'reels',
+      fileName: `video_${videoIndex}_reels.mp4`,
+    })
+    allExports.push({
+      ...verticalResult,
+      platform: 'youtube_shorts',
+      fileName: `video_${videoIndex}_youtube_shorts.mp4`,
+    })
+
+    // LinkedIn 1:1 needs separate encoding
+    const linkedinResult = await exportForPlatform(videoUrl, 'linkedin', PLATFORMS.linkedin, videoIndex)
+    allExports.push(linkedinResult)
+  }
 
   log(`ייצוא הושלם: ${allExports.length} קבצים`)
   return allExports
