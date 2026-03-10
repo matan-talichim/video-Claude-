@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Minimize, Subtitles, Music, Film, ChevronsRight, ChevronsLeft } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
-import type { CaptionStyle, BRollItem } from '../../stores/editorStore'
+import type { CaptionStyle, BRollItem, CaptionTrack } from '../../stores/editorStore'
 import { getDeletedRegionEnd } from '../../services/videoEditor'
 
 const allSpeeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4]
@@ -253,8 +253,22 @@ export default function VideoPanel() {
   }, [setPlaybackSpeed])
 
   const { captions, captionStyle } = useEditorStore()
+  const captionTracks = useEditorStore((s) => s.captionTracks)
+  const activeCaptionTrackId = useEditorStore((s) => s.activeCaptionTrackId)
+  const setActiveCaptionTrack = useEditorStore((s) => s.setActiveCaptionTrack)
+  const hideAllCaptionTracks = useEditorStore((s) => s.hideAllCaptionTracks)
+  const [showCCMenu, setShowCCMenu] = useState(false)
 
+  // Find current caption from the active caption track (if any), else fallback to old captions
   const currentCaption = showCaptions && !trackStates.captions.muted ? (() => {
+    // Use active caption track if available
+    const activeTrack = captionTracks.find((t) => t.isVisible)
+    if (activeTrack) {
+      const cap = activeTrack.captions.find(c => currentTime >= c.startTime - 0.1 && currentTime < c.endTime + 0.1)
+      if (cap) return { text: cap.text, words: undefined as { text: string; start: number; end: number }[] | undefined, style: captionStyle, startTime: cap.startTime, endTime: cap.endTime }
+      return null
+    }
+    // Fallback to legacy captions
     const cap = captions.find(c => currentTime >= c.startTime - 0.1 && currentTime < c.endTime + 0.1)
     if (cap) return { text: cap.text, words: cap.words, style: cap.style, startTime: cap.startTime, endTime: cap.endTime }
     const words = transcript.flatMap(s => s.words).filter(w => currentTime >= w.start - 0.3 && currentTime < w.end + 0.3)
@@ -521,10 +535,62 @@ export default function VideoPanel() {
                 </div>
               </div>
 
-              {/* Captions toggle */}
-              <button onClick={() => setShowCaptions(!showCaptions)} className={`p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors ${showCaptions ? 'text-accent-purple' : 'text-text-secondary hover:text-text-primary'}`} title="כתוביות">
-                <Subtitles size={16} />
-              </button>
+              {/* CC Language Switcher */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowCCMenu(!showCCMenu)}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors border ${
+                    showCaptions && activeCaptionTrackId
+                      ? 'bg-accent-purple/20 text-accent-purple border-accent-purple/30'
+                      : 'bg-white/[0.06] text-text-secondary hover:text-text-primary border-transparent hover:bg-white/[0.1]'
+                  }`}
+                  title="כתוביות"
+                >
+                  CC
+                </button>
+                {showCCMenu && (
+                  <>
+                    <div className="fixed inset-0 z-50" onClick={() => setShowCCMenu(false)} />
+                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-[#1A1A28] rounded-lg border border-white/10 p-2 min-w-[200px] z-50 shadow-xl">
+                      <div className="text-xs text-gray-400 mb-2 px-2">שפת כתוביות:</div>
+                      {captionTracks.map((track) => (
+                        <button
+                          key={track.id}
+                          onClick={() => {
+                            setActiveCaptionTrack(track.id)
+                            setShowCCMenu(false)
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded hover:bg-white/10 ${
+                            track.isVisible ? 'text-purple-400 bg-purple-500/10' : 'text-gray-300'
+                          }`}
+                        >
+                          <span>{track.flag} {track.languageName}</span>
+                          <span className="text-xs text-gray-500">({track.captions.length})</span>
+                          {track.isVisible && <span className="text-accent-purple mr-1">✓</span>}
+                        </button>
+                      ))}
+                      {captionTracks.length > 0 && <hr className="border-white/10 my-2" />}
+                      <button
+                        onClick={() => {
+                          hideAllCaptionTracks()
+                          setShowCaptions(false)
+                          setShowCCMenu(false)
+                        }}
+                        className={`w-full text-right px-3 py-2 rounded hover:bg-white/10 ${
+                          !activeCaptionTrackId ? 'text-purple-400' : 'text-gray-300'
+                        }`}
+                      >
+                        ללא כתוביות
+                      </button>
+                      {captionTracks.length === 0 && (
+                        <div className="px-3 py-2 text-xs text-text-muted text-center">
+                          אין כתוביות. יצר כתוביות בפאנל הכתוביות.
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
 
               {/* Fullscreen */}
               <button onClick={handleFullscreen} className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-colors text-text-secondary hover:text-text-primary" title={isFullscreen ? 'צא ממסך מלא' : 'מסך מלא'}>

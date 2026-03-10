@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { ZoomIn, ZoomOut, Volume2, VolumeX, Lock, Unlock, Eye, EyeOff, Scissors, Trash2 } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
+import type { CaptionTrack } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 
 export default function TimelinePanel() {
@@ -209,13 +210,22 @@ export default function TimelinePanel() {
     timeMarkers.push('0:00')
   }
 
+  const captionTracks = useEditorStore((s) => s.captionTracks)
+  const setActiveCaptionTrack = useEditorStore((s) => s.setActiveCaptionTrack)
+  const removeCaptionTrack = useEditorStore((s) => s.removeCaptionTrack)
+  const hideAllCaptionTracks = useEditorStore((s) => s.hideAllCaptionTracks)
+
   type TrackKey = 'video' | 'audio' | 'captions' | 'broll'
 
   const tracks: { key: TrackKey; icon: string; label: string; color: string; trackColor: string; fillColor: string }[] = [
     { key: 'video', icon: '🎥', label: 'וידאו', color: 'bg-accent-blue', trackColor: 'bg-accent-blue/20', fillColor: 'bg-accent-blue/40' },
     { key: 'audio', icon: '🎵', label: 'אודיו', color: 'bg-success', trackColor: 'bg-success/20', fillColor: 'bg-success/40' },
-    { key: 'captions', icon: '💬', label: 'כתוביות', color: 'bg-warning', trackColor: 'bg-warning/20', fillColor: 'bg-warning/40' },
   ]
+
+  // If no captionTracks, show legacy captions track
+  if (captionTracks.length === 0) {
+    tracks.push({ key: 'captions', icon: '💬', label: 'כתוביות', color: 'bg-warning', trackColor: 'bg-warning/20', fillColor: 'bg-warning/40' })
+  }
 
   if (bRollItems.length > 0) {
     tracks.push({ key: 'broll', icon: '🖼️', label: 'B-Roll', color: 'bg-pink-500', trackColor: 'bg-pink-500/20', fillColor: 'bg-pink-500/40' })
@@ -422,6 +432,67 @@ export default function TimelinePanel() {
             </div>
           )
         })}
+
+        {/* Per-language caption tracks */}
+        {captionTracks.map((cTrack) => (
+          <div
+            key={cTrack.id}
+            className={`flex items-center gap-2 transition-opacity ${!cTrack.isVisible ? 'opacity-40' : ''}`}
+          >
+            <div className="flex items-center gap-1.5 w-28 shrink-0">
+              <span className="text-xs">💬</span>
+              <span className="text-[11px] text-text-secondary truncate">{cTrack.flag} {cTrack.languageName}</span>
+              <div className="flex items-center gap-0.5 mr-auto">
+                {/* Eye: make visible */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (cTrack.isVisible) {
+                      hideAllCaptionTracks()
+                    } else {
+                      setActiveCaptionTrack(cTrack.id)
+                    }
+                  }}
+                  className={`p-0.5 rounded transition-colors ${cTrack.isVisible ? 'text-yellow-400 hover:text-yellow-300' : 'text-text-muted hover:text-text-primary hover:bg-white/[0.06]'}`}
+                  title={cTrack.isVisible ? 'הסתר' : 'הצג על הסרטון'}
+                >
+                  {cTrack.isVisible ? <Eye size={11} /> : <EyeOff size={11} />}
+                </button>
+                {/* Delete (not source) */}
+                {!cTrack.isSource && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeCaptionTrack(cTrack.id) }}
+                    className="p-0.5 rounded transition-colors text-text-muted hover:text-red-400 hover:bg-white/[0.06]"
+                    title="מחק שפה"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className={`flex-1 h-5 rounded relative overflow-hidden ${cTrack.isVisible ? 'bg-warning/20' : 'bg-white/[0.04]'}`}>
+              {/* Caption blocks */}
+              {duration > 0 && cTrack.captions.map((cap) => (
+                <div
+                  key={cap.id}
+                  className={`absolute top-0 h-full rounded transition-colors ${
+                    cTrack.isVisible
+                      ? 'bg-warning/50'
+                      : 'bg-gray-500/30'
+                  }`}
+                  style={{
+                    left: `${(cap.startTime / duration) * 100}%`,
+                    width: `${Math.max(0.5, ((cap.endTime - cap.startTime) / duration) * 100)}%`,
+                  }}
+                />
+              ))}
+              {/* Playhead on track */}
+              {duration > 0 && (
+                <div className="absolute top-0 bottom-0 w-px bg-pink-400/60 pointer-events-none" style={{ left: `${progressPct}%` }} />
+              )}
+            </div>
+          </div>
+        ))}
       </div>
       {/* Selection info */}
       {selectionStart !== null && selectionEnd !== null && (
