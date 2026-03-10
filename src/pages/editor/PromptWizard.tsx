@@ -1,8 +1,8 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ChevronRight, X, CheckCircle, Loader2, Play, Download,
-  RefreshCw, ExternalLink, Plus, Trash2, Upload, Mic
+  RefreshCw, ExternalLink, Plus, Upload, Mic
 } from 'lucide-react'
 import ConfettiEffect from '../../components/ConfettiEffect'
 import { useUploadsStore } from '../../stores/uploadsStore'
