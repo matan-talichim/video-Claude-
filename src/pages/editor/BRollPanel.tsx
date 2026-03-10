@@ -938,8 +938,19 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
               {bRollHistory
                 .filter(h => !historySearch || (h.prompt || '').includes(historySearch))
                 .map((item) => (
-                  <div key={item.id} className="rounded-lg border border-white/[0.06] overflow-hidden hover:border-accent-purple/30 transition-all group relative">
-                    <img src={item.imageUrl} alt="" className="w-full h-20 object-cover cursor-pointer"
+                  <div key={item.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/x-broll-item', JSON.stringify({
+                        imageUrl: item.imageUrl,
+                        source: item.source,
+                        prompt: item.prompt,
+                        duration: 5,
+                      }))
+                      e.dataTransfer.effectAllowed = 'copy'
+                    }}
+                    className="rounded-lg border border-white/[0.06] overflow-hidden hover:border-accent-purple/30 transition-all group relative cursor-grab active:cursor-grabbing">
+                    <img src={item.imageUrl} alt="" className="w-full h-20 object-cover cursor-pointer" draggable={false}
                       onClick={() => {
                         addBRollItem({
                           id: `broll-${Date.now()}`,
@@ -973,9 +984,19 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
             </div>
             {bRollItems.map((item) => (
               <div key={item.id}
-                className={`rounded-xl border overflow-hidden cursor-pointer transition-all ${selectedBRollId === item.id ? 'border-accent-purple/50 bg-accent-purple/5' : 'border-white/[0.06] hover:border-white/[0.12]'}`}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/x-broll-item', JSON.stringify({
+                    imageUrl: item.imageUrl,
+                    source: item.source,
+                    prompt: item.prompt,
+                    duration: item.duration,
+                  }))
+                  e.dataTransfer.effectAllowed = 'copy'
+                }}
+                className={`rounded-xl border overflow-hidden cursor-grab transition-all active:cursor-grabbing ${selectedBRollId === item.id ? 'border-accent-purple/50 bg-accent-purple/5' : 'border-white/[0.06] hover:border-white/[0.12]'}`}
                 onClick={() => setSelectedBRollId(item.id)}>
-                <img src={item.imageUrl} alt={item.prompt || 'B-Roll'} className="w-full h-16 object-cover" />
+                <img src={item.imageUrl} alt={item.prompt || 'B-Roll'} className="w-full h-16 object-cover pointer-events-none" />
                 <div className="p-1.5 space-y-0.5">
                   {item.prompt && <p className="text-[9px] text-text-muted truncate">{item.prompt}</p>}
                   <div className="flex items-center justify-between">

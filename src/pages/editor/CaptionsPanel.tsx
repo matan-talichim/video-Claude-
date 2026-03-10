@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Subtitles, AlignCenter, AlignRight, AlignLeft, Bold, Italic, Sparkles, Eye, EyeOff, Trash2, Edit3, Plus, ChevronDown, Loader2, X } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
-import type { CaptionStyle, CaptionTrack } from '../../stores/editorStore'
+import type { CaptionStyle } from '../../stores/editorStore'
 import { languageFlags, languageNames } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 
@@ -35,9 +35,8 @@ const availableLanguages = Object.entries(languageNames).map(([code, name]) => (
 }))
 
 export default function CaptionsPanel({ onClose }: { onClose: () => void }) {
-  const { transcript, captions, captionStyle, setCaptionStyle, generateCaptionsFromTranscript, setShowCaptions, showCaptions } = useEditorStore()
+  const { transcript, captions, captionStyle, setCaptionStyle, generateCaptionsFromTranscript } = useEditorStore()
   const captionTracks = useEditorStore((s) => s.captionTracks)
-  const activeCaptionTrackId = useEditorStore((s) => s.activeCaptionTrackId)
   const setActiveCaptionTrack = useEditorStore((s) => s.setActiveCaptionTrack)
   const addCaptionTrack = useEditorStore((s) => s.addCaptionTrack)
   const removeCaptionTrack = useEditorStore((s) => s.removeCaptionTrack)

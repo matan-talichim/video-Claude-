@@ -105,14 +105,31 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
     }
   }
 
-  const handleDragStart = (idx: number) => setDragIdx(idx)
+  const [overIdx, setOverIdx] = useState<number | null>(null)
+
+  const handleDragStart = (e: React.DragEvent, idx: number) => {
+    setDragIdx(idx)
+    // Set drag data so timeline can accept drops
+    const video = videos[idx]
+    if (video) {
+      e.dataTransfer.setData('application/x-media-item', JSON.stringify({
+        id: video.id,
+        fileName: video.fileName,
+        blobUrl: video.blobUrl,
+        duration: video.duration,
+        mediaType: video.mediaType,
+      }))
+      e.dataTransfer.effectAllowed = 'move'
+    }
+  }
   const handleDragOver = (e: React.DragEvent, idx: number) => {
     e.preventDefault()
+    setOverIdx(idx)
     if (dragIdx === null || dragIdx === idx) return
     reorderVideos(projectId, dragIdx, idx)
     setDragIdx(idx)
   }
-  const handleDragEnd = () => setDragIdx(null)
+  const handleDragEnd = () => { setDragIdx(null); setOverIdx(null) }
 
   const handleMerge = async () => {
     if (videos.length < 2) {
@@ -175,14 +192,15 @@ export default function MediaSidebar({ projectId, onClose }: { projectId: string
         {videos.map((video, idx) => (
           <div key={video.id}
             draggable={!isMergedProject}
-            onDragStart={() => handleDragStart(idx)}
+            onDragStart={(e) => handleDragStart(e, idx)}
             onDragOver={(e) => handleDragOver(e, idx)}
             onDragEnd={handleDragEnd}
             className={`flex items-center gap-2 p-2 rounded-lg border transition-all cursor-pointer ${
               video.id === activeVideoId
                 ? 'bg-accent-purple/10 border-accent-purple/30'
                 : 'bg-white/[0.03] border-white/[0.06] hover:border-white/[0.12]'
-            } ${dragIdx === idx ? 'opacity-50' : ''}`}
+            } ${dragIdx === idx ? 'opacity-40 scale-[0.98]' : ''} ${overIdx === idx && dragIdx !== idx ? 'border-t-2 border-t-accent-purple' : ''}`}
+            style={{ transition: 'all 200ms ease' }}
             onClick={() => handleSwitchVideo(video.id)}>
             {!isMergedProject && (
               <GripVertical size={12} className="text-text-muted cursor-grab shrink-0" />

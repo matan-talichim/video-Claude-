@@ -375,6 +375,12 @@ interface EditorState {
   // Count helpers
   countFillerWords: () => Record<string, number>
   countSilences: (threshold: number) => { count: number; totalDuration: number; gaps: Array<{ start: number; end: number; duration: number }> }
+  // Drag-and-drop operations
+  reorderTranscriptSegments: (fromIdx: number, toIdx: number) => void
+  moveBRollItemTime: (id: string, newStartTime: number) => void
+  trimBRollItem: (id: string, edge: 'start' | 'end', newTime: number) => void
+  moveCaptionTime: (trackId: string, captionId: string, newStartTime: number) => void
+  trimCaption: (trackId: string, captionId: string, edge: 'start' | 'end', newTime: number) => void
 }
 
 const defaultCaptionStyle: CaptionStyle = {
@@ -1101,6 +1107,101 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       deletedRegions: [...deletedRegions, { startTime, endTime, description: 'השתקת קטע' }].sort((a, b) => a.startTime - b.startTime),
       isDirty: true, redoHistory: [],
       editHistory: [...editHistory, { action: 'muteTimeRange', description: `הושתק קטע מ-${startTime.toFixed(1)} עד ${endTime.toFixed(1)}`, timestamp: Date.now(), previousTranscript, previousDeletedRegions }],
+    })
+  },
+
+  // ─── Drag-and-drop operations ───
+  reorderTranscriptSegments: (fromIdx, toIdx) => {
+    const { transcript, editHistory } = get()
+    if (fromIdx < 0 || fromIdx >= transcript.length || toIdx < 0 || toIdx >= transcript.length || fromIdx === toIdx) return
+    const previousTranscript = JSON.parse(JSON.stringify(transcript))
+    const newTranscript = [...transcript]
+    const [moved] = newTranscript.splice(fromIdx, 1)
+    newTranscript.splice(toIdx, 0, moved)
+    set({
+      transcript: newTranscript,
+      isDirty: true,
+      redoHistory: [],
+      editHistory: [...editHistory, {
+        action: 'reorderSegments',
+        description: `קטע ${fromIdx + 1} הועבר למיקום ${toIdx + 1}`,
+        timestamp: Date.now(),
+        previousTranscript,
+      }],
+    })
+  },
+
+  moveBRollItemTime: (id, newStartTime) => {
+    const { bRollItems, duration } = get()
+    const item = bRollItems.find((b) => b.id === id)
+    if (!item) return
+    const clamped = Math.max(0, Math.min(newStartTime, duration - item.duration))
+    set({
+      bRollItems: bRollItems.map((b) => b.id === id ? { ...b, startTime: clamped } : b),
+      isDirty: true,
+    })
+  },
+
+  trimBRollItem: (id, edge, newTime) => {
+    const { bRollItems, duration } = get()
+    const item = bRollItems.find((b) => b.id === id)
+    if (!item) return
+    if (edge === 'start') {
+      const clamped = Math.max(0, Math.min(newTime, item.startTime + item.duration - 0.1))
+      const newDuration = (item.startTime + item.duration) - clamped
+      set({
+        bRollItems: bRollItems.map((b) => b.id === id ? { ...b, startTime: clamped, duration: newDuration } : b),
+        isDirty: true,
+      })
+    } else {
+      const endTime = Math.max(item.startTime + 0.1, Math.min(newTime, duration))
+      const newDuration = endTime - item.startTime
+      set({
+        bRollItems: bRollItems.map((b) => b.id === id ? { ...b, duration: newDuration } : b),
+        isDirty: true,
+      })
+    }
+  },
+
+  moveCaptionTime: (trackId, captionId, newStartTime) => {
+    const { captionTracks, duration } = get()
+    set({
+      captionTracks: captionTracks.map((t) => {
+        if (t.id !== trackId) return t
+        return {
+          ...t,
+          captions: t.captions.map((c) => {
+            if (c.id !== captionId) return c
+            const capDuration = c.endTime - c.startTime
+            const clamped = Math.max(0, Math.min(newStartTime, duration - capDuration))
+            return { ...c, startTime: clamped, endTime: clamped + capDuration }
+          }),
+        }
+      }),
+      isDirty: true,
+    })
+  },
+
+  trimCaption: (trackId, captionId, edge, newTime) => {
+    const { captionTracks, duration } = get()
+    set({
+      captionTracks: captionTracks.map((t) => {
+        if (t.id !== trackId) return t
+        return {
+          ...t,
+          captions: t.captions.map((c) => {
+            if (c.id !== captionId) return c
+            if (edge === 'start') {
+              const clamped = Math.max(0, Math.min(newTime, c.endTime - 0.1))
+              return { ...c, startTime: clamped }
+            } else {
+              const clamped = Math.max(c.startTime + 0.1, Math.min(newTime, duration))
+              return { ...c, endTime: clamped }
+            }
+          }),
+        }
+      }),
+      isDirty: true,
     })
   },
 }))

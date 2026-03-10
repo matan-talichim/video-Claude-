@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Search, X, Upload, Link2, Loader2, Pencil, Download, RefreshCw, Clock, Trash2, Copy, FileText, ChevronDown, Merge, SplitSquareVertical, Replace, MessageSquare } from 'lucide-react'
+import { Search, X, Upload, Link2, Loader2, Pencil, Download, RefreshCw, Clock, Trash2, Copy, FileText, ChevronDown, Merge, SplitSquareVertical, Replace, MessageSquare, GripVertical } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useUsageStore } from '../../stores/usageStore'
@@ -56,6 +56,9 @@ export default function TranscriptPanel() {
   const [isReplacingAudio, setIsReplacingAudio] = useState(false)
   const [commentDialog, setCommentDialog] = useState<{ segIdx: number; wordIdx: number } | null>(null)
   const [commentText, setCommentText] = useState('')
+  const reorderTranscriptSegments = useEditorStore((s) => s.reorderTranscriptSegments)
+  const [dragSegIdx, setDragSegIdx] = useState<number | null>(null)
+  const [overSegIdx, setOverSegIdx] = useState<number | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
   const transcriptContainerRef = useRef<HTMLDivElement>(null)
 
@@ -382,9 +385,34 @@ export default function TranscriptPanel() {
           const segStartTime = segment.words[0]?.start ?? 0
           const segEndTime = segment.words[segment.words.length - 1]?.end ?? 0
           const speakerColor = SPEAKER_COLORS[segment.color] || '#5C8AFF'
+          const isSegDragging = dragSegIdx === si
+          const isSegOver = overSegIdx === si && dragSegIdx !== si
           return (
-            <div key={si} data-segment={si} className={`rounded-xl border transition-all ${isActive ? 'bg-accent-purple/10 border-accent-purple/30' : 'border-white/[0.06] hover:border-white/[0.12]'}`}>
+            <div
+              key={si}
+              data-segment={si}
+              draggable
+              onDragStart={(e) => {
+                setDragSegIdx(si)
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', String(si))
+              }}
+              onDragOver={(e) => { e.preventDefault(); setOverSegIdx(si) }}
+              onDrop={(e) => {
+                e.preventDefault()
+                if (dragSegIdx !== null && dragSegIdx !== si) {
+                  reorderTranscriptSegments(dragSegIdx, si)
+                  addToast(`קטע ${dragSegIdx + 1} הועבר למיקום ${si + 1}`, 'info')
+                }
+                setDragSegIdx(null)
+                setOverSegIdx(null)
+              }}
+              onDragEnd={() => { setDragSegIdx(null); setOverSegIdx(null) }}
+              className={`rounded-xl border transition-all ${isActive ? 'bg-accent-purple/10 border-accent-purple/30' : 'border-white/[0.06] hover:border-white/[0.12]'} ${isSegDragging ? 'opacity-40 scale-[0.98]' : ''} ${isSegOver ? 'border-t-2 border-t-accent-purple' : ''}`}
+              style={{ transition: 'all 200ms ease' }}
+            >
               <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.04]">
+                <GripVertical size={12} className="text-text-muted cursor-grab shrink-0 mr-1 hover:text-text-secondary" />
                 <div className="flex items-center gap-2 relative">
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: speakerColor }} />
                   {editingSpeaker === si ? (
