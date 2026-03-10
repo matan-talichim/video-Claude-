@@ -239,4 +239,45 @@ export const api = {
   checkApiStatus: async () => {
     return apiCall('/status', { method: 'GET' })
   },
+
+  // Auto-editor proxy endpoints
+  chatgptPlan: async (systemPrompt: string, userMessage: string, temperature = 0.7) => {
+    return apiCall('/chatgpt-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemPrompt, userMessage, temperature }),
+    })
+  },
+
+  generateBackground: async (prompt: string, aspectRatio = '9:16', style = 'cinematic') => {
+    return apiCall('/generate-background', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, aspectRatio, style }),
+    })
+  },
+
+  generateBroll: async (prompt: string, duration = 4, provider = 'seedance') => {
+    return apiCall('/generate-broll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, duration, provider }),
+    })
+  },
+
+  findMusic: async (searchTerm: string) => {
+    return apiCall('/find-music', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ searchTerm }),
+    })
+  },
+
+  autoEditorTranscribe: async (fileUrl: string) => {
+    return apiCall('/auto-editor/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileUrl }),
+    })
+  },
 }

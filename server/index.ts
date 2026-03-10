@@ -43,8 +43,9 @@ app.use(cors({
   }
 }))
 
-// JSON body parser
-app.use(express.json({ limit: '50mb' }))
+// JSON & URL-encoded body parsers
+app.use(express.json({ limit: '5gb' }))
+app.use(express.urlencoded({ limit: '5gb', extended: true }))
 
 // Multer for file uploads
 const uploadsDir = path.join(__dirname, 'uploads')
@@ -57,7 +58,7 @@ const storage = multer.diskStorage({
     cb(null, uniqueName)
   },
 })
-const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 * 1024 } }) // 2GB max
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 * 1024 } }) // 5GB max
 
 // Serve audio/video files from uploads
 app.use('/api/audio', express.static(uploadsDir))
@@ -1781,6 +1782,272 @@ app.post('/api/generate-image-to-video', async (req, res) => {
   } catch (error: any) {
     console.error('[IMAGE-TO-VIDEO ERROR]', error.message)
     res.status(500).json({ message: 'שגיאה: ' + error.message })
+  }
+})
+
+// ==================== AUTO-EDITOR PROXY ENDPOINTS ====================
+// These endpoints proxy external API calls from the frontend auto-editor
+// to avoid CORS issues (browsers block direct calls to external APIs)
+
+// POST /api/chatgpt-plan — ChatGPT editing plan generation
+app.post('/api/chatgpt-plan', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
+
+    const { systemPrompt, userMessage, temperature = 0.7 } = req.body
+    if (!userMessage) return res.status(400).json({ message: 'חסר userMessage' })
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
+        { role: 'user' as const, content: userMessage },
+      ],
+      temperature,
+      response_format: { type: 'json_object' as const },
+    })
+
+    const content = response.choices?.[0]?.message?.content
+    if (!content) return res.status(500).json({ message: 'ChatGPT לא החזיר תוכן' })
+
+    res.json({ content })
+  } catch (err: any) {
+    console.error('ChatGPT plan error:', err.message)
+    res.status(500).json({ message: err.message || 'שגיאת ChatGPT' })
+  }
+})
+
+// POST /api/generate-background — Nano Banana image generation proxy
+app.post('/api/generate-background', async (req, res) => {
+  try {
+    const apiKey = process.env.NANO_BANANA_API_KEY
+    if (!apiKey) return res.status(400).json({ message: 'NANO_BANANA_API_KEY לא מוגדר בשרת' })
+
+    const { prompt, aspectRatio = '9:16', style = 'cinematic' } = req.body
+    if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
+
+    const response = await fetch('https://api.nanobanana.ai/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ prompt, aspect_ratio: aspectRatio, style }),
+    })
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      return res.status(response.status).json({ message: err.message || response.statusText })
+    }
+
+    const data = await response.json()
+    res.json(data)
+  } catch (err: any) {
+    console.error('Generate background error:', err.message)
+    res.status(500).json({ message: err.message || 'שגיאת יצירת רקע' })
+  }
+})
+
+// POST /api/generate-broll — B-Roll video generation proxy (Seedance or VEO)
+app.post('/api/generate-broll', async (req, res) => {
+  try {
+    const { prompt, duration = 4, provider = 'seedance' } = req.body
+    if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
+
+    if (provider === 'seedance') {
+      const apiKey = process.env.SEEDANCE_API_KEY
+      if (!apiKey) return res.status(400).json({ message: 'SEEDANCE_API_KEY לא מוגדר בשרת' })
+
+      // Start generation job
+      const startResponse = await fetch('https://api.seedance.ai/v1/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          prompt,
+          duration,
+          model: 'seedance-1-5-pro',
+          aspect_ratio: '9:16',
+        }),
+      })
+
+      if (!startResponse.ok) {
+        const err = await startResponse.json().catch(() => ({}))
+        return res.status(startResponse.status).json({ message: err.message || startResponse.statusText })
+      }
+
+      const startData = await startResponse.json()
+      const jobId = startData.job_id || startData.jobId
+
+      // Poll for result
+      for (let i = 0; i < 60; i++) {
+        const pollResponse = await fetch(`https://api.seedance.ai/v1/jobs/${jobId}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        })
+        const pollData = await pollResponse.json()
+
+        if (pollData.status === 'completed' && pollData.output_url) {
+          return res.json({ url: pollData.output_url })
+        }
+        if (pollData.status === 'failed') {
+          return res.status(500).json({ message: pollData.error || 'Seedance נכשל' })
+        }
+        await new Promise((r) => setTimeout(r, 5000))
+      }
+      return res.status(504).json({ message: 'Seedance: זמן המתנה חרג' })
+    } else {
+      // VEO provider
+      const apiKey = process.env.VEO_API_KEY
+      if (!apiKey) return res.status(400).json({ message: 'VEO_API_KEY לא מוגדר בשרת' })
+
+      const startResponse = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/videos:generate',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            prompt,
+            duration_seconds: duration,
+            aspect_ratio: '9:16',
+          }),
+        }
+      )
+
+      if (!startResponse.ok) {
+        const err = await startResponse.json().catch(() => ({}))
+        return res.status(startResponse.status).json({ message: err.message || err.error?.message || startResponse.statusText })
+      }
+
+      const startData = await startResponse.json()
+      const operationId = startData.operationId || startData.name
+
+      // Poll for result
+      for (let i = 0; i < 60; i++) {
+        const pollResponse = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/operations/${operationId}`,
+          { headers: { Authorization: `Bearer ${apiKey}` } }
+        )
+        const pollData = await pollResponse.json()
+
+        if (pollData.done && pollData.response?.videoUrl) {
+          return res.json({ url: pollData.response.videoUrl })
+        }
+        if (pollData.error) {
+          return res.status(500).json({ message: pollData.error.message || 'VEO נכשל' })
+        }
+        await new Promise((r) => setTimeout(r, 5000))
+      }
+      return res.status(504).json({ message: 'VEO: זמן המתנה חרג' })
+    }
+  } catch (err: any) {
+    console.error('Generate B-Roll error:', err.message)
+    res.status(500).json({ message: err.message || 'שגיאת יצירת B-Roll' })
+  }
+})
+
+// POST /api/find-music — Pixabay music search proxy
+app.post('/api/find-music', async (req, res) => {
+  try {
+    const apiKey = process.env.PIXABAY_API_KEY
+    if (!apiKey) return res.status(400).json({ message: 'PIXABAY_API_KEY לא מוגדר בשרת' })
+
+    const { searchTerm } = req.body
+    if (!searchTerm) return res.status(400).json({ message: 'חסר searchTerm' })
+
+    const encodedQuery = encodeURIComponent(searchTerm)
+    const response = await fetch(
+      `https://pixabay.com/api/videos/music/?key=${apiKey}&q=${encodedQuery}&per_page=5`
+    )
+
+    if (!response.ok) {
+      return res.status(response.status).json({ message: `שגיאת Pixabay: ${response.statusText}` })
+    }
+
+    let data = await response.json()
+
+    // Fallback to generic search if no results
+    if (!data.hits || data.hits.length === 0) {
+      const fallbackResponse = await fetch(
+        `https://pixabay.com/api/videos/music/?key=${apiKey}&q=background+music&per_page=5`
+      )
+      data = await fallbackResponse.json()
+    }
+
+    if (!data.hits || data.hits.length === 0) {
+      return res.status(404).json({ message: 'לא נמצאה מוזיקה מתאימה' })
+    }
+
+    const audioUrl = data.hits[0].audio || data.hits[0].audioUrl
+    res.json({ url: audioUrl, tags: data.hits[0].tags })
+  } catch (err: any) {
+    console.error('Find music error:', err.message)
+    res.status(500).json({ message: err.message || 'שגיאת חיפוש מוזיקה' })
+  }
+})
+
+// POST /api/auto-editor/transcribe — Proxy transcription for auto-editor (accepts URL instead of file)
+app.post('/api/auto-editor/transcribe', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
+
+    const { fileUrl } = req.body
+    if (!fileUrl) return res.status(400).json({ message: 'חסר fileUrl' })
+
+    // Download the file from the URL
+    const fileResponse = await fetch(fileUrl)
+    if (!fileResponse.ok) {
+      return res.status(400).json({ message: `שגיאה בהורדת הקובץ: ${fileResponse.statusText}` })
+    }
+
+    const fileBuffer = Buffer.from(await fileResponse.arrayBuffer())
+    const fileName = fileUrl.split('/').pop() || 'audio.mp4'
+    const tempPath = path.join(uploadsDir, `temp-${Date.now()}-${fileName}`)
+    const mp3Path = tempPath.replace(/\.[^.]+$/, '') + '_audio.mp3'
+
+    fs.writeFileSync(tempPath, fileBuffer)
+
+    // Extract audio as compressed MP3
+    const ffmpeg = getFFmpeg()
+    try {
+      execSync(`"${ffmpeg}" -i "${tempPath}" -vn -acodec libmp3lame -ab 64k -ar 16000 -ac 1 "${mp3Path}" -y`, {
+        timeout: 300000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+    } catch {
+      // If ffmpeg fails, try sending original file
+      if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path)
+    }
+
+    const audioPath = fs.existsSync(mp3Path) ? mp3Path : tempPath
+    const audioSize = fs.statSync(audioPath).size
+
+    // Transcribe with Whisper
+    const transcription = await ai.audio.transcriptions.create({
+      file: fs.createReadStream(audioPath),
+      model: 'whisper-1',
+      response_format: 'verbose_json',
+      timestamp_granularities: ['word', 'segment'],
+    })
+
+    // Clean up temp files
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
+    if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path)
+
+    res.json({
+      segments: transcription.segments || [],
+      duration: transcription.duration || 0,
+      text: transcription.text || '',
+    })
+  } catch (err: any) {
+    console.error('Auto-editor transcribe error:', err.message)
+    res.status(500).json({ message: err.message || 'שגיאת תמלול' })
   }
 })
 
