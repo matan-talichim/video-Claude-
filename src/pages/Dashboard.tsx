@@ -8,7 +8,7 @@ import { useProjectsStore } from '../stores/projectsStore'
 import { useUIStore } from '../stores/uiStore'
 import UploadModal from '../components/upload/UploadModal'
 import RecordingModal from '../components/recording/RecordingModal'
-import GenerateFromPromptModal from '../components/generate/GenerateFromPromptModal'
+import PromptWizard from './editor/PromptWizard'
 import PasteScriptModal from '../components/generate/PasteScriptModal'
 
 const quickActions = [
@@ -257,7 +257,7 @@ export default function Dashboard() {
       {/* Modals */}
       <UploadModal isOpen={activeModal === 'upload'} onClose={closeModal} />
       <RecordingModal isOpen={activeModal === 'screenRecord'} onClose={closeModal} />
-      <GenerateFromPromptModal isOpen={activeModal === 'generatePrompt'} onClose={closeModal} />
+      <PromptWizard isOpen={activeModal === 'generatePrompt'} onClose={closeModal} />
       <PasteScriptModal isOpen={activeModal === 'pasteScript'} onClose={closeModal} />
     </div>
   )
