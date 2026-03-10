@@ -73,8 +73,8 @@ app.get('/api/status', async (_req, res) => {
     openai: { connected: !!process.env.OPENAI_API_KEY, model: 'gpt-4o' },
     elevenlabs: { connected: !!process.env.ELEVENLABS_API_KEY },
     deepl: { connected: !!process.env.DEEPL_API_KEY },
-    gemini: { connected: !!process.env.GEMINI_API_KEY },
-    seedance: { connected: !!process.env.SEEDANCE_API_KEY },
+    gemini: { connected: !!process.env.GEMINI_API_KEY, features: ['Nano Banana', 'Veo 3.1'] },
+    seedance: { connected: !!process.env.KIE_API_KEY, provider: 'kie.ai', model: 'seedance-1.5-pro' },
     pixabay: { connected: !!process.env.PIXABAY_API_KEY },
   }
   res.json(status)
@@ -791,7 +791,7 @@ app.post('/api/generate-video', async (req, res) => {
     if (!prompt) return res.status(400).json({ message: 'לא התקבל תיאור לסרטון.' })
 
     // Check for provider-specific API keys
-    if (provider === 'veo' && !process.env.VEO_API_KEY) {
+    if (provider === 'veo' && !process.env.GEMINI_API_KEY) {
       // Fallback to DALL-E image generation with a toast message
       const ai = await getOpenAI()
       if (!ai) return res.status(400).json({ message: 'חבר API של Google Veo בהגדרות, או הגדר OpenAI כחלופה.' })
@@ -812,7 +812,7 @@ app.post('/api/generate-video', async (req, res) => {
       })
     }
 
-    if (provider === 'seedance' && !process.env.SEEDANCE_API_KEY) {
+    if (provider === 'seedance' && !process.env.KIE_API_KEY) {
       const ai = await getOpenAI()
       if (!ai) return res.status(400).json({ message: 'חבר API של Seedance בהגדרות, או הגדר OpenAI כחלופה.' })
 
@@ -983,8 +983,8 @@ ${brandName ? `מותג: ${brandName}${brandSlogan ? `, סלוגן: ${brandSloga
       sceneUrls,
       audioUrl,
       captionSegments,
-      fallback: !process.env.VEO_API_KEY && !process.env.SEEDANCE_API_KEY,
-      message: !process.env.VEO_API_KEY && !process.env.SEEDANCE_API_KEY
+      fallback: !process.env.GEMINI_API_KEY && !process.env.KIE_API_KEY,
+      message: !process.env.GEMINI_API_KEY && !process.env.KIE_API_KEY
         ? 'שירות Veo/Seedance לא מוגדר. נוצרו תמונות AI במקום.'
         : undefined,
     })
@@ -1867,67 +1867,133 @@ app.post('/api/generate-background', async (req, res) => {
   }
 })
 
-// POST /api/generate-broll — B-Roll video generation proxy (Seedance or VEO)
+// POST /api/generate-broll — B-Roll video generation proxy (Seedance via kie.ai or VEO)
 app.post('/api/generate-broll', async (req, res) => {
-  try {
-    const { prompt, duration = 4, provider = 'seedance' } = req.body
-    if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
+  const { prompt, provider, duration = '5', aspectRatio = '9:16', resolution = '720p', generateAudio = false } = req.body
+  if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
-    if (provider === 'seedance') {
-      const apiKey = process.env.SEEDANCE_API_KEY
-      if (!apiKey) return res.status(400).json({ message: 'SEEDANCE_API_KEY לא מוגדר בשרת' })
+  if (provider === 'seedance') {
+    const kieKey = process.env.KIE_API_KEY
+    if (!kieKey) {
+      return res.status(400).json({ message: 'KIE API Key לא מוגדר. הוסף KIE_API_KEY ב-.env (מ-kie.ai)' })
+    }
 
-      // Start generation job
-      const startResponse = await fetch('https://api.seedance.ai/v1/generate', {
+    try {
+      console.log('[SEEDANCE] Creating task via kie.ai...')
+      console.log('[SEEDANCE] Prompt:', prompt)
+      console.log('[SEEDANCE] Duration:', duration, 'Aspect:', aspectRatio)
+
+      // Step 1: Create generation task
+      const createRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${kieKey}`,
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          prompt,
-          duration,
-          model: 'seedance-1-5-pro',
-          aspect_ratio: '9:16',
+          model: 'bytedance/seedance-1.5-pro',
+          input: {
+            prompt: prompt,
+            aspect_ratio: aspectRatio,
+            resolution: resolution,
+            duration: String(duration),
+            fixed_lens: false,
+            generate_audio: generateAudio,
+          }
         }),
       })
 
-      if (!startResponse.ok) {
-        const err = await startResponse.json().catch(() => ({}))
-        return res.status(startResponse.status).json({ message: err.message || startResponse.statusText })
-      }
-
-      const startData = await startResponse.json()
-      const jobId = startData.job_id || startData.jobId
-
-      // Poll for result
-      for (let i = 0; i < 60; i++) {
-        const pollResponse = await fetch(`https://api.seedance.ai/v1/jobs/${jobId}`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
+      if (!createRes.ok) {
+        const err = await createRes.json().catch(() => ({}))
+        console.error('[SEEDANCE] Create task failed:', err)
+        return res.status(createRes.status).json({
+          message: 'שגיאה ביצירת סרטון Seedance: ' + (err.message || err.error || 'Unknown error')
         })
-        const pollData = await pollResponse.json()
-
-        if (pollData.status === 'completed' && pollData.output_url) {
-          return res.json({ url: pollData.output_url })
-        }
-        if (pollData.status === 'failed') {
-          return res.status(500).json({ message: pollData.error || 'Seedance נכשל' })
-        }
-        await new Promise((r) => setTimeout(r, 5000))
       }
-      return res.status(504).json({ message: 'Seedance: זמן המתנה חרג' })
-    } else {
-      // VEO provider — uses GEMINI_API_KEY (same key as Nano Banana)
-      const ai = getGemini()
-      if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
 
+      const taskData = await createRes.json()
+      const taskId = taskData.data?.task_id || taskData.task_id
+      console.log('[SEEDANCE] Task created:', taskId)
+
+      if (!taskId) {
+        return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai' })
+      }
+
+      // Step 2: Poll for result
+      let videoUrl = null
+      let attempts = 0
+      const maxAttempts = 120 // 10 minutes max (5 sec intervals)
+
+      while (!videoUrl && attempts < maxAttempts) {
+        await new Promise(r => setTimeout(r, 5000))
+        attempts++
+
+        const statusRes = await fetch(`https://api.kie.ai/api/v1/jobs/getTaskDetails?task_id=${taskId}`, {
+          headers: { 'Authorization': `Bearer ${kieKey}` },
+        })
+
+        const statusData = await statusRes.json()
+        const status = statusData.data?.status || statusData.status
+
+        console.log(`[SEEDANCE] Poll ${attempts}: status=${status}`)
+
+        if (status === 'completed' || status === 'success') {
+          videoUrl = statusData.data?.output?.video_url ||
+                     statusData.data?.result?.video_url ||
+                     statusData.data?.video_url
+          break
+        }
+
+        if (status === 'failed' || status === 'error') {
+          const errorMsg = statusData.data?.error || statusData.error || 'Generation failed'
+          return res.status(500).json({ message: 'Seedance נכשל: ' + errorMsg })
+        }
+      }
+
+      if (!videoUrl) {
+        return res.status(408).json({ message: 'יצירת הסרטון לקחה יותר מדי זמן. נסה שוב.' })
+      }
+
+      console.log('[SEEDANCE] Video ready:', videoUrl)
+
+      // Step 3: Download video and send to client
+      const videoRes = await fetch(videoUrl)
+      if (!videoRes.ok) {
+        return res.status(500).json({ message: 'שגיאה בהורדת הסרטון מ-Seedance' })
+      }
+
+      const videoBuffer = Buffer.from(await videoRes.arrayBuffer())
+      const videoPath = path.join(__dirname, 'uploads', `seedance_${Date.now()}.mp4`)
+      fs.writeFileSync(videoPath, videoBuffer)
+
+      console.log('[SEEDANCE] Saved:', videoPath, (videoBuffer.length / 1024 / 1024).toFixed(1) + 'MB')
+
+      // Send file to client
+      res.setHeader('Content-Type', 'video/mp4')
+      const readStream = fs.createReadStream(videoPath)
+      readStream.pipe(res)
+      readStream.on('end', () => { try { fs.unlinkSync(videoPath) } catch {} })
+
+    } catch (error: any) {
+      console.error('[SEEDANCE ERROR]', error.message)
+      res.status(500).json({ message: 'שגיאה ב-Seedance: ' + error.message })
+    }
+    return
+  }
+
+  if (provider === 'veo') {
+    // VEO provider — uses GEMINI_API_KEY (same key as Nano Banana)
+    const ai = getGemini()
+    if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
+
+    try {
       console.log('[VEO] Starting video generation with Gemini SDK...')
 
       // Use GoogleGenAI SDK for Veo
       const operation = await ai.models.generateVideos({
         model: 'veo-3.1-generate-preview',
         prompt,
-        config: { aspectRatio: '9:16' },
+        config: { aspectRatio: aspectRatio as any },
       })
 
       // Poll until done
@@ -1943,17 +2009,20 @@ app.post('/api/generate-broll', async (req, res) => {
       }
 
       // Extract video URL from result
-      const videoUrl = result.response?.generatedVideos?.[0]?.video?.uri
-      if (!videoUrl) {
+      const veoVideoUrl = result.response?.generatedVideos?.[0]?.video?.uri
+      if (!veoVideoUrl) {
         return res.status(500).json({ message: 'VEO לא החזיר סרטון' })
       }
 
-      return res.json({ url: videoUrl })
+      return res.json({ url: veoVideoUrl })
+    } catch (err: any) {
+      console.error('[VEO ERROR]', err.message)
+      res.status(500).json({ message: err.message || 'שגיאת יצירת VEO' })
     }
-  } catch (err: any) {
-    console.error('Generate B-Roll error:', err.message)
-    res.status(500).json({ message: err.message || 'שגיאת יצירת B-Roll' })
+    return
   }
+
+  res.status(400).json({ message: 'Provider לא מוכר: ' + provider })
 })
 
 // POST /api/find-music — Pixabay music search proxy
@@ -2093,12 +2162,12 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 סטודיו AI Server running on port ${PORT}`)
-  console.log(`   OpenAI:                     ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   ElevenLabs:                 ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   DeepL:                      ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   OpenAI:      ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   ElevenLabs:  ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   DeepL:       ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Gemini (Nano Banana + Veo): ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   Seedance:                   ${process.env.SEEDANCE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log(`   Pixabay (Music):            ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Seedance (kie.ai): ${process.env.KIE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Pixabay:     ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
 
   // Check FFmpeg availability
   console.log('Checking FFmpeg...')

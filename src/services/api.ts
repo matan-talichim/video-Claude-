@@ -257,12 +257,38 @@ export const api = {
     })
   },
 
-  generateBroll: async (prompt: string, duration = 4, provider = 'seedance') => {
+  generateBroll: async (prompt: string, duration = 4, provider = 'seedance', aspectRatio = '9:16', resolution = '720p', generateAudio = false) => {
     return apiCall('/generate-broll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, duration, provider }),
+      body: JSON.stringify({ prompt, duration: String(duration), provider, aspectRatio, resolution, generateAudio }),
     })
+  },
+
+  generateVideoSeedance: async (
+    prompt: string,
+    aspectRatio = '9:16',
+    duration = '5',
+    resolution = '720p',
+    generateAudio = false
+  ) => {
+    const res = await fetch(API_BASE + '/generate-broll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        provider: 'seedance',
+        duration,
+        aspectRatio,
+        resolution,
+        generateAudio,
+      })
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.message || 'Seedance generation failed')
+    }
+    return res.blob()
   },
 
   findMusic: async (searchTerm: string) => {

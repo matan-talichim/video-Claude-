@@ -2,7 +2,7 @@ import { useAutoEditorStore } from '../store/autoEditorStore'
 
 const API_BASE = 'http://localhost:3001/api'
 
-export async function generateBrollSeedance(prompt: string, duration: number): Promise<string> {
+export async function generateBrollSeedance(prompt: string, duration: number = 5): Promise<string> {
   const log = useAutoEditorStore.getState().addLog
 
   log(`מייצר B-Roll עם Seedance: "${prompt.substring(0, 50)}..."`)
@@ -12,8 +12,11 @@ export async function generateBrollSeedance(prompt: string, duration: number): P
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
-      duration,
       provider: 'seedance',
+      duration: String(duration),
+      aspectRatio: '9:16',
+      resolution: '720p',
+      generateAudio: false,
     }),
   })
 
@@ -22,8 +25,8 @@ export async function generateBrollSeedance(prompt: string, duration: number): P
     throw new Error(`שגיאת Seedance: ${err.message || response.statusText}`)
   }
 
-  const data = await response.json()
+  const blob = await response.blob()
   log('B-Roll (Seedance) נוצר בהצלחה')
 
-  return data.url
+  return URL.createObjectURL(blob)
 }

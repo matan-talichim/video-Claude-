@@ -87,11 +87,11 @@ export default function Settings() {
       description: 'כולל: Nano Banana (תמונות) + Veo (סרטונים)',
     },
     {
-      name: 'Seedance',
+      name: 'Seedance 1.5 Pro',
       icon: '🎬',
       key: 'seedance' as const,
-      features: ['B-Roll AI (סרטונים)', 'Seedance 1.5 Pro'],
-      description: 'יצירת סרטוני B-Roll באמצעות AI',
+      features: ['B-Roll AI (סרטונים)', 'סינמטי + אודיו מקורי', 'ByteDance via kie.ai'],
+      description: 'יצירת סרטוני AI סינמטיים עם אודיו. השג API Key מ-kie.ai',
     },
     {
       name: 'Pixabay',
