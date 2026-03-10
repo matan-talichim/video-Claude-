@@ -17,6 +17,7 @@ import ToastContainer from '../../components/Toast'
 import { useEditorStore } from '../../stores/editorStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
+import { useTimelineStore } from '../../stores/timelineStore'
 
 type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'exports' | 'settings'
 
@@ -40,6 +41,7 @@ export default function Editor() {
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const { loadProject, projectId, projectName, isDirty, markSaved, mediaBlobUrl, transcript, editHistory, deletedRegions } = useEditorStore()
+  const timelineHeight = useTimelineStore((s) => s.timelineHeight)
   const getProject = useProjectsStore((s) => s.getProject)
   const saveEditorState = useProjectsStore((s) => s.saveEditorState)
 
@@ -221,13 +223,7 @@ export default function Editor() {
             <VideoPanel />
           </div>
           {timelineExpanded && (
-            <div className="h-52 shrink-0 relative">
-              <button
-                onClick={() => setTimelineExpanded(false)}
-                className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-8 h-3 bg-bg-elevated rounded-full border border-white/[0.06] hover:border-white/[0.12] flex items-center justify-center cursor-pointer transition-colors"
-              >
-                <div className="w-4 h-0.5 bg-text-muted rounded" />
-              </button>
+            <div className="shrink-0 relative" style={{ height: timelineHeight }}>
               <TimelinePanel />
             </div>
           )}
