@@ -154,6 +154,7 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
   const [selectedAspect, setSelectedAspect] = useState('1792x1024')
   const [selectedStyle, setSelectedStyle] = useState('realistic')
   const [generatedImage, setGeneratedImage] = useState<{ url: string; prompt: string } | null>(null)
+  const [imageModel, setImageModel] = useState<'nano-banana-2' | 'nano-banana-pro' | 'dall-e-3'>('nano-banana-2')
 
   // AI Video state
   const [videoProvider, setVideoProvider] = useState<'veo' | 'seedance'>('veo')
@@ -162,6 +163,10 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
   const [motionIntensity, setMotionIntensity] = useState(50)
   const [cameraMove, setCameraMove] = useState('static')
+  const [videoModel, setVideoModel] = useState<'veo-3.1' | 'veo-3.1-fast' | 'veo-3' | 'veo-3-fast'>('veo-3.1')
+  const [videoAspect, setVideoAspect] = useState('16:9')
+  const [videoResolution, setVideoResolution] = useState('720p')
+  const [videoStatus, setVideoStatus] = useState('')
 
   // Stock state
   const [stockQuery, setStockQuery] = useState('')
@@ -194,12 +199,23 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
     setGeneratedImage(null)
     try {
       const stylePrefix = selectedStyle !== 'realistic' ? `${selectedStyle} style: ` : ''
-      const result = await api.generateImage(`${stylePrefix}${prompt.trim()}`, selectedAspect)
+      const fullPrompt = `${stylePrefix}${prompt.trim()}`
+      let imageUrl: string
+
+      if (imageModel === 'dall-e-3') {
+        const result = await api.generateImage(fullPrompt, selectedAspect)
+        imageUrl = result.url
+      } else {
+        const aspectMap: Record<string, string> = { '1792x1024': '16:9', '1024x1792': '9:16', '1024x1024': '1:1' }
+        const result = await api.generateImageGemini(fullPrompt, aspectMap[selectedAspect] || '16:9', imageModel)
+        imageUrl = result.imageUrl
+      }
+
       addDalleUsage()
-      setGeneratedImage({ url: result.url, prompt: prompt.trim() })
+      setGeneratedImage({ url: imageUrl, prompt: prompt.trim() })
       addToast('תמונה נוצרה בהצלחה!', 'success')
-    } catch {
-      addToast('שגיאה ביצירת תמונה. נסה שוב.', 'error')
+    } catch (e: any) {
+      addToast(e.message || 'שגיאה ביצירת תמונה. נסה שוב.', 'error')
     }
     setIsGenerating(false)
   }
@@ -223,33 +239,57 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
   const handleGenerateVideo = async () => {
     if (!videoPrompt.trim()) return
     setIsGeneratingVideo(true)
+    setVideoStatus('')
     try {
-      const result = await api.generateVideo(videoPrompt.trim(), videoProvider, {
-        duration: 4,
-        style: videoStyle,
-        motion: motionIntensity,
-        camera: cameraMove,
-      })
-      addDalleUsage()
-      if (result.message) {
-        addToast(result.message, 'info')
+      if (videoProvider === 'veo') {
+        // Cost estimate
+        const costMap: Record<string, string> = { 'veo-3.1': '~$4.00', 'veo-3.1-fast': '~$2.00', 'veo-3': '~$4.00', 'veo-3-fast': '~$3.20' }
+        setVideoStatus(`מייצר סרטון AI... עלות משוערת: ${costMap[videoModel] || '~$4.00'} ⏳`)
+
+        const videoBlob = await api.generateVideoVeo(videoPrompt.trim(), videoAspect, videoResolution, videoModel)
+        const blobUrl = URL.createObjectURL(videoBlob)
+        addBRollItem({
+          id: `broll-${Date.now()}`,
+          imageUrl: blobUrl,
+          startTime: currentTime,
+          duration: 8,
+          source: 'video',
+          mediaType: 'video',
+          prompt: videoPrompt.trim(),
+          provider: 'veo',
+        })
+        setVideoPrompt('')
+        addToast('סרטון AI נוצר והתווסף לטיימליין!', 'success')
+      } else {
+        // Seedance (existing flow)
+        const result = await api.generateVideo(videoPrompt.trim(), videoProvider, {
+          duration: 4,
+          style: videoStyle,
+          motion: motionIntensity,
+          camera: cameraMove,
+        })
+        addDalleUsage()
+        if (result.message) {
+          addToast(result.message, 'info')
+        }
+        addBRollItem({
+          id: `broll-${Date.now()}`,
+          imageUrl: result.url,
+          startTime: currentTime,
+          duration: 4,
+          source: result.type === 'image_fallback' ? 'ai' : 'video',
+          mediaType: result.type === 'image_fallback' ? 'image' : 'video',
+          prompt: videoPrompt.trim(),
+          provider: videoProvider,
+        })
+        setVideoPrompt('')
+        addToast('נוסף לציר הזמן!', 'success')
       }
-      addBRollItem({
-        id: `broll-${Date.now()}`,
-        imageUrl: result.url,
-        startTime: currentTime,
-        duration: 4,
-        source: result.type === 'image_fallback' ? 'ai' : 'video',
-        mediaType: result.type === 'image_fallback' ? 'image' : 'video',
-        prompt: videoPrompt.trim(),
-        provider: videoProvider,
-      })
-      setVideoPrompt('')
-      addToast('נוסף לציר הזמן!', 'success')
-    } catch {
-      addToast('שגיאה ביצירת סרטון. נסה שוב.', 'error')
+    } catch (e: any) {
+      addToast(e.message || 'שגיאה ביצירת סרטון. נסה שוב.', 'error')
     }
     setIsGeneratingVideo(false)
+    setVideoStatus('')
   }
 
   const handleStockSearch = async (page = 1) => {
@@ -687,9 +727,27 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
           <div className="space-y-3">
             <div className="space-y-2">
               <label className="text-xs text-text-muted">יצירת תמונה עם AI</label>
-              <div className="flex gap-1 text-[9px]">
-                <span className="px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded">DALL-E 3 (OpenAI)</span>
-                <span className="px-1.5 py-0.5 bg-white/[0.04] text-text-muted rounded opacity-50">Stable Diffusion (בקרוב)</span>
+
+              {/* Model selector */}
+              <div>
+                <label className="text-[10px] text-text-muted">מנוע יצירה</label>
+                <div className="grid grid-cols-3 gap-1 mt-0.5">
+                  <button onClick={() => setImageModel('nano-banana-2')}
+                    className={`py-1.5 text-[10px] rounded border transition-all flex flex-col items-center gap-0.5 ${imageModel === 'nano-banana-2' ? 'bg-purple-500/15 border-purple-500/40 text-purple-400' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                    Nano Banana 2
+                    <span className="text-[8px] opacity-70">~$0.02</span>
+                  </button>
+                  <button onClick={() => setImageModel('nano-banana-pro')}
+                    className={`py-1.5 text-[10px] rounded border transition-all flex flex-col items-center gap-0.5 ${imageModel === 'nano-banana-pro' ? 'bg-purple-500/15 border-purple-500/40 text-purple-400' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                    Nano Banana Pro
+                    <span className="text-[8px] opacity-70">~$0.06</span>
+                  </button>
+                  <button onClick={() => setImageModel('dall-e-3')}
+                    className={`py-1.5 text-[10px] rounded border transition-all flex flex-col items-center gap-0.5 ${imageModel === 'dall-e-3' ? 'bg-purple-500/15 border-purple-500/40 text-purple-400' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                    DALL-E 3
+                    <span className="text-[8px] opacity-70">~$0.04</span>
+                  </button>
+                </div>
               </div>
               <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerateImage() } }}
@@ -757,7 +815,7 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
             <div className="flex gap-1">
               <button onClick={() => setVideoProvider('veo')}
                 className={`flex-1 py-1.5 text-[10px] rounded border transition-all ${videoProvider === 'veo' ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
-                Google Veo
+                Google Veo (Gemini)
               </button>
               <button onClick={() => setVideoProvider('seedance')}
                 className={`flex-1 py-1.5 text-[10px] rounded border transition-all ${videoProvider === 'seedance' ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
@@ -778,17 +836,64 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
             </div>
 
             {videoProvider === 'veo' && (
-              <div>
-                <label className="text-[10px] text-text-muted">סגנון</label>
-                <div className="flex gap-1 mt-0.5">
-                  {['סינמטי', 'ריאליסטי', 'אנימציה'].map(s => (
-                    <button key={s} onClick={() => setVideoStyle(s === 'סינמטי' ? 'cinematic' : s === 'ריאליסטי' ? 'realistic' : 'animation')}
-                      className={`flex-1 py-1 text-[10px] rounded border transition-all ${videoStyle === (s === 'סינמטי' ? 'cinematic' : s === 'ריאליסטי' ? 'realistic' : 'animation') ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
-                      {s}
+              <div className="space-y-2">
+                {/* Veo Model selector */}
+                <div>
+                  <label className="text-[10px] text-text-muted">מנוע וידאו</label>
+                  <div className="grid grid-cols-2 gap-1 mt-0.5">
+                    <button onClick={() => setVideoModel('veo-3.1')}
+                      className={`py-1.5 text-[10px] rounded border transition-all flex flex-col items-center gap-0.5 ${videoModel === 'veo-3.1' ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                      Veo 3.1
+                      <span className="text-[8px] opacity-70">סינמטי, 4K, אודיו</span>
                     </button>
-                  ))}
+                    <button onClick={() => setVideoModel('veo-3.1-fast')}
+                      className={`py-1.5 text-[10px] rounded border transition-all flex flex-col items-center gap-0.5 ${videoModel === 'veo-3.1-fast' ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                      Veo 3.1 Fast
+                      <span className="text-[8px] opacity-70">מהיר, איכותי</span>
+                    </button>
+                    <button onClick={() => setVideoModel('veo-3')}
+                      className={`py-1.5 text-[10px] rounded border transition-all flex flex-col items-center gap-0.5 ${videoModel === 'veo-3' ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                      Veo 3
+                      <span className="text-[8px] opacity-70">יציב, אמין</span>
+                    </button>
+                    <button onClick={() => setVideoModel('veo-3-fast')}
+                      className={`py-1.5 text-[10px] rounded border transition-all flex flex-col items-center gap-0.5 ${videoModel === 'veo-3-fast' ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                      Veo 3 Fast
+                      <span className="text-[8px] opacity-70">הכי מהיר</span>
+                    </button>
+                  </div>
                 </div>
-                <p className="text-[9px] text-text-muted mt-1">משך: 4 שניות (ברירת מחדל Veo)</p>
+
+                {/* Aspect Ratio */}
+                <div>
+                  <label className="text-[10px] text-text-muted">פורמט</label>
+                  <div className="flex gap-1 mt-0.5">
+                    {[{ id: '16:9', label: '16:9 רוחבי' }, { id: '9:16', label: '9:16 אנכי' }, { id: '1:1', label: '1:1 ריבועי' }].map(ar => (
+                      <button key={ar.id} onClick={() => setVideoAspect(ar.id)}
+                        className={`flex-1 py-1 text-[10px] rounded border transition-all ${videoAspect === ar.id ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                        {ar.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Resolution */}
+                <div>
+                  <label className="text-[10px] text-text-muted">רזולוציה</label>
+                  <div className="flex gap-1 mt-0.5">
+                    {[{ id: '720p', label: '720p' }, { id: '1080p', label: '1080p HD' }, { id: '4k', label: '4K' }].map(r => (
+                      <button key={r.id} onClick={() => setVideoResolution(r.id)}
+                        className={`flex-1 py-1 text-[10px] rounded border transition-all ${videoResolution === r.id ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Cost estimate */}
+                <div className="text-[9px] text-text-muted bg-white/[0.03] rounded p-1.5 text-center">
+                  עלות משוערת: {videoModel === 'veo-3.1' ? '~$4.00' : videoModel === 'veo-3.1-fast' ? '~$2.00' : videoModel === 'veo-3' ? '~$4.00' : '~$3.20'} | משך: ~8 שניות
+                </div>
               </div>
             )}
 
@@ -810,12 +915,16 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
+            {videoStatus && (
+              <div className="text-[10px] text-amber-400 bg-amber-500/10 rounded p-2 text-center">{videoStatus}</div>
+            )}
+
             <button onClick={handleGenerateVideo} disabled={!videoPrompt.trim() || isGeneratingVideo}
               className="w-full py-2 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-all flex items-center justify-center gap-2">
               {isGeneratingVideo ? (
                 <><Loader2 size={14} className="animate-spin" /> מייצר סרטון AI... (עד 2 דקות)</>
               ) : (
-                <><Video size={14} /> צור סרטון</>
+                <><Video size={14} /> צור סרטון (~8 שניות)</>
               )}
             </button>
           </div>
