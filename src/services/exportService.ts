@@ -213,6 +213,18 @@ function formatTime(seconds: number, format: 'srt' | 'vtt' | 'simple'): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
 }
 
+export function exportCaptionTrackSubtitles(
+  captions: Array<{ text: string; startTime: number; endTime: number }>,
+  format: 'srt' | 'vtt'
+): Blob {
+  const segments = captions.map((c) => ({
+    text: c.text,
+    start: c.startTime,
+    end: c.endTime,
+  }))
+  return exportSubtitles(segments, format)
+}
+
 export function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

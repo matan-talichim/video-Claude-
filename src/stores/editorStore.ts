@@ -163,6 +163,38 @@ export interface EditedFile {
   appliedEdits: string[]
 }
 
+export interface CaptionTrack {
+  id: string
+  language: string
+  languageName: string
+  flag: string
+  captions: Array<{ id: string; text: string; startTime: number; endTime: number }>
+  isVisible: boolean
+  isSource: boolean
+}
+
+export const languageFlags: Record<string, string> = {
+  'he': '🇮🇱', 'en': '🇬🇧', 'ar': '🇸🇦', 'ru': '🇷🇺',
+  'fr': '🇫🇷', 'es': '🇪🇸', 'de': '🇩🇪', 'ja': '🇯🇵',
+  'zh': '🇨🇳', 'ko': '🇰🇷', 'hi': '🇮🇳', 'tr': '🇹🇷',
+  'pt': '🇧🇷', 'it': '🇮🇹', 'nl': '🇳🇱', 'pl': '🇵🇱',
+  'cs': '🇨🇿', 'ro': '🇷🇴', 'bg': '🇧🇬', 'el': '🇬🇷',
+  'fi': '🇫🇮', 'sv': '🇸🇪', 'da': '🇩🇰', 'uk': '🇺🇦',
+  'id': '🇮🇩', 'hu': '🇭🇺', 'nb': '🇳🇴', 'vi': '🇻🇳',
+  'sk': '🇸🇰', 'sl': '🇸🇮', 'et': '🇪🇪', 'lv': '🇱🇻', 'lt': '🇱🇹',
+}
+
+export const languageNames: Record<string, string> = {
+  'he': 'עברית', 'en': 'English', 'ar': 'العربية', 'ru': 'Русский',
+  'fr': 'Français', 'es': 'Español', 'de': 'Deutsch', 'ja': '日本語',
+  'zh': '中文', 'ko': '한국어', 'hi': 'हिन्दी', 'tr': 'Türkçe',
+  'pt': 'Português', 'it': 'Italiano', 'nl': 'Nederlands', 'pl': 'Polski',
+  'cs': 'Čeština', 'ro': 'Română', 'bg': 'Български', 'el': 'Ελληνικά',
+  'fi': 'Suomi', 'sv': 'Svenska', 'da': 'Dansk', 'uk': 'Українська',
+  'id': 'Bahasa', 'hu': 'Magyar', 'nb': 'Norsk', 'vi': 'Tiếng Việt',
+  'sk': 'Slovenčina', 'sl': 'Slovenščina', 'et': 'Eesti', 'lv': 'Latviešu', 'lt': 'Lietuvių',
+}
+
 interface EditorState {
   projectId: string | null
   projectName: string
@@ -205,6 +237,16 @@ interface EditorState {
     captions: TrackState
     broll: TrackState
   }
+
+  // Multi-language caption tracks
+  captionTracks: CaptionTrack[]
+  activeCaptionTrackId: string | null
+  setActiveCaptionTrack: (trackId: string) => void
+  addCaptionTrack: (language: string, languageName: string, flag: string, captions: CaptionTrack['captions']) => void
+  removeCaptionTrack: (trackId: string) => void
+  updateCaptionInTrack: (trackId: string, captionIndex: number, newText: string) => void
+  hideAllCaptionTracks: () => void
+  initSourceCaptionTrack: () => void
 
   // Audio panel settings
   masterVolume: number
@@ -395,6 +437,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   appliedEdits: [],
   editedFiles: [],
 
+  // Multi-language caption tracks
+  captionTracks: [],
+  activeCaptionTrackId: null,
+
   // Audio panel defaults
   masterVolume: 80,
   noiseReduction: false,
@@ -508,6 +554,86 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   removeBRollHistoryItem: (id) => set((s) => ({ bRollHistory: s.bRollHistory.filter((h) => h.id !== id) })),
   addMutedRegion: (start, end) => set((s) => ({ mutedRegions: [...s.mutedRegions, { start, end }] })),
   setTranslatedCaptions: (captions, lang) => set({ translatedCaptions: captions.map((c) => ({ ...c, language: lang })) }),
+
+  setActiveCaptionTrack: (trackId) => set((s) => ({
+    captionTracks: s.captionTracks.map((t) => ({
+      ...t,
+      isVisible: t.id === trackId,
+    })),
+    activeCaptionTrackId: trackId,
+    showCaptions: true,
+  })),
+
+  addCaptionTrack: (language, languageName, flag, captions) => set((s) => ({
+    captionTracks: [...s.captionTracks, {
+      id: `track-${language}-${Date.now()}`,
+      language,
+      languageName,
+      flag,
+      captions,
+      isVisible: false,
+      isSource: false,
+    }],
+    isDirty: true,
+  })),
+
+  removeCaptionTrack: (trackId) => set((s) => {
+    const newTracks = s.captionTracks.filter((t) => t.id !== trackId)
+    return {
+      captionTracks: newTracks,
+      activeCaptionTrackId: s.activeCaptionTrackId === trackId
+        ? (newTracks.find((t) => t.isVisible)?.id ?? null)
+        : s.activeCaptionTrackId,
+      isDirty: true,
+    }
+  }),
+
+  updateCaptionInTrack: (trackId, captionIndex, newText) => set((s) => ({
+    captionTracks: s.captionTracks.map((t) => {
+      if (t.id !== trackId) return t
+      const newCaptions = [...t.captions]
+      if (newCaptions[captionIndex]) {
+        newCaptions[captionIndex] = { ...newCaptions[captionIndex], text: newText }
+      }
+      return { ...t, captions: newCaptions }
+    }),
+    isDirty: true,
+  })),
+
+  hideAllCaptionTracks: () => set((s) => ({
+    captionTracks: s.captionTracks.map((t) => ({ ...t, isVisible: false })),
+    activeCaptionTrackId: null,
+  })),
+
+  initSourceCaptionTrack: () => {
+    const { captions, captionTracks } = get()
+    if (captions.length === 0) return
+    const hasSource = captionTracks.some((t) => t.isSource)
+    if (hasSource) {
+      set((s) => ({
+        captionTracks: s.captionTracks.map((t) =>
+          t.isSource
+            ? { ...t, captions: captions.map((c) => ({ id: c.id, text: c.text, startTime: c.startTime, endTime: c.endTime })) }
+            : t
+        ),
+      }))
+    } else {
+      const trackId = `track-he-${Date.now()}`
+      set((s) => ({
+        captionTracks: [{
+          id: trackId,
+          language: 'he',
+          languageName: 'עברית',
+          flag: '🇮🇱',
+          captions: captions.map((c) => ({ id: c.id, text: c.text, startTime: c.startTime, endTime: c.endTime })),
+          isVisible: true,
+          isSource: true,
+        }, ...s.captionTracks],
+        activeCaptionTrackId: trackId,
+      }))
+    }
+  },
+
   addEditHistory: (entry) => set((s) => ({
     editHistory: [...s.editHistory, { ...entry, timestamp: Date.now() }],
     redoHistory: [],
@@ -643,6 +769,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       showCaptions: false,
       captions: [],
       captionStyle: { ...defaultCaptionStyle },
+      captionTracks: [],
+      activeCaptionTrackId: null,
       bRollItems: [],
       waveformData: null,
       speakers: [],
@@ -656,6 +784,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     mediaFile: null, mediaBlobUrl: null, mediaType: null, waveformData: null,
     currentTime: 0, duration: 0, isPlaying: false, playbackSpeed: 1, volume: 80,
     transcript: [], showCaptions: false, captions: [], captionStyle: { ...defaultCaptionStyle },
+    captionTracks: [], activeCaptionTrackId: null,
     bRollItems: [], bRollHistory: [], selectedBRollId: null, mutedRegions: [], translatedCaptions: [],
     rangeStart: null, rangeEnd: null, editHistory: [], redoHistory: [], lastSavedAt: null, isDirty: false,
     speakers: [], editorEffects: {}, deletedRegions: [], chapters: [], enhancedAudioBuffer: null,
@@ -857,6 +986,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
 
     set({ captions, showCaptions: true })
+    // Auto-init the source caption track
+    setTimeout(() => get().initSourceCaptionTrack(), 0)
   },
 
   renameSpeaker: (oldName, newName) => {

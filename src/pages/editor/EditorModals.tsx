@@ -827,12 +827,16 @@ function ShareContent() {
 function ExportContent() {
   const { addToast, closeModal } = useUIStore()
   const { mediaBlobUrl, projectName, transcript, deletedRegions, duration, appliedEdits, captions, showCaptions } = useEditorStore()
+  const captionTracks = useEditorStore((s) => s.captionTracks)
   const addEditedFile = useEditorStore((s) => s.addEditedFile)
   const [selectedFormats, setSelectedFormats] = useState<Set<string>>(new Set())
   const [exporting, setExporting] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, currentFormat: '' })
   const [exportError, setExportError] = useState<string | null>(null)
   const [burnCaptions, setBurnCaptions] = useState(false)
+  const [burnLanguage, setBurnLanguage] = useState<string>('')
+  const [srtExportTracks, setSrtExportTracks] = useState<Set<string>>(new Set())
+  const [subtitleFormat, setSubtitleFormat] = useState<'srt' | 'vtt'>('srt')
 
   const formats = [
     { id: 'mp4-720', label: 'MP4 720p', desc: 'קובץ קטן', category: 'video', icon: '🎬' },
@@ -929,8 +933,35 @@ function ExportContent() {
       }
     }
 
+    // Export per-language subtitle files
+    if (srtExportTracks.size > 0) {
+      for (const trackId of srtExportTracks) {
+        const track = captionTracks.find((t) => t.id === trackId)
+        if (!track) continue
+        const segments = track.captions.map((c) => ({
+          text: c.text,
+          start: c.startTime,
+          end: c.endTime,
+        }))
+        const blob = exportSubtitles(segments, subtitleFormat)
+        const fileName = `${projectName || 'export'}_${track.language}.${subtitleFormat}`
+        triggerExportDownload(blob, fileName)
+        addEditedFile({
+          id: crypto.randomUUID(),
+          name: `${projectName || 'export'}_${track.language}`,
+          format: subtitleFormat,
+          duration: duration || 0,
+          blob,
+          blobUrl: URL.createObjectURL(blob),
+          createdAt: new Date(),
+          appliedEdits: [`כתוביות ${track.languageName}`],
+        })
+      }
+    }
+
     setExporting(false)
-    addToast(`יוצאו ${selected.length} קבצים`, 'success')
+    const totalExported = selected.length + srtExportTracks.size
+    addToast(`יוצאו ${totalExported} קבצים`, 'success')
     setTimeout(() => closeModal(), 800)
   }
 
@@ -1005,8 +1036,72 @@ function ExportContent() {
             )
           })}
 
-          {/* Burn captions toggle */}
-          {showCaptions && captions.length > 0 && (
+          {/* Multi-language captions section */}
+          {captionTracks.length > 0 && (
+            <div>
+              <h4 className="text-sm font-medium text-text-primary mb-2">📝 כתוביות</h4>
+              <div className="space-y-3">
+                {/* Burn captions on video */}
+                <div className="p-3 bg-white/[0.04] rounded-xl border border-white/[0.06] space-y-2">
+                  <div className="text-xs text-text-muted">צרוב כתוביות על הסרטון:</div>
+                  <select
+                    value={burnLanguage}
+                    onChange={(e) => { setBurnLanguage(e.target.value); setBurnCaptions(!!e.target.value) }}
+                    className="w-full bg-white/[0.06] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-text-primary outline-none"
+                    dir="rtl"
+                  >
+                    <option value="">ללא</option>
+                    {captionTracks.map((track) => (
+                      <option key={track.id} value={track.id}>
+                        {track.flag} {track.languageName}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-text-muted">ניתן לצרוב שפה אחת בלבד על הסרטון</p>
+                </div>
+
+                {/* Export subtitle files per language */}
+                <div className="p-3 bg-white/[0.04] rounded-xl border border-white/[0.06] space-y-2">
+                  <div className="text-xs text-text-muted">ייצוא קבצי כתוביות:</div>
+                  {captionTracks.map((track) => (
+                    <label key={track.id} className="flex items-center gap-2 px-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={srtExportTracks.has(track.id)}
+                        onChange={() => {
+                          const next = new Set(srtExportTracks)
+                          if (next.has(track.id)) next.delete(track.id)
+                          else next.add(track.id)
+                          setSrtExportTracks(next)
+                        }}
+                        className="w-3.5 h-3.5 rounded accent-accent-purple"
+                      />
+                      <span className="text-sm text-text-primary">{track.flag} {track.languageName}</span>
+                      <span className="text-[10px] text-text-muted mr-auto">→ {subtitleFormat.toUpperCase()}</span>
+                    </label>
+                  ))}
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] text-text-muted">פורמט:</span>
+                    <button
+                      onClick={() => setSubtitleFormat('srt')}
+                      className={`px-2 py-0.5 rounded text-[10px] ${subtitleFormat === 'srt' ? 'bg-accent-purple/20 text-accent-purple' : 'bg-white/[0.04] text-text-muted'}`}
+                    >
+                      SRT
+                    </button>
+                    <button
+                      onClick={() => setSubtitleFormat('vtt')}
+                      className={`px-2 py-0.5 rounded text-[10px] ${subtitleFormat === 'vtt' ? 'bg-accent-purple/20 text-accent-purple' : 'bg-white/[0.04] text-text-muted'}`}
+                    >
+                      VTT
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Legacy burn captions toggle (when no tracks) */}
+          {captionTracks.length === 0 && showCaptions && captions.length > 0 && (
             <div className="flex items-center justify-between p-3 bg-white/[0.04] rounded-xl border border-white/[0.06]">
               <span className="text-sm text-text-primary">צרוב כתוביות בוידאו</span>
               <div onClick={() => setBurnCaptions(!burnCaptions)} className={`w-10 h-5 rounded-full cursor-pointer relative transition-colors ${burnCaptions ? 'bg-accent-purple' : 'bg-white/[0.12]'}`}>
