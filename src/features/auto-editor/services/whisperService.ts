@@ -1,5 +1,7 @@
 import { useAutoEditorStore } from '../store/autoEditorStore'
 
+const API_BASE = 'http://localhost:3001/api'
+
 export interface TranscriptSegment {
   start: number
   end: number
@@ -17,13 +19,6 @@ export interface FullTranscript {
   totalDuration: number
   segments: TranscriptSegment[]
   silences: Silence[]
-}
-
-async function urlToFile(url: string): Promise<File> {
-  const response = await fetch(url)
-  const blob = await response.blob()
-  const fileName = url.split('/').pop() || 'audio.mp4'
-  return new File([blob], fileName, { type: blob.type })
 }
 
 function detectSilences(segments: TranscriptSegment[]): Silence[] {
@@ -76,26 +71,15 @@ export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscr
     videoUrls.map(async (url, index) => {
       log(`מתמלל קובץ ${index + 1}/${videoUrls.length}...`)
 
-      const file = await urlToFile(url)
-
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('model', 'whisper-1')
-      formData.append('response_format', 'verbose_json')
-      formData.append('timestamp_granularities[]', 'word')
-      formData.append('timestamp_granularities[]', 'segment')
-
-      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      const response = await fetch(`${API_BASE}/auto-editor/transcribe`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-        },
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileUrl: url }),
       })
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
-        throw new Error(`שגיאת תמלול: ${err.error?.message || response.statusText}`)
+        throw new Error(`שגיאת תמלול: ${err.message || response.statusText}`)
       }
 
       const data = await response.json()

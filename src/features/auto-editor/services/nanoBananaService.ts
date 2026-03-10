@@ -1,24 +1,18 @@
 import { useAutoEditorStore } from '../store/autoEditorStore'
 
+const API_BASE = 'http://localhost:3001/api'
+
 export async function generateBackground(prompt: string): Promise<string> {
   const log = useAutoEditorStore.getState().addLog
 
   log('מייצר תמונת רקע עם Nano Banana...')
 
-  const apiKey = import.meta.env.VITE_NANO_BANANA_API_KEY
-  if (!apiKey) {
-    throw new Error('VITE_NANO_BANANA_API_KEY לא מוגדר')
-  }
-
-  const response = await fetch('https://api.nanobanana.ai/generate', {
+  const response = await fetch(`${API_BASE}/generate-background`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
-      aspect_ratio: '9:16',
+      aspectRatio: '9:16',
       style: 'cinematic',
     }),
   })

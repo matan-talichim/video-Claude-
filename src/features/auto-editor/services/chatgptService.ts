@@ -1,6 +1,8 @@
 import { useAutoEditorStore, type AutoEditorInput } from '../store/autoEditorStore'
 import type { FullTranscript } from './whisperService'
 
+const API_BASE = 'http://localhost:3001/api'
+
 export interface VideoPlan {
   videoIndex: number
   sourceSegments: Array<{ start: number; end: number; sourceFile: number }>
@@ -58,30 +60,23 @@ export async function planWithChatGPT(
 אורך יעד: ${input.targetDuration} שניות
 מספר סרטונים: ${input.numberOfVideos}`
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetch(`${API_BASE}/chatgpt-plan`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
-      ],
+      systemPrompt: SYSTEM_PROMPT,
+      userMessage,
       temperature: 0.7,
-      response_format: { type: 'json_object' },
     }),
   })
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
-    throw new Error(`שגיאת ChatGPT: ${err.error?.message || response.statusText}`)
+    throw new Error(`שגיאת ChatGPT: ${err.message || response.statusText}`)
   }
 
   const data = await response.json()
-  const content = data.choices?.[0]?.message?.content
+  const content = data.content
 
   if (!content) {
     throw new Error('ChatGPT לא החזיר תוכן')
