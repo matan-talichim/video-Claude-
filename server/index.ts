@@ -827,6 +827,160 @@ app.post('/api/generate-video', async (req, res) => {
   }
 })
 
+// ==================== GENERATE VIDEO PROJECT (Full Wizard) ====================
+
+app.post('/api/generate-video-project', async (req, res) => {
+  try {
+    const {
+      prompt, videoType, platform, style, format, duration,
+      voiceType, voiceLanguage, voiceTone,
+      captionsEnabled, captionLanguages,
+      musicType, musicMood,
+      brandName, brandSlogan,
+    } = req.body
+
+    if (!prompt) return res.status(400).json({ message: 'לא התקבל תיאור לסרטון.' })
+
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר. הגדר אותו בקובץ .env' })
+
+    const sceneSeconds = platform === 'images' ? 5 : 4
+    const sceneCount = Math.ceil(duration / sceneSeconds)
+
+    // Step 1: Generate script with GPT-4o
+    const scriptPrompt = `אתה כותב סקריפטים מקצועיים לסרטונים.
+
+צור סקריפט ל${videoType} בסגנון ${style}.
+משך: ${duration} שניות.
+כל סצנה: ${sceneSeconds} שניות.
+מספר סצנות: ${sceneCount}.
+
+הפרומפט: ${prompt}
+${brandName ? `מותג: ${brandName}${brandSlogan ? `, סלוגן: ${brandSlogan}` : ''}` : ''}
+
+החזר JSON בלבד:
+{
+  "title": "שם הסרטון",
+  "scenes": [
+    {
+      "sceneNumber": 1,
+      "duration": ${sceneSeconds},
+      "visualPrompt": "תיאור מפורט באנגלית למנוע AI - what the viewer sees",
+      "narration": "מה הקריין אומר בעברית (או ריק אם אין דיבור בסצנה זו)",
+      "captionText": "טקסט הכתובית",
+      "cameraMovement": "static/pan-left/pan-right/zoom-in/zoom-out/tracking",
+      "mood": "dramatic/happy/calm/energetic",
+      "transition": "fade/cut/dissolve/wipe"
+    }
+  ],
+  "musicMood": "energetic/calm/dramatic/happy/corporate",
+  "overallNarration": "הטקסט המלא של הקריינות"
+}`
+
+    const scriptResult = await ai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: scriptPrompt }],
+      response_format: { type: 'json_object' },
+    })
+
+    let script: any
+    try {
+      script = JSON.parse(scriptResult.choices[0]?.message?.content || '{}')
+    } catch {
+      return res.status(500).json({ message: 'שגיאה בניתוח הסקריפט.' })
+    }
+
+    // Step 2: Generate scene images with DALL-E 3 (fallback for Veo/Seedance)
+    const sizeMap: Record<string, string> = {
+      '16:9': '1792x1024',
+      '9:16': '1024x1792',
+      '1:1': '1024x1024',
+      '4:5': '1024x1024',
+    }
+    const imageSize = sizeMap[format] || '1792x1024'
+
+    const sceneUrls: string[] = []
+    for (const scene of (script.scenes || [])) {
+      try {
+        const stylePrefix = style === 'animation' ? 'Animated illustration style' :
+                           style === 'cinematic' ? 'Cinematic film shot' :
+                           style === 'realistic' ? 'Photorealistic' :
+                           style === 'minimal' ? 'Clean minimal design' :
+                           style === 'dramatic' ? 'High contrast dramatic' :
+                           style === 'neon' ? 'Neon-lit futuristic' :
+                           style === 'retro' ? 'Vintage retro style' :
+                           style === 'organic' ? 'Natural organic style' :
+                           'Professional'
+
+        const image = await ai.images.generate({
+          model: 'dall-e-3',
+          prompt: `${stylePrefix}: ${scene.visualPrompt}. Camera: ${scene.cameraMovement}. Mood: ${scene.mood}.`,
+          n: 1,
+          size: imageSize,
+          quality: 'standard',
+        })
+        sceneUrls.push(image.data[0]?.url || '')
+      } catch (err: any) {
+        console.error(`Scene ${scene.sceneNumber} generation error:`, err.message)
+        sceneUrls.push('')
+      }
+    }
+
+    // Step 3: Generate voiceover with ElevenLabs (if configured and requested)
+    let audioUrl: string | undefined
+    if (voiceType === 'ai' && script.overallNarration && process.env.ELEVENLABS_API_KEY) {
+      try {
+        const voiceId = 'EXAVITQu4vr4xnSDxMaL' // Default voice
+        const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+          method: 'POST',
+          headers: {
+            'xi-api-key': process.env.ELEVENLABS_API_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: script.overallNarration,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+          }),
+        })
+        if (ttsRes.ok) {
+          const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
+          const audioFileName = `tts-${Date.now()}.mp3`
+          const audioPath = path.join(uploadsDir, audioFileName)
+          fs.writeFileSync(audioPath, audioBuffer)
+          audioUrl = `/api/audio/${audioFileName}`
+        }
+      } catch (err: any) {
+        console.error('TTS error:', err.message)
+      }
+    }
+
+    // Step 4: Generate caption segments
+    const captionSegments = (script.scenes || []).map((scene: any, i: number) => ({
+      sceneNumber: scene.sceneNumber || i + 1,
+      startTime: i * sceneSeconds,
+      endTime: (i + 1) * sceneSeconds,
+      text: scene.captionText || scene.narration || '',
+    }))
+
+    return res.json({
+      script,
+      sceneUrls,
+      audioUrl,
+      captionSegments,
+      fallback: !process.env.VEO_API_KEY && !process.env.SEEDANCE_API_KEY,
+      message: !process.env.VEO_API_KEY && !process.env.SEEDANCE_API_KEY
+        ? 'שירות Veo/Seedance לא מוגדר. נוצרו תמונות AI במקום.'
+        : undefined,
+    })
+  } catch (error: any) {
+    if (error.status === 401) return res.status(401).json({ message: 'מפתח ה-API לא תקין.' })
+    if (error.status === 429) return res.status(429).json({ message: 'הגעת למגבלת השימוש.' })
+    console.error('Video project generation error:', error.message)
+    return res.status(500).json({ message: 'שגיאה ביצירת פרויקט הסרטון. נסה שוב.' })
+  }
+})
+
 // ==================== STOCK MEDIA SEARCH ====================
 
 app.get('/api/stock/search', async (req, res) => {

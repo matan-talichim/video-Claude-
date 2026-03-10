@@ -169,6 +169,30 @@ export const api = {
     return apiCall('/merge', { method: 'POST', body: formData })
   },
 
+  generateVideoProject: async (params: {
+    prompt: string
+    videoType: string
+    platform: string
+    style: string
+    format: string
+    duration: number
+    voiceType: string
+    voiceLanguage: string
+    voiceTone: string
+    captionsEnabled: boolean
+    captionLanguages: string[]
+    musicType: string
+    musicMood: string
+    brandName?: string
+    brandSlogan?: string
+  }) => {
+    return apiCall('/generate-video-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    })
+  },
+
   checkApiStatus: async () => {
     return apiCall('/status', { method: 'GET' })
   },
