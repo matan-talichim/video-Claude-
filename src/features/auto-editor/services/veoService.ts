@@ -2,7 +2,7 @@ import { useAutoEditorStore } from '../store/autoEditorStore'
 
 const API_BASE = 'http://localhost:3001/api'
 
-export async function generateBrollVeo(prompt: string, duration: number): Promise<string> {
+export async function generateBrollVeo(prompt: string, duration: number = 5): Promise<string> {
   const log = useAutoEditorStore.getState().addLog
 
   log(`מייצר B-Roll עם VEO: "${prompt.substring(0, 50)}..."`)
@@ -12,8 +12,10 @@ export async function generateBrollVeo(prompt: string, duration: number): Promis
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
-      duration,
       provider: 'veo',
+      duration: String(duration),
+      aspectRatio: '9:16',
+      resolution: '720p',
     }),
   })
 

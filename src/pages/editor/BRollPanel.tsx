@@ -167,6 +167,11 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
   const [videoAspect, setVideoAspect] = useState('16:9')
   const [videoResolution, setVideoResolution] = useState('720p')
   const [videoStatus, setVideoStatus] = useState('')
+  // Seedance-specific state
+  const [seedanceAspect, setSeedanceAspect] = useState('9:16')
+  const [seedanceResolution, setSeedanceResolution] = useState('720p')
+  const [seedanceDuration, setSeedanceDuration] = useState('5')
+  const [seedanceAudio, setSeedanceAudio] = useState(false)
 
   // Stock state
   const [stockQuery, setStockQuery] = useState('')
@@ -261,29 +266,28 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
         setVideoPrompt('')
         addToast('סרטון AI נוצר והתווסף לטיימליין!', 'success')
       } else {
-        // Seedance (existing flow)
-        const result = await api.generateVideo(videoPrompt.trim(), videoProvider, {
-          duration: 4,
-          style: videoStyle,
-          motion: motionIntensity,
-          camera: cameraMove,
-        })
-        addDalleUsage()
-        if (result.message) {
-          addToast(result.message, 'info')
-        }
+        // Seedance 1.5 Pro via kie.ai
+        setVideoStatus('מייצר סרטון AI עם Seedance 1.5 Pro...')
+        const videoBlob = await api.generateVideoSeedance(
+          videoPrompt.trim(),
+          seedanceAspect,
+          seedanceDuration,
+          seedanceResolution,
+          seedanceAudio,
+        )
+        const blobUrl = URL.createObjectURL(videoBlob)
         addBRollItem({
           id: `broll-${Date.now()}`,
-          imageUrl: result.url,
+          imageUrl: blobUrl,
           startTime: currentTime,
-          duration: 4,
-          source: result.type === 'image_fallback' ? 'ai' : 'video',
-          mediaType: result.type === 'image_fallback' ? 'image' : 'video',
+          duration: Number(seedanceDuration),
+          source: 'video',
+          mediaType: 'video',
           prompt: videoPrompt.trim(),
-          provider: videoProvider,
+          provider: 'seedance',
         })
         setVideoPrompt('')
-        addToast('נוסף לציר הזמן!', 'success')
+        addToast('סרטון Seedance נוצר והתווסף לטיימליין!', 'success')
       }
     } catch (e: any) {
       addToast(e.message || 'שגיאה ביצירת סרטון. נסה שוב.', 'error')
@@ -819,7 +823,8 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
               </button>
               <button onClick={() => setVideoProvider('seedance')}
                 className={`flex-1 py-1.5 text-[10px] rounded border transition-all ${videoProvider === 'seedance' ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
-                Seedance
+                <span>Seedance 1.5 Pro</span>
+                <span className="block text-[8px] opacity-60">ByteDance via kie.ai</span>
               </button>
             </div>
 
@@ -899,18 +904,46 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
 
             {videoProvider === 'seedance' && (
               <div className="space-y-2">
-                <SliderInput label="עוצמת תנועה" value={motionIntensity} onChange={setMotionIntensity} min={0} max={100} unit="" />
-                <div className="flex justify-between text-[8px] text-text-muted -mt-1"><span>עדין</span><span>דרמטי</span></div>
                 <div>
-                  <label className="text-[10px] text-text-muted">תנועת מצלמה</label>
-                  <div className="grid grid-cols-3 gap-1 mt-0.5">
-                    {[{ id: 'static', label: 'סטטי' }, { id: 'pan', label: 'פאן' }, { id: 'zoom-in', label: 'זום אין' }, { id: 'zoom-out', label: 'זום אאוט' }, { id: 'tracking', label: 'מעקב' }].map(c => (
-                      <button key={c.id} onClick={() => setCameraMove(c.id)}
-                        className={`py-1 text-[10px] rounded border transition-all ${cameraMove === c.id ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
-                        {c.label}
+                  <label className="text-[10px] text-text-muted">פורמט</label>
+                  <div className="flex gap-1 mt-0.5">
+                    {[{ id: '9:16', label: '9:16 אנכי' }, { id: '16:9', label: '16:9 רוחבי' }, { id: '1:1', label: '1:1 ריבועי' }, { id: '4:3', label: '4:3' }, { id: '3:4', label: '3:4' }, { id: '21:9', label: '21:9 קולנועי' }].map(ar => (
+                      <button key={ar.id} onClick={() => setSeedanceAspect(ar.id)}
+                        className={`flex-1 py-1 text-[10px] rounded border transition-all ${seedanceAspect === ar.id ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                        {ar.label}
                       </button>
                     ))}
                   </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-text-muted">רזולוציה</label>
+                  <div className="flex gap-1 mt-0.5">
+                    {[{ id: '480p', label: '480p (מהיר)' }, { id: '720p', label: '720p (מומלץ)' }].map(r => (
+                      <button key={r.id} onClick={() => setSeedanceResolution(r.id)}
+                        className={`flex-1 py-1 text-[10px] rounded border transition-all ${seedanceResolution === r.id ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-text-muted">משך</label>
+                  <div className="flex gap-1 mt-0.5">
+                    {[{ id: '5', label: '5 שניות' }, { id: '8', label: '8 שניות' }].map(d => (
+                      <button key={d.id} onClick={() => setSeedanceDuration(d.id)}
+                        className={`flex-1 py-1 text-[10px] rounded border transition-all ${seedanceDuration === d.id ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-muted'}`}>
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={seedanceAudio} onChange={e => setSeedanceAudio(e.target.checked)}
+                    className="rounded border-white/20 bg-white/5" />
+                  <span className="text-[10px] text-text-muted">צור אודיו (אפקטי קול + דיבור)</span>
+                </label>
+                <div className="text-[9px] text-text-muted bg-white/[0.03] rounded p-1.5 text-center">
+                  סינמטי + אודיו מקורי | ByteDance via kie.ai
                 </div>
               </div>
             )}

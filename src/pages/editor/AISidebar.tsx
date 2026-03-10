@@ -188,7 +188,15 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       suggestions.push({ emoji: '📝', label: 'אין כתוביות. כתוביות מגדילות מעורבות ב-40%', action: 'add_captions' })
     }
     if ((editor.bRollItems || []).length === 0) {
-      suggestions.push({ emoji: '🖼️', label: 'אין B-Roll. רוצה שאוסיף תמונות מתאימות?', action: 'add_broll' })
+      const apiStatus = useApiStatusStore.getState()
+      const canUseSeedance = apiStatus.seedance.connected
+      const canUseVeo = apiStatus.gemini.connected
+      const brollLabel = canUseSeedance
+        ? 'אין B-Roll. רוצה שאוסיף סרטונים עם Seedance 1.5 Pro?'
+        : canUseVeo
+        ? 'אין B-Roll. רוצה שאוסיף סרטונים עם Veo?'
+        : 'אין B-Roll. רוצה שאוסיף תמונות מתאימות?'
+      suggestions.push({ emoji: '🖼️', label: brollLabel, action: 'add_broll' })
     }
     if (editor.duration > 120) {
       suggestions.push({ emoji: '🎬', label: `הסרטון ארוך (${formatSeconds(editor.duration)}). ליצור קליפים?`, action: 'suggest_clips' })
