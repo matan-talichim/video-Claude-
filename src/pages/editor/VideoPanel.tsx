@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Minimize, Subtitles, Music, Film, ChevronsRight, ChevronsLeft } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Minimize, Music, Film, ChevronsRight, ChevronsLeft } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
-import type { CaptionStyle, BRollItem, CaptionTrack } from '../../stores/editorStore'
+import type { CaptionStyle, BRollItem } from '../../stores/editorStore'
 import { getDeletedRegionEnd } from '../../services/videoEditor'
 
 const allSpeeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4]
@@ -276,6 +276,41 @@ export default function VideoPanel() {
     return { text: words.map(w => w.text).join(' '), words: words.map(w => ({ text: w.text, start: w.start, end: w.end })), style: captionStyle, startTime: words[0].start, endTime: words[words.length - 1].end }
   })() : null
 
+  const [canvasDropping, setCanvasDropping] = useState(false)
+  const addBRollItem = useEditorStore((s) => s.addBRollItem)
+
+  const handleCanvasDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('application/x-broll-item')) {
+      e.preventDefault()
+      setCanvasDropping(true)
+    }
+  }
+  const handleCanvasDragLeave = () => setCanvasDropping(false)
+  const handleCanvasDrop = (e: React.DragEvent) => {
+    setCanvasDropping(false)
+    const data = e.dataTransfer.getData('application/x-broll-item')
+    if (!data) return
+    try {
+      const item = JSON.parse(data)
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      const x = ((e.clientX - rect.left) / rect.width) * 100
+      const y = ((e.clientY - rect.top) / rect.height) * 100
+      addBRollItem({
+        id: `broll-${Date.now()}`,
+        imageUrl: item.imageUrl,
+        startTime: currentTime,
+        duration: item.duration || 3,
+        source: item.source || 'upload',
+        prompt: item.prompt,
+        displayMode: 'pip' as any,
+        x: Math.max(0, x - 15),
+        y: Math.max(0, y - 15),
+        width: 30,
+        height: 30,
+      })
+    } catch { /* ignore */ }
+  }
+
   const hasMedia = !!mediaBlobUrl
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0
 
@@ -307,7 +342,12 @@ export default function VideoPanel() {
       className="flex flex-col h-full bg-bg-deepest rounded-xl border border-white/[0.06] overflow-hidden"
       onMouseMove={resetControlsTimer}
     >
-      <div className="flex-1 bg-bg-deepest flex items-center justify-center relative overflow-hidden">
+      <div
+        className={`flex-1 bg-bg-deepest flex items-center justify-center relative overflow-hidden ${canvasDropping ? 'ring-2 ring-accent-purple/50 ring-inset' : ''}`}
+        onDragOver={handleCanvasDragOver}
+        onDragLeave={handleCanvasDragLeave}
+        onDrop={handleCanvasDrop}
+      >
         {hasMedia && mediaType === 'video' && (
           <div className="relative w-full h-full flex items-center justify-center" style={getAspectStyle}>
             <video
@@ -607,6 +647,14 @@ export default function VideoPanel() {
 function BRollOverlay({ item, currentTime, isSelected, onSelect }: {
   item: BRollItem; currentTime: number; isSelected: boolean; onSelect: () => void
 }) {
+  const updateBRollItem = useEditorStore((s) => s.updateBRollItem)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [isResizing, setIsResizing] = useState(false)
+  const [isRotating, setIsRotating] = useState(false)
+  const [guides, setGuides] = useState<{ v: boolean; h: boolean }>({ v: false, h: false })
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; origW: number; origH: number; origR: number; handle: string } | null>(null)
+
   const elapsed = currentTime - item.startTime
   const remaining = (item.startTime + item.duration) - currentTime
   const animDur = item.animationDuration || 0.5
@@ -690,22 +738,175 @@ function BRollOverlay({ item, currentTime, isSelected, onSelect }: {
     ...(item.shadowEnabled ? { boxShadow: `${item.shadowX || 0}px ${item.shadowY || 4}px ${item.shadowBlur || 10}px ${item.shadowColor || 'rgba(0,0,0,0.5)'}` } : {}),
   }
 
+  // ─── Drag to move ───
+  const handleMoveStart = (e: React.MouseEvent) => {
+    if (item.displayMode === 'fullscreen') return
+    e.stopPropagation()
+    e.preventDefault()
+    onSelect()
+    setIsDragging(true)
+    const parent = containerRef.current?.parentElement
+    if (!parent) return
+    const parentRect = parent.getBoundingClientRect()
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: item.x, origY: item.y, origW: item.width, origH: item.height, origR: item.rotation, handle: '' }
+
+    const handleMove = (me: MouseEvent) => {
+      if (!dragRef.current) return
+      const dx = (me.clientX - dragRef.current.startX) / parentRect.width * 100
+      const dy = (me.clientY - dragRef.current.startY) / parentRect.height * 100
+      let newX = dragRef.current.origX + dx
+      let newY = dragRef.current.origY + dy
+      const newGuides = { v: false, h: false }
+      // Snap to center
+      if (Math.abs(newX + item.width / 2 - 50) < 2) { newX = 50 - item.width / 2; newGuides.v = true }
+      if (Math.abs(newY + item.height / 2 - 50) < 2) { newY = 50 - item.height / 2; newGuides.h = true }
+      setGuides(newGuides)
+      updateBRollItem(item.id, { x: Math.max(-10, Math.min(110, newX)), y: Math.max(-10, Math.min(110, newY)), displayMode: 'pip' as any })
+    }
+    const handleUp = () => {
+      setIsDragging(false); setGuides({ v: false, h: false }); dragRef.current = null
+      document.removeEventListener('mousemove', handleMove)
+      document.removeEventListener('mouseup', handleUp)
+    }
+    document.addEventListener('mousemove', handleMove)
+    document.addEventListener('mouseup', handleUp)
+  }
+
+  // ─── Resize ───
+  const handleResizeStart = (e: React.MouseEvent, handle: string) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setIsResizing(true)
+    const parent = containerRef.current?.parentElement
+    if (!parent) return
+    const parentRect = parent.getBoundingClientRect()
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: item.x, origY: item.y, origW: item.width, origH: item.height, origR: item.rotation, handle }
+
+    const handleMove = (me: MouseEvent) => {
+      if (!dragRef.current) return
+      const dx = (me.clientX - dragRef.current.startX) / parentRect.width * 100
+      const dy = (me.clientY - dragRef.current.startY) / parentRect.height * 100
+      const h = dragRef.current.handle
+      const shift = me.shiftKey || item.lockAspectRatio
+      let newX = dragRef.current.origX, newY = dragRef.current.origY
+      let newW = dragRef.current.origW, newH = dragRef.current.origH
+
+      if (h.includes('e')) newW = Math.max(3, dragRef.current.origW + dx)
+      if (h.includes('w')) { newW = Math.max(3, dragRef.current.origW - dx); newX = dragRef.current.origX + dx }
+      if (h.includes('s')) newH = Math.max(3, dragRef.current.origH + dy)
+      if (h.includes('n')) { newH = Math.max(3, dragRef.current.origH - dy); newY = dragRef.current.origY + dy }
+
+      if (shift && dragRef.current.origW > 0 && dragRef.current.origH > 0) {
+        const aspect = dragRef.current.origW / dragRef.current.origH
+        if (h === 'e' || h === 'w') newH = newW / aspect
+        else if (h === 'n' || h === 's') newW = newH * aspect
+        else newH = newW / aspect
+      }
+      updateBRollItem(item.id, { x: newX, y: newY, width: newW, height: newH, displayMode: 'pip' as any })
+    }
+    const handleUp = () => {
+      setIsResizing(false); dragRef.current = null
+      document.removeEventListener('mousemove', handleMove)
+      document.removeEventListener('mouseup', handleUp)
+    }
+    document.addEventListener('mousemove', handleMove)
+    document.addEventListener('mouseup', handleUp)
+  }
+
+  // ─── Rotate ───
+  const handleRotateStart = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setIsRotating(true)
+    const el = containerRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const cy = rect.top + rect.height / 2
+    const startAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI)
+    const origRotation = item.rotation || 0
+
+    const handleMove = (me: MouseEvent) => {
+      const currentAngle = Math.atan2(me.clientY - cy, me.clientX - cx) * (180 / Math.PI)
+      let newR = (origRotation + currentAngle - startAngle) % 360
+      if (newR < 0) newR += 360
+      // Snap to cardinal
+      for (const snap of [0, 90, 180, 270, 360]) {
+        if (Math.abs(newR - snap) < 5) { newR = snap % 360; break }
+      }
+      updateBRollItem(item.id, { rotation: newR })
+    }
+    const handleUp = () => {
+      setIsRotating(false)
+      document.removeEventListener('mousemove', handleMove)
+      document.removeEventListener('mouseup', handleUp)
+    }
+    document.addEventListener('mousemove', handleMove)
+    document.addEventListener('mouseup', handleUp)
+  }
+
+  // Keyboard nudge
+  useEffect(() => {
+    if (!isSelected) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (!isSelected || item.displayMode === 'fullscreen') return
+      const step = e.shiftKey ? 2 : 0.5
+      if (e.key === 'ArrowLeft') { e.preventDefault(); updateBRollItem(item.id, { x: item.x - step, displayMode: 'pip' as any }) }
+      if (e.key === 'ArrowRight') { e.preventDefault(); updateBRollItem(item.id, { x: item.x + step, displayMode: 'pip' as any }) }
+      if (e.key === 'ArrowUp') { e.preventDefault(); updateBRollItem(item.id, { y: item.y - step, displayMode: 'pip' as any }) }
+      if (e.key === 'ArrowDown') { e.preventDefault(); updateBRollItem(item.id, { y: item.y + step, displayMode: 'pip' as any }) }
+      if (e.key === 'Escape') { onSelect() }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isSelected, item.id, item.x, item.y, item.displayMode, updateBRollItem, onSelect])
+
   return (
-    <div style={{ ...posStyle, zIndex: (item.zIndex || 1) + 10, opacity: animOpacity, transform: baseTransforms.join(' ') || undefined, cursor: 'pointer', transition: 'opacity 0.05s' }}
+    <div
+      ref={containerRef}
+      className={`overlay-container ${isSelected ? 'ring-2 ring-accent-purple ring-offset-1' : ''}`}
+      style={{
+        ...posStyle,
+        zIndex: (item.zIndex || 1) + 10,
+        opacity: animOpacity,
+        transform: baseTransforms.join(' ') || undefined,
+        cursor: isDragging ? 'grabbing' : isResizing ? 'nwse-resize' : isRotating ? 'alias' : (item.displayMode !== 'fullscreen' ? 'grab' : 'pointer'),
+        transition: isDragging || isResizing || isRotating ? 'none' : 'opacity 0.05s',
+        boxShadow: isDragging ? '0 8px 32px rgba(124,92,255,0.3)' : undefined,
+      }}
       onClick={(e) => { e.stopPropagation(); onSelect() }}
-      className={isSelected ? 'ring-2 ring-accent-purple ring-offset-1' : ''}>
+      onMouseDown={handleMoveStart}
+    >
       {item.blurBackground && <div className="absolute inset-0 backdrop-blur-md bg-black/30 z-[-1]" style={{ borderRadius: `${item.borderRadius || 0}px` }} />}
       <img src={item.imageUrl} alt="B-Roll" style={imgStyle} draggable={false} />
+
+      {/* Alignment guides */}
+      {isSelected && guides.v && (
+        <div className="absolute top-0 bottom-0 left-1/2 w-px bg-accent-blue/60 pointer-events-none z-50" />
+      )}
+      {isSelected && guides.h && (
+        <div className="absolute left-0 right-0 top-1/2 h-px bg-accent-blue/60 pointer-events-none z-50" />
+      )}
+
+      {/* Resize handles */}
       {isSelected && (
         <>
-          <div className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-accent-purple rounded-sm cursor-nw-resize" />
-          <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-accent-purple rounded-sm cursor-ne-resize" />
-          <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 bg-accent-purple rounded-sm cursor-sw-resize" />
-          <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-accent-purple rounded-sm cursor-se-resize" />
-          <div className="absolute top-1/2 -left-1 -translate-y-1/2 w-2 h-4 bg-accent-purple/70 rounded-sm cursor-w-resize" />
-          <div className="absolute top-1/2 -right-1 -translate-y-1/2 w-2 h-4 bg-accent-purple/70 rounded-sm cursor-e-resize" />
-          <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-4 h-2 bg-accent-purple/70 rounded-sm cursor-n-resize" />
-          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-4 h-2 bg-accent-purple/70 rounded-sm cursor-s-resize" />
+          <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-accent-purple rounded-full cursor-nw-resize z-20" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
+          <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-accent-purple rounded-full cursor-ne-resize z-20" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
+          <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-accent-purple rounded-full cursor-sw-resize z-20" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
+          <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-accent-purple rounded-full cursor-se-resize z-20" onMouseDown={(e) => handleResizeStart(e, 'se')} />
+          <div className="absolute top-1/2 -left-1.5 -translate-y-1/2 w-2.5 h-5 bg-white/80 border border-accent-purple/60 rounded-sm cursor-w-resize z-20" onMouseDown={(e) => handleResizeStart(e, 'w')} />
+          <div className="absolute top-1/2 -right-1.5 -translate-y-1/2 w-2.5 h-5 bg-white/80 border border-accent-purple/60 rounded-sm cursor-e-resize z-20" onMouseDown={(e) => handleResizeStart(e, 'e')} />
+          <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-5 h-2.5 bg-white/80 border border-accent-purple/60 rounded-sm cursor-n-resize z-20" onMouseDown={(e) => handleResizeStart(e, 'n')} />
+          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-5 h-2.5 bg-white/80 border border-accent-purple/60 rounded-sm cursor-s-resize z-20" onMouseDown={(e) => handleResizeStart(e, 's')} />
+          {/* Rotation handle */}
+          <div className="absolute -top-8 left-1/2 -translate-x-1/2 flex flex-col items-center z-20">
+            <div className="w-4 h-4 bg-accent-purple rounded-full cursor-alias flex items-center justify-center shadow-lg" onMouseDown={handleRotateStart}>
+              <span className="text-[8px] text-white">↻</span>
+            </div>
+            <div className="w-px h-3 bg-accent-purple/40" />
+          </div>
         </>
       )}
     </div>
