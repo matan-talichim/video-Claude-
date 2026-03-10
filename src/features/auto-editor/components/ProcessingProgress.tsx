@@ -1,0 +1,115 @@
+import { Loader2, CheckCircle, Circle, XCircle } from 'lucide-react'
+import { useAutoEditorStore, type AutoEditorStep } from '../store/autoEditorStore'
+
+const STEPS_CONFIG: { key: AutoEditorStep; label: string }[] = [
+  { key: 'transcribing', label: 'תמלול הושלם' },
+  { key: 'validating', label: 'ולידציית חומר' },
+  { key: 'planning', label: 'ChatGPT תיכנן עריכה' },
+  { key: 'generating_assets', label: 'יצירת נכסים (רקע, B-Roll, מוזיקה)' },
+  { key: 'editing', label: 'עריכת סרטונים' },
+  { key: 'exporting', label: 'ייצוא לפלטפורמות' },
+]
+
+function getStepStatus(
+  stepKey: AutoEditorStep,
+  currentStep: AutoEditorStep,
+  completedSteps: AutoEditorStep[]
+): 'done' | 'active' | 'pending' {
+  if (completedSteps.includes(stepKey)) return 'done'
+  if (currentStep === stepKey) return 'active'
+  return 'pending'
+}
+
+function StepIcon({ status }: { status: 'done' | 'active' | 'pending' }) {
+  if (status === 'done') return <CheckCircle size={18} className="text-green-400" />
+  if (status === 'active') return <Loader2 size={18} className="text-accent-purple animate-spin" />
+  return <Circle size={18} className="text-white/20" />
+}
+
+export default function ProcessingProgress() {
+  const step = useAutoEditorStore((s) => s.step)
+  const progress = useAutoEditorStore((s) => s.progress)
+  const error = useAutoEditorStore((s) => s.error)
+  const completedSteps = useAutoEditorStore((s) => s.completedSteps)
+
+  const totalSteps = STEPS_CONFIG.length
+  const doneCount = completedSteps.length
+  const overallPercent = Math.round((doneCount / totalSteps) * 100)
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="text-center space-y-2">
+        <h2 className="text-xl font-bold text-text-primary">
+          {error ? 'אירעה שגיאה' : 'מעבד את הסרטונים שלך...'}
+        </h2>
+        {step === 'editing' && progress.total > 0 && (
+          <p className="text-sm text-text-muted">
+            סרטון {progress.current} מתוך {progress.total}
+          </p>
+        )}
+      </div>
+
+      {/* Progress bar */}
+      {!error && (
+        <div className="space-y-2">
+          <div className="h-3 bg-white/[0.06] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-l from-accent-purple to-accent-blue rounded-full transition-all duration-700 ease-out"
+              style={{ width: `${overallPercent}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs text-text-muted">
+            <span>{overallPercent}%</span>
+            <span>{doneCount} / {totalSteps} שלבים</span>
+          </div>
+        </div>
+      )}
+
+      {/* Error display */}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-start gap-3">
+          <XCircle size={20} className="text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-red-300 font-medium">שגיאה בעיבוד</p>
+            <p className="text-xs text-red-400/80 mt-1">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Steps list */}
+      <div className="bg-white/[0.03] rounded-xl p-4 border border-white/[0.06] space-y-3">
+        {STEPS_CONFIG.map((s) => {
+          const status = getStepStatus(s.key, step, completedSteps)
+          return (
+            <div
+              key={s.key}
+              className={`flex items-center gap-3 transition-opacity ${
+                status === 'pending' ? 'opacity-40' : 'opacity-100'
+              }`}
+            >
+              <StepIcon status={status} />
+              <span
+                className={`text-sm ${
+                  status === 'active'
+                    ? 'text-accent-purple font-medium'
+                    : status === 'done'
+                    ? 'text-text-primary'
+                    : 'text-text-muted'
+                }`}
+              >
+                {status === 'done' ? '✅' : status === 'active' ? '⏳' : '○'}{' '}
+                {s.label}
+                {s.key === 'editing' && status === 'active' && progress.total > 0 && (
+                  <span className="text-text-muted text-xs mr-2">
+                    ({progress.current}/{progress.total})
+                  </span>
+                )}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}

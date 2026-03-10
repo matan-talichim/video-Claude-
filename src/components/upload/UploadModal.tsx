@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { CloudUpload, X, GripVertical, Video, Music, Plus, Merge, ArrowLeftRight, AlertCircle, Check, Pencil, Bot } from 'lucide-react'
 import Modal from '../Modal'
 import AutoEditWizard from './AutoEditWizard'
+import AutoEditorEntry from '../../features/auto-editor'
+import { useAutoEditorStore } from '../../features/auto-editor/store/autoEditorStore'
 import { useUploadsStore } from '../../stores/uploadsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -70,6 +72,8 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [nameError, setNameError] = useState(false)
   const [showChoice, setShowChoice] = useState(false)
   const [showAutoEdit, setShowAutoEdit] = useState(false)
+  const [showMarketingEditor, setShowMarketingEditor] = useState(false)
+  const resetAutoEditor = useAutoEditorStore((s) => s.reset)
   const [isUploading, setIsUploading] = useState(false)
   const [isMerging, setIsMerging] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -292,6 +296,8 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
     setNameError(false)
     setShowChoice(false)
     setShowAutoEdit(false)
+    setShowMarketingEditor(false)
+    resetAutoEditor()
     onClose()
   }
 
@@ -320,7 +326,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
           </div>
         )}
 
-        {!isUploading && !showChoice && !showAutoEdit && (
+        {!isUploading && !showChoice && !showAutoEdit && !showMarketingEditor && (
           <>
             {/* Drop zone */}
             <div
@@ -560,8 +566,21 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
           </>
         )}
 
+        {/* Marketing Auto-Editor */}
+        {!isUploading && showMarketingEditor && (
+          <AutoEditorEntry
+            files={files}
+            onBack={() => {
+              setShowMarketingEditor(false)
+              setShowChoice(true)
+              resetAutoEditor()
+            }}
+            onClose={handleClose}
+          />
+        )}
+
         {/* Choice screen: Editor vs Auto-Edit */}
-        {!isUploading && showChoice && !showAutoEdit && (
+        {!isUploading && showChoice && !showAutoEdit && !showMarketingEditor && (
           <div className="space-y-6 py-4">
             <h3 className="text-center text-xl font-bold text-text-primary">מה תרצה לעשות עם הקבצים?</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
@@ -583,7 +602,7 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
               <button
                 onClick={() => {
                   setShowChoice(false)
-                  setShowAutoEdit(true)
+                  setShowMarketingEditor(true)
                 }}
                 className="p-6 rounded-2xl border-2 border-white/[0.06] hover:border-accent-purple/40 bg-gradient-to-br from-purple-600/10 to-purple-400/5 hover:from-purple-600/20 hover:to-purple-400/10 text-center transition-all hover:-translate-y-1 group relative overflow-hidden"
               >
