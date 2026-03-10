@@ -18,6 +18,26 @@ const targetLanguages = [
   { code: 'hi', name: 'הינדי', flag: '🇮🇳' },
   { code: 'tr', name: 'טורקית', flag: '🇹🇷' },
   { code: 'pt', name: 'פורטוגזית', flag: '🇧🇷' },
+  { code: 'it', name: 'איטלקית', flag: '🇮🇹' },
+  { code: 'nl', name: 'הולנדית', flag: '🇳🇱' },
+  { code: 'pl', name: 'פולנית', flag: '🇵🇱' },
+  { code: 'cs', name: 'צ\'כית', flag: '🇨🇿' },
+  { code: 'ro', name: 'רומנית', flag: '🇷🇴' },
+  { code: 'bg', name: 'בולגרית', flag: '🇧🇬' },
+  { code: 'el', name: 'יוונית', flag: '🇬🇷' },
+  { code: 'fi', name: 'פינית', flag: '🇫🇮' },
+  { code: 'sv', name: 'שוודית', flag: '🇸🇪' },
+  { code: 'da', name: 'דנית', flag: '🇩🇰' },
+  { code: 'uk', name: 'אוקראינית', flag: '🇺🇦' },
+  { code: 'id', name: 'אינדונזית', flag: '🇮🇩' },
+  { code: 'hu', name: 'הונגרית', flag: '🇭🇺' },
+  { code: 'nb', name: 'נורווגית', flag: '🇳🇴' },
+  { code: 'vi', name: 'וייטנאמית', flag: '🇻🇳' },
+  { code: 'sk', name: 'סלובקית', flag: '🇸🇰' },
+  { code: 'sl', name: 'סלובנית', flag: '🇸🇮' },
+  { code: 'et', name: 'אסטונית', flag: '🇪🇪' },
+  { code: 'lv', name: 'לטבית', flag: '🇱🇻' },
+  { code: 'lt', name: 'ליטאית', flag: '🇱🇹' },
 ]
 
 const translationSteps = [
@@ -127,7 +147,7 @@ export default function Translation() {
 
           <div>
             <label className="text-sm text-text-secondary block mb-2">שפות יעד</label>
-            <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+            <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
               {targetLanguages.map((lang) => (
                 <label
                   key={lang.code}
