@@ -5,6 +5,7 @@ interface ApiStatusState {
   openai: { connected: boolean }
   elevenlabs: { connected: boolean }
   deepl: { connected: boolean }
+  gemini: { connected: boolean }
   loading: boolean
   checked: boolean
   checkStatus: () => Promise<void>
@@ -14,6 +15,7 @@ export const useApiStatusStore = create<ApiStatusState>((set) => ({
   openai: { connected: false },
   elevenlabs: { connected: false },
   deepl: { connected: false },
+  gemini: { connected: false },
   loading: false,
   checked: false,
   checkStatus: async () => {
@@ -24,6 +26,7 @@ export const useApiStatusStore = create<ApiStatusState>((set) => ({
         openai: { connected: status.openai?.connected || false },
         elevenlabs: { connected: status.elevenlabs?.connected || false },
         deepl: { connected: status.deepl?.connected || false },
+        gemini: { connected: status.gemini?.connected || false },
         loading: false,
         checked: true,
       })
@@ -32,6 +35,7 @@ export const useApiStatusStore = create<ApiStatusState>((set) => ({
         openai: { connected: false },
         elevenlabs: { connected: false },
         deepl: { connected: false },
+        gemini: { connected: false },
         loading: false,
         checked: true,
       })

@@ -26,9 +26,10 @@ const videoTypes = [
 ]
 
 const platforms = [
-  { id: 'seedance' as const, label: 'Seedance', emoji: '🎥', desc1: 'סרטוני אנימציה', desc2: 'דינמיים ויצירתיים', timing: '4 שניות לסצנה', rec: 'מומלץ: פרסומות' },
-  { id: 'veo' as const, label: 'Veo 3 (Google)', emoji: '🎬', desc1: 'סרטונים סינמטיים', desc2: 'ריאליסטיים', timing: '4 שניות לסצנה', rec: 'מומלץ: תדמית' },
-  { id: 'images' as const, label: 'תמונות + דיבור', emoji: '🖼️', desc1: 'תמונות AI עם', desc2: 'קריינות ומוזיקה', timing: '5 שניות לתמונה', rec: 'מומלץ: הדרכות' },
+  { id: 'nano-banana-veo' as const, label: 'Nano Banana + Veo 3.1', emoji: '🍌', desc1: 'תמונות AI + סרטוני AI', desc2: 'Gemini (Google)', timing: '~$0.02/תמונה + $0.50/סרטון', rec: 'מומלץ: תוכן מלא' },
+  { id: 'veo' as const, label: 'Veo 3.1 בלבד', emoji: '🎬', desc1: 'סרטוני AI סינמטיים', desc2: 'Gemini (Google)', timing: '$0.50/סרטון', rec: 'מומלץ: תדמית' },
+  { id: 'nano-banana' as const, label: 'Nano Banana בלבד', emoji: '🍌', desc1: 'תמונות AI', desc2: 'חינם עד מגבלה', timing: '~$0.02/תמונה', rec: 'מומלץ: הדרכות' },
+  { id: 'images' as const, label: 'DALL-E 3 (OpenAI)', emoji: '🎨', desc1: 'תמונות AI', desc2: 'OpenAI', timing: '$0.04/תמונה', rec: 'מומלץ: איכות מקסימלית' },
 ]
 
 const visualStyles = [
@@ -171,7 +172,7 @@ const musicMoods = [
 interface WizardState {
   step: number
   videoType: string
-  platform: 'seedance' | 'veo' | 'images'
+  platform: 'nano-banana-veo' | 'veo' | 'nano-banana' | 'images'
   style: string
   format: '16:9' | '9:16' | '1:1' | '4:5'
   duration: number
@@ -219,7 +220,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
   const [state, setState] = useState<WizardState>({
     step: 1,
     videoType: '',
-    platform: 'veo',
+    platform: 'nano-banana-veo',
     style: 'cinematic',
     format: '16:9',
     duration: 30,
@@ -257,7 +258,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
 
   const handleClose = () => {
     setState({
-      step: 1, videoType: '', platform: 'veo', style: 'cinematic', format: '16:9',
+      step: 1, videoType: '', platform: 'nano-banana-veo', style: 'cinematic', format: '16:9',
       duration: 30, prompt: '', brandName: '', brandSlogan: '',
       brandColors: { primary: '#7C5CFF', secondary: '#5C8AFF' }, keyMessages: [],
       voiceType: 'ai', voiceLanguage: 'he', voiceId: '', voiceTone: 'professional',
@@ -278,7 +279,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
     setMaxVisitedStep((prev) => Math.max(prev, nextStep))
   }
 
-  const sceneCount = Math.ceil(state.duration / (state.platform === 'images' ? 5 : 4))
+  const sceneCount = Math.ceil(state.duration / (state.platform === 'images' || state.platform === 'nano-banana' ? 5 : 4))
   const stepLabels = ['סוג סרטון', 'פלטפורמה וסגנון', 'תוכן', 'דיבור וכתוביות', 'סקירה', 'יצירה']
 
   const getVideoTypeLabel = () => videoTypes.find((v) => v.id === state.videoType)?.label || ''
@@ -294,7 +295,13 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
   }
 
   const estimatedCost = () => {
-    const base = state.platform === 'images' ? 0.04 : 0.08
+    const costMap: Record<string, number> = {
+      'nano-banana-veo': 0.52, // ~$0.02 image + ~$0.50 video
+      'veo': 0.50,
+      'nano-banana': 0.02,
+      'images': 0.04,
+    }
+    const base = costMap[state.platform] || 0.04
     return (sceneCount * base).toFixed(2)
   }
 
@@ -597,7 +604,7 @@ export default function PromptWizard({ isOpen, onClose }: PromptWizardProps) {
               {/* Platform */}
               <div>
                 <h3 className="text-subtitle font-bold text-text-primary mb-4">🤖 בחר מנוע יצירה:</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {platforms.map((p) => (
                     <button
                       key={p.id}

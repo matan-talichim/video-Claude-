@@ -25,6 +25,7 @@ interface ApiStatus {
   openai: { connected: boolean; model: string }
   elevenlabs: { connected: boolean }
   deepl: { connected: boolean }
+  gemini: { connected: boolean }
 }
 
 export default function Settings() {
@@ -38,6 +39,7 @@ export default function Settings() {
     openai: { connected: apiStatusStore.openai.connected, model: 'gpt-4o' },
     elevenlabs: { connected: apiStatusStore.elevenlabs.connected },
     deepl: { connected: apiStatusStore.deepl.connected },
+    gemini: { connected: apiStatusStore.gemini.connected },
   } : null
 
   const checkApiStatus = async () => {
@@ -72,6 +74,13 @@ export default function Settings() {
       key: 'deepl' as const,
       features: ['תרגום כתוביות', 'תרגום תוכן', 'תרגום אצווה'],
       description: 'תרגום אוטומטי באיכות גבוהה',
+    },
+    {
+      name: 'Google Gemini',
+      icon: '🍌',
+      key: 'gemini' as const,
+      features: ['Nano Banana (תמונות)', 'Veo 3.1 (סרטונים)', 'תמונה לסרטון'],
+      description: 'יצירת תמונות וסרטוני AI מתקדמים',
     },
   ]
 

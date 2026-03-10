@@ -202,6 +202,40 @@ export const api = {
     return apiCall('/auto-edit', { method: 'POST', body: formData })
   },
 
+  generateImageGemini: async (prompt: string, aspectRatio = '16:9', model = 'nano-banana-2') => {
+    return apiCall('/generate-image-gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, aspectRatio, model }),
+    })
+  },
+
+  generateVideoVeo: async (prompt: string, aspectRatio = '16:9', resolution = '720p', model = 'veo-3.1') => {
+    const res = await fetch(API_BASE + '/generate-video-veo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, aspectRatio, resolution, model }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.message || 'Video generation failed')
+    }
+    return res.blob()
+  },
+
+  generateImageToVideo: async (prompt: string, aspectRatio = '16:9') => {
+    const res = await fetch(API_BASE + '/generate-image-to-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, aspectRatio }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.message || 'Image-to-video failed')
+    }
+    return res.blob()
+  },
+
   checkApiStatus: async () => {
     return apiCall('/status', { method: 'GET' })
   },

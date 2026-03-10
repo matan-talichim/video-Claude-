@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { execSync } from 'child_process'
 import { createRequire } from 'module'
 import dotenv from 'dotenv'
+import { GoogleGenAI } from '@google/genai'
 
 // Load .env from project root
 const __filename = fileURLToPath(import.meta.url)
@@ -22,6 +23,13 @@ async function getOpenAI() {
     openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   }
   return openai
+}
+
+// Google Gemini AI
+function getGemini() {
+  const key = process.env.GEMINI_API_KEY
+  if (!key) return null
+  return new GoogleGenAI({ apiKey: key })
 }
 
 const app = express()
@@ -61,6 +69,7 @@ app.get('/api/status', async (_req, res) => {
     openai: { connected: !!process.env.OPENAI_API_KEY, model: 'gpt-4o' },
     elevenlabs: { connected: !!process.env.ELEVENLABS_API_KEY },
     deepl: { connected: !!process.env.DEEPL_API_KEY },
+    gemini: { connected: !!process.env.GEMINI_API_KEY },
   }
   res.json(status)
 })
@@ -1575,6 +1584,206 @@ app.post('/api/translate/batch', async (req, res) => {
   }
 })
 
+// ==================== GEMINI: NANO BANANA IMAGE GENERATION ====================
+
+app.post('/api/generate-image-gemini', async (req, res) => {
+  try {
+    const ai = getGemini()
+    if (!ai) return res.status(400).json({ message: 'Gemini API key לא מוגדר.' })
+
+    const { prompt, aspectRatio = '16:9', model = 'nano-banana-2' } = req.body
+
+    const modelMap: Record<string, string> = {
+      'nano-banana': 'gemini-2.5-flash-image',
+      'nano-banana-2': 'gemini-3.1-flash-image-preview',
+      'nano-banana-pro': 'gemini-3-pro-image-preview',
+    }
+
+    const modelId = modelMap[model] || 'gemini-2.5-flash-image'
+
+    console.log('[NANO BANANA] Generating image with', modelId)
+    console.log('[NANO BANANA] Prompt:', prompt)
+    console.log('[NANO BANANA] Aspect ratio:', aspectRatio)
+
+    const response = await ai.models.generateContent({
+      model: modelId,
+      contents: prompt,
+      config: {
+        responseModalities: ['IMAGE'],
+        imageGenerationConfig: {
+          aspectRatio: aspectRatio,
+        },
+      },
+    })
+
+    const imagePart = response.candidates?.[0]?.content?.parts?.find(
+      (p: any) => p.inlineData?.mimeType?.startsWith('image/')
+    )
+
+    if (!imagePart?.inlineData) {
+      return res.status(500).json({ message: 'לא נוצרה תמונה. נסה פרומפט אחר.' })
+    }
+
+    const base64 = imagePart.inlineData.data
+    const mimeType = imagePart.inlineData.mimeType
+
+    console.log('[NANO BANANA] Image generated successfully')
+
+    res.json({
+      imageUrl: `data:${mimeType};base64,${base64}`,
+      mimeType,
+      model: modelId,
+    })
+
+  } catch (error: any) {
+    console.error('[NANO BANANA ERROR]', error.message)
+    res.status(500).json({ message: 'שגיאה ביצירת תמונה: ' + error.message })
+  }
+})
+
+// ==================== GEMINI: VEO VIDEO GENERATION ====================
+
+app.post('/api/generate-video-veo', async (req, res) => {
+  try {
+    const ai = getGemini()
+    if (!ai) return res.status(400).json({ message: 'Gemini API key לא מוגדר.' })
+
+    const {
+      prompt,
+      aspectRatio = '16:9',
+      resolution = '720p',
+      model = 'veo-3.1'
+    } = req.body
+
+    const modelMap: Record<string, string> = {
+      'veo-3': 'veo-3.0-generate-preview',
+      'veo-3-fast': 'veo-3.0-fast-generate-preview',
+      'veo-3.1': 'veo-3.1-generate-preview',
+      'veo-3.1-fast': 'veo-3.1-fast-generate-preview',
+    }
+
+    const modelId = modelMap[model] || 'veo-3.1-generate-preview'
+
+    console.log('[VEO] Generating video with', modelId)
+    console.log('[VEO] Prompt:', prompt)
+
+    const operation = await ai.models.generateVideos({
+      model: modelId,
+      prompt: prompt,
+      config: {
+        aspectRatio: aspectRatio,
+        resolution: resolution,
+      },
+    })
+
+    let result = operation
+    let attempts = 0
+    const maxAttempts = 60
+
+    while (!result.done && attempts < maxAttempts) {
+      console.log('[VEO] Waiting for video... attempt', attempts + 1)
+      await new Promise(r => setTimeout(r, 5000))
+      result = await ai.operations.getVideosOperation(result)
+      attempts++
+    }
+
+    if (!result.done) {
+      return res.status(408).json({ message: 'יצירת הסרטון לקחה יותר מדי זמן. נסה שוב.' })
+    }
+
+    const video = result.response?.generatedVideos?.[0]
+    if (!video?.video) {
+      return res.status(500).json({ message: 'לא נוצר סרטון. נסה פרומפט אחר.' })
+    }
+
+    const videoPath = path.join(__dirname, 'uploads', `veo_${Date.now()}.mp4`)
+
+    const videoData = await ai.files.download(video.video)
+    fs.writeFileSync(videoPath, Buffer.from(videoData))
+
+    console.log('[VEO] Video generated:', videoPath)
+
+    res.setHeader('Content-Type', 'video/mp4')
+    const readStream = fs.createReadStream(videoPath)
+    readStream.pipe(res)
+    readStream.on('end', () => {
+      try { fs.unlinkSync(videoPath) } catch {}
+    })
+
+  } catch (error: any) {
+    console.error('[VEO ERROR]', error.message)
+
+    if (error.message?.includes('PERMISSION_DENIED') || error.message?.includes('billing')) {
+      return res.status(403).json({
+        message: 'Veo דורש חשבון Gemini API בתשלום (Paid Tier). שדרג בהגדרות Google AI Studio.'
+      })
+    }
+
+    res.status(500).json({ message: 'שגיאה ביצירת סרטון: ' + error.message })
+  }
+})
+
+// ==================== GEMINI: IMAGE-TO-VIDEO (NANO BANANA + VEO) ====================
+
+app.post('/api/generate-image-to-video', async (req, res) => {
+  try {
+    const ai = getGemini()
+    if (!ai) return res.status(400).json({ message: 'Gemini API key לא מוגדר.' })
+
+    const { prompt, aspectRatio = '16:9' } = req.body
+
+    console.log('[IMAGE-TO-VIDEO] Step 1: Generating image with Nano Banana...')
+
+    const imageResponse = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: prompt,
+      config: { responseModalities: ['IMAGE'] },
+    })
+
+    const imagePart = imageResponse.candidates?.[0]?.content?.parts?.find(
+      (p: any) => p.inlineData?.mimeType?.startsWith('image/')
+    )
+
+    if (!imagePart) {
+      return res.status(500).json({ message: 'שלב 1 נכשל: לא נוצרה תמונה.' })
+    }
+
+    console.log('[IMAGE-TO-VIDEO] Step 2: Generating video from image with Veo...')
+
+    const operation = await ai.models.generateVideos({
+      model: 'veo-3.1-generate-preview',
+      prompt: prompt,
+      image: imagePart,
+    })
+
+    let result = operation
+    while (!result.done) {
+      await new Promise(r => setTimeout(r, 5000))
+      result = await ai.operations.getVideosOperation(result)
+    }
+
+    const video = result.response?.generatedVideos?.[0]
+    if (!video?.video) {
+      return res.status(500).json({ message: 'שלב 2 נכשל: לא נוצר סרטון.' })
+    }
+
+    const videoPath = path.join(__dirname, 'uploads', `i2v_${Date.now()}.mp4`)
+    const videoData = await ai.files.download(video.video)
+    fs.writeFileSync(videoPath, Buffer.from(videoData))
+
+    console.log('[IMAGE-TO-VIDEO] Success!')
+
+    res.setHeader('Content-Type', 'video/mp4')
+    const readStream = fs.createReadStream(videoPath)
+    readStream.pipe(res)
+    readStream.on('end', () => { try { fs.unlinkSync(videoPath) } catch {} })
+
+  } catch (error: any) {
+    console.error('[IMAGE-TO-VIDEO ERROR]', error.message)
+    res.status(500).json({ message: 'שגיאה: ' + error.message })
+  }
+})
+
 // ==================== START SERVER ====================
 
 app.listen(PORT, () => {
@@ -1587,6 +1796,7 @@ app.listen(PORT, () => {
   console.log(`   Pixabay:    ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Veo:        ${process.env.VEO_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Seedance:   ${process.env.SEEDANCE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Gemini:     ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
 
   // Check FFmpeg availability
   console.log('Checking FFmpeg...')
