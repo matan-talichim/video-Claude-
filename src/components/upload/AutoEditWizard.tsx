@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import {
   Smartphone, GraduationCap, Mic, Megaphone, Video, FileText,
   Clapperboard, Package, ChevronRight, X, Check, Loader2,
   CheckCircle, Circle, Clock, Sparkles, Play, Eye
 } from 'lucide-react'
-import Modal from '../Modal'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUploadsStore } from '../../stores/uploadsStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -584,10 +584,23 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
 
   // ─── Render ───────────────────────────────────────────
 
-  return (
-    <Modal isOpen={isOpen} onClose={step === 4 && !isComplete ? () => {} : handleClose} size="full" hideHeader>
+  // Handle Escape key
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !(step === 4 && !isComplete)) handleClose()
+    }
+    if (isOpen) document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [isOpen, step, isComplete])
+
+  if (!isOpen) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto" dir="rtl" lang="he">
+      <div className="min-h-screen flex flex-col items-center py-8 px-4">
+
       {/* Progress bar */}
-      <div className="absolute top-0 left-0 right-0 h-1 bg-white/[0.06]">
+      <div className="fixed top-0 left-0 right-0 h-1 bg-white/[0.06] z-[10000]">
         <div
           className="h-full bg-gradient-to-l from-accent-purple to-accent-blue rounded-full transition-all duration-500"
           style={{ width: `${progress}%` }}
@@ -596,7 +609,7 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
 
       {/* Header */}
       {step < 4 && (
-        <div className="flex items-center justify-between mb-6 -mt-1">
+        <div className="w-full max-w-4xl flex items-center justify-between mb-6">
           <div className="w-24">
             {step > 0 && (
               <button
@@ -661,7 +674,7 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
 
       {/* ═══ STEP 0: Video Purpose ═══ */}
       {step === 0 && (
-        <div className="max-w-3xl mx-auto space-y-6">
+        <div className="w-full max-w-4xl space-y-6">
           <div className="text-center">
             <h3 className="text-xl font-bold text-text-primary mb-2">מה מטרת הסרטון?</h3>
             <p className="text-sm text-text-muted">בחר את הקטגוריה המתאימה כדי שנתאים את העריכה</p>
@@ -695,7 +708,7 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
 
       {/* ═══ STEP 1: Edit Preferences ═══ */}
       {step === 1 && (
-        <div className="max-w-3xl mx-auto space-y-6 max-h-[65vh] overflow-y-auto px-1">
+        <div className="w-full max-w-4xl space-y-6 max-h-[65vh] overflow-y-auto px-1">
           <div className="text-center">
             <h3 className="text-xl font-bold text-text-primary mb-2">מה תרצה שה-AI יעשה?</h3>
             <p className="text-sm text-text-muted">בחר את הפעולות הרצויות (ניתן לשנות)</p>
@@ -923,7 +936,7 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
 
       {/* ═══ STEP 2: Custom Instructions ═══ */}
       {step === 2 && (
-        <div className="max-w-2xl mx-auto space-y-6">
+        <div className="w-full max-w-4xl space-y-6">
           <div className="text-center">
             <h3 className="text-xl font-bold text-text-primary mb-2">הוראות נוספות (אופציונלי)</h3>
             <p className="text-sm text-text-muted">הוסף הנחיות ספציפיות לעריכה</p>
@@ -962,7 +975,7 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
 
       {/* ═══ STEP 3: Review Summary ═══ */}
       {step === 3 && (
-        <div className="max-w-2xl mx-auto space-y-6">
+        <div className="w-full max-w-4xl space-y-6">
           <div className="text-center">
             <h3 className="text-xl font-bold text-text-primary mb-2">סיכום העריכה האוטומטית</h3>
             <p className="text-sm text-text-muted">בדוק את ההגדרות לפני שמתחילים</p>
@@ -1036,7 +1049,7 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
 
       {/* ═══ STEP 4: Processing ═══ */}
       {step === 4 && !isComplete && (
-        <div className="max-w-2xl mx-auto py-4">
+        <div className="w-full max-w-4xl py-4">
           <div className="text-center mb-8">
             <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-accent-purple/10 flex items-center justify-center">
               <Loader2 size={28} className="text-accent-purple animate-spin" />
@@ -1111,7 +1124,7 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
 
       {/* ═══ STEP 4 (Complete): Results ═══ */}
       {step === 4 && isComplete && (
-        <div className="max-w-2xl mx-auto py-4 text-center">
+        <div className="w-full max-w-4xl py-4 text-center">
           <div className="text-5xl mb-4 animate-bounce">🎉</div>
           <h3 className="text-2xl font-bold text-text-primary mb-2">העריכה האוטומטית הושלמה!</h3>
           <p className="text-sm text-text-muted mb-8">כל העריכות הוחלו על הסרטון</p>
@@ -1148,6 +1161,9 @@ export default function AutoEditWizard({ isOpen, onClose, onBack, files, project
           </p>
         </div>
       )}
-    </Modal>
+
+      </div>
+    </div>,
+    document.body
   )
 }
