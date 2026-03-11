@@ -174,7 +174,9 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   setZoom: (zoom) => set({ zoom: Math.max(25, Math.min(400, zoom)) }),
   fitToScreen: (duration, containerWidth) => {
     if (duration <= 0 || containerWidth <= 0) return
-    const zoom = Math.round((containerWidth / (duration * 1)) * 100)
+    // pixelsPerSecond = zoom/100 * 80, so containerWidth = duration * (zoom/100 * 80)
+    // zoom = (containerWidth / (duration * 80)) * 100
+    const zoom = Math.round((containerWidth / (duration * 0.8)))
     set({ zoom: Math.max(25, Math.min(400, zoom)), scrollLeft: 0 })
   },
   setScrollLeft: (scrollLeft) => set({ scrollLeft: Math.max(0, scrollLeft) }),

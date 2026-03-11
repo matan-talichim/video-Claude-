@@ -714,7 +714,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
         )}
 
         {messages.map((msg) => (
-          <div key={msg.id} className={`relative group ${msg.role === 'user' ? 'mr-3' : 'ml-3'}`}>
+          <div key={msg.id} className={`relative group ${msg.role === 'user' ? 'me-3' : 'ms-3'}`}>
             <div className={`p-3 rounded-xl text-sm leading-relaxed ${msg.role === 'user' ? 'bg-accent-purple/15 text-text-primary border border-accent-purple/10' : 'glass-light text-text-primary'}`}>
               {msg.isProcessing ? (
                 <div className="flex items-center gap-2">
