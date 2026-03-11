@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import AutoEditorSettings from './components/AutoEditorSettings'
 import ProcessingProgress from './components/ProcessingProgress'
 import ExportScreen from './components/ExportScreen'
@@ -51,7 +53,7 @@ async function uploadFilesToServer(files: LocalFile[]): Promise<string[]> {
   return serverUrls
 }
 
-export default function AutoEditorEntry({ files, onBack, onClose: _onClose }: AutoEditorEntryProps) {
+export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEntryProps) {
   const step = useAutoEditorStore((s) => s.step)
   const reset = useAutoEditorStore((s) => s.reset)
 
@@ -77,22 +79,28 @@ export default function AutoEditorEntry({ files, onBack, onClose: _onClose }: Au
     onBack()
   }
 
+  // Render via portal so fixed positioning works (escapes Modal's transform)
+  let content: ReactNode
+
   // Screen 3: Results
   if (step === 'done') {
-    return <ExportScreen onReset={handleReset} />
+    content = <ExportScreen onReset={handleReset} />
   }
-
   // Screen 2: Processing
-  if (step !== 'idle') {
-    return <ProcessingProgress />
+  else if (step !== 'idle') {
+    content = <ProcessingProgress />
+  }
+  // Screen 1: Settings
+  else {
+    content = (
+      <AutoEditorSettings
+        files={files}
+        onStart={handleStart}
+        onBack={onBack}
+        onClose={onClose}
+      />
+    )
   }
 
-  // Screen 1: Settings
-  return (
-    <AutoEditorSettings
-      files={files}
-      onStart={handleStart}
-      onBack={onBack}
-    />
-  )
+  return createPortal(content, document.body)
 }
