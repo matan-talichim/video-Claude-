@@ -1930,17 +1930,342 @@ app.post('/api/auto-editor/expand-prompt', async (req, res) => {
   }
 })
 
+// === SOP Library: Editing rules per content type ===
+const EDITING_SOPS: Record<string, string> = {
+  'marketing_product': `
+SOP — סרטון שיווק למוצר:
+- Hook: הצג את הבעיה שהמוצר פותר תוך 2 שניות. פתח עם המשפט הכי כואב.
+- מבנה: בעיה (5 שניות) → פתרון (10 שניות) → הדגמה (10 שניות) → הוכחה חברתית (5 שניות) → CTA (3 שניות)
+- קצב: מהיר. חיתוך כל 2-4 שניות. אין רגע שקט.
+- B-Roll: צילומי מוצר close-up, שימוש במוצר, לפני/אחרי, פנים מרוצות
+- כתוביות: גדולות, צבעוניות, מילת מפתח מודגשת
+- מוזיקה: אנרגטית, 120+ BPM, עולה לקראת CTA
+- זומים: zoom in על המוצר, zoom in על פנים ברגע רגשי
+- Color: חי וצבעוני (vibrant)
+- סיום: CTA ברור עם טקסט על המסך`,
+
+  'corporate': `
+SOP — סרטון תדמית / תאגידי:
+- Hook: פתח עם הערך שהחברה נותנת, לא עם שם החברה
+- מבנה: ערך (5 שניות) → סיפור (20 שניות) → הוכחות (10 שניות) → חזון (5 שניות)
+- קצב: בינוני. חיתוך כל 4-6 שניות. אפשר נשימות קצרות.
+- B-Roll: משרדים, צוות עובד, לקוחות, תהליכים, מוצרים
+- כתוביות: מודרניות, נקיות, לבן על שחור שקוף
+- מוזיקה: תאגידית, מעוררת אמון, 90-110 BPM
+- Color: חם ומקצועי (warm)
+- סיום: לוגו + tagline`,
+
+  'podcast_interview': `
+SOP — פודקאסט / ראיון:
+- Hook: פתח עם הציטוט הכי חזק/מפתיע מהשיחה
+- מבנה: Hook → הקשר → שיחה ערוכה → סיום
+- קצב: בינוני-איטי. שמור על טבעיות. אל תחתוך יותר מדי.
+- B-Roll: מינימלי! רק 1-2 קטעים בנקודות מפתח
+- מולטי-קאם: חלף בין wide/medium/closeup כל 4-8 שניות
+- שמות דוברים: Lower Third בהופעה הראשונה של כל דובר (4 שניות)
+- כתוביות: קלאסיות, נקיות, קריאות
+- מוזיקה: רקע שקט מאוד (10-15%), רק בפתיחה ובסיום חזק יותר
+- הסר: שתיקות > 2 שניות, גמגומים ברורים, חזרות
+- שמור: שתיקות טבעיות < 1 שנייה, הומור, רגעים אותנטיים
+- Color: clean, ניטרלי
+- סיום: "תודה" + קרדיטים + הנעה לפעולה`,
+
+  'tutorial': `
+SOP — סרטון הדרכה / טוטוריאל:
+- Hook: "מה תלמדו היום" או "בסוף הסרטון תדעו..."
+- מבנה: מבוא (5 שניות) → שלבים ממוספרים → סיכום → CTA
+- קצב: איטי-בינוני. תנו לצופה לעקוב.
+- B-Roll: screenshots, הדגמות, close-up על מסך/ידיים, תרשימים
+- גרפיקות: מספרי שלבים ("שלב 1", "שלב 2"), חיצים, הדגשות
+- כתוביות: גדולות וברורות, רקע כהה
+- מוזיקה: שקטה ורגועה, 80-100 BPM, לא מסיחה
+- הסר: גמגומים, שתיקות חשיבה, "אממ"
+- שמור: הסברים חוזרים (לפעמים חשוב לחזור), ביטויים כמו "שימו לב"
+- Color: נקי ובהיר (clean)
+- סיום: סיכום + "אם עזר לכם - שתפו"`,
+
+  'ad_short': `
+SOP — פרסומת קצרה (15-30 שניות):
+- Hook: עצור גלילה תוך שנייה אחת! הדבר הכי מפתיע/מצחיק/מבהיל
+- מבנה: Hook (1-2 שניות) → בעיה (3 שניות) → פתרון (5 שניות) → הוכחה (3 שניות) → CTA (2 שניות)
+- קצב: מהיר מאוד! חיתוך כל 1.5-3 שניות
+- B-Roll: כל שנייה שנייה. אין רגע סטטי.
+- כתוביות: ענקיות, מילה-מילה (קריוקי), צבעים חזקים
+- מוזיקה: חזקה, טרנדית, 128+ BPM
+- זומים: אגרסיביים, כל 2-3 שניות
+- אפקטים: flash transitions, zoom cuts, whip pans
+- Color: vibrant, contrast גבוה
+- כל שנייה חשובה. אם רגע לא מוסיף ערך - תמחק.`,
+
+  'social_reels': `
+SOP — Reels / TikTok / Shorts:
+- Hook: שנייה ראשונה = הכי חשובה. טקסט על המסך + פנים
+- פורמט: 9:16 חובה
+- מבנה: Hook → תוכן → CTA
+- קצב: מהיר. חיתוך כל 2-4 שניות.
+- B-Roll: דינמי, lifestyle, close-ups
+- כתוביות: קריוקי מילה-מילה, גדולות, צבעוניות, מרכז מסך
+- מוזיקה: טרנדית, 120+ BPM
+- טקסט על מסך: כותרת בפתיחה, CTA בסיום
+- Safe Zones: אל תשים טקסט ב-15% עליון (שם שם המשתמש) או 20% תחתון (שם כפתורים)
+- Color: חי, contrast גבוה
+- סיום: "עקבו" / "שתפו" / "תגיבו"`,
+
+  'vlog': `
+SOP — Vlog / יומן אישי:
+- Hook: רגע מעניין מאמצע הסרטון, אז "בואו נחזור להתחלה"
+- מבנה: Hook → סיפור כרונולוגי → סיום אישי
+- קצב: בינוני, טבעי, לא מעובד מדי
+- B-Roll: תמונות מהחיים, נופים, close-ups של אוכל/חפצים
+- כתוביות: מודרניות, לא צועקות
+- מוזיקה: מתאימה למצב רוח, משתנה בין חלקים
+- שמור: רגעים אותנטיים, צחוקים, טעויות מצחיקות
+- הסר: שתיקות ארוכות, חלקים משעממים
+- Color: חם, מזמין`,
+
+  'webinar_lecture': `
+SOP — וובינר / הרצאה:
+- Hook: "השאלה הכי חשובה היום היא..."
+- מבנה: פתיחה → 3-5 נקודות מפתח → סיכום → שאלות
+- קצב: איטי. תנו לתוכן לנשום.
+- B-Roll: מצגת, גרפים, נתונים, screenshots
+- גרפיקות: נקודות מפתח ממוספרות, ציטוטים, נתונים
+- כתוביות: קלאסיות, קטנות, לא מפריעות
+- מוזיקה: רק בפתיחה ובסיום, שקטה מאוד
+- חלוקה לפרקים: חובה! כל נקודה מפתח = פרק
+- שמות דוברים: Lower Third לכל דובר חדש
+- Color: ניטרלי, מקצועי`,
+
+  'testimonial': `
+SOP — עדויות לקוחות:
+- Hook: התוצאה הכי מרשימה שהלקוח מספר עליה
+- מבנה: תוצאה → בעיה קודמת → מה עשו → תוצאה שוב
+- קצב: בינוני, אותנטי
+- B-Roll: הלקוח בפעולה, המוצר/שירות, תוצאות
+- כתוביות: חובה! הרבה צופים בלי סאונד
+- גרפיקות: שם הלקוח + תפקיד, מספרים/אחוזים, ציטוט מרכזי
+- מוזיקה: מעוררת אמון, שקטה, 80-100 BPM
+- Color: חם, מזמין`,
+
+  'before_after': `
+SOP — לפני / אחרי:
+- Hook: התוצאה הסופית (אחרי) → "איך הגענו לזה?"
+- מבנה: אחרי (2 שניות) → לפני (5 שניות) → תהליך (15 שניות) → אחרי שוב (5 שניות)
+- B-Roll: split screen לפני/אחרי, close-ups, תהליך
+- כתוביות: "לפני" / "אחרי" כטקסט גדול
+- מוזיקה: דרמטית, build-up
+- Color: "לפני" = קר/אפור, "אחרי" = חם/צבעוני`,
+
+  'ecommerce': `
+SOP — סרטון מוצר (E-Commerce):
+- Hook: המוצר בפעולה, תוצאה מרשימה
+- מבנה: Hook → פיצ'רים (3-4) → הדגמה → מחיר/CTA
+- קצב: מהיר, כל פיצ'ר 3-5 שניות
+- B-Roll: מוצר מכל זווית, unboxing, שימוש, close-ups
+- כתוביות: קצרות, bullets, מספרים
+- גרפיקות: מחיר, discount, "משלוח חינם", stars
+- מוזיקה: קלילה, שמחה
+- Color: נקי, המוצר בולט`,
+}
+
+// POST /api/auto-editor/analyze-visuals — Extract frames and analyze with GPT Vision
+app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+
+    const { videoUrl, duration } = req.body
+    const ffmpegPath = getFFmpeg()
+
+    // Determine source file
+    let sourceFile: string
+    if (videoUrl.startsWith('http://localhost')) {
+      const filename = path.basename(new URL(videoUrl, 'http://localhost').pathname)
+      sourceFile = path.join(uploadsDir, filename)
+    } else {
+      sourceFile = videoUrl
+    }
+
+    if (!fs.existsSync(sourceFile)) {
+      return res.status(400).json({ message: 'File not found' })
+    }
+
+    // Extract frames every 5 seconds
+    const framesDir = path.join(uploadsDir, `frames_${Date.now()}`)
+    fs.mkdirSync(framesDir, { recursive: true })
+
+    console.log('[VISUAL] Extracting frames every 5 seconds...')
+    execSync(
+      `"${ffmpegPath}" -i "${sourceFile}" -vf "fps=1/5,scale=480:-1" "${framesDir}/frame_%04d.jpg" -y`,
+      { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+
+    // Read all extracted frames
+    const frameFiles = fs.readdirSync(framesDir)
+      .filter((f: string) => f.endsWith('.jpg'))
+      .sort()
+
+    console.log(`[VISUAL] Extracted ${frameFiles.length} frames`)
+
+    // Convert frames to base64 for GPT Vision
+    const frameImages = frameFiles.map((file: string, index: number) => {
+      const data = fs.readFileSync(path.join(framesDir, file))
+      return {
+        time: index * 5,
+        base64: data.toString('base64'),
+      }
+    })
+
+    // Limit to max 20 frames to stay within token limits
+    const selectedFrames = frameImages.length > 20
+      ? frameImages.filter((_: any, i: number) => i % Math.ceil(frameImages.length / 20) === 0).slice(0, 20)
+      : frameImages
+
+    console.log(`[VISUAL] Sending ${selectedFrames.length} frames to GPT Vision...`)
+
+    // Send all frames to GPT for visual analysis
+    const messages: any[] = [
+      {
+        role: 'system',
+        content: `אתה מנתח וידאו מקצועי. אתה מקבל פריימים מסרטון (כל 5 שניות).
+
+נתח את הפריימים וזהה:
+1. מה נראה בכל פריים (אנשים, מקום, חפצים, טקסט על מסך)
+2. האם הדובר מסתכל למצלמה או לצד
+3. איכות התאורה (טובה/בינונית/גרועה, חמה/קרה/ניטרלית)
+4. הרקע (משרד/בית/חוץ/סטודיו/אחר)
+5. האם יש תנועה או סטטי
+6. האם הפריימינג טוב (הדובר ממורכז? יש אוויר מיותר?)
+7. רגעים בולטים (הבעות פנים, מחוות ידיים, שינוי סצנה)
+8. בעיות טכניות (חושך, טשטוש, חיתוך לא טוב)
+
+החזר JSON:
+{
+  "scene_analysis": [
+    {
+      "time": 0,
+      "description": "תיאור קצר של מה שנראה",
+      "speaker_looking_at_camera": true,
+      "lighting": "warm/cold/neutral/dark",
+      "lighting_quality": "good/medium/poor",
+      "background": "תיאור הרקע",
+      "motion": "static/slight/active",
+      "framing": "good/needs_crop_left/needs_crop_right/too_wide/too_tight",
+      "notable": "משהו בולט - הבעה, מחווה, שינוי"
+    }
+  ],
+  "overall": {
+    "location": "היכן צולם הסרטון",
+    "lighting_mood": "חם/קר/ניטרלי/מעורב",
+    "recommended_color_grade": "warm/cold/cinematic/vibrant/clean",
+    "recommended_crop": "תיאור אם צריך לחתוך",
+    "eye_contact_percentage": 75,
+    "scene_changes": [{"time": 30, "description": "שינוי מסצנה פנימית לחיצונית"}],
+    "quality_issues": ["בעיה 1", "בעיה 2"],
+    "best_looking_frames": [5, 25, 40],
+    "worst_looking_frames": [15, 35],
+    "broll_opportunities": [
+      {
+        "time": 20,
+        "reason": "הדובר מסתכל למטה ומדבר על מוצר - הזדמנות לB-Roll של המוצר",
+        "suggested_prompt_en": "Close-up of [specific product] on desk, warm lighting matching the video"
+      }
+    ]
+  }
+}`
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `נתח את ${selectedFrames.length} הפריימים הבאים מסרטון באורך ${duration} שניות. כל פריים מייצג 5 שניות.` },
+          ...selectedFrames.map((frame: any) => ({
+            type: 'image_url' as const,
+            image_url: {
+              url: `data:image/jpeg;base64,${frame.base64}`,
+              detail: 'low' as const,
+            }
+          }))
+        ]
+      }
+    ]
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      messages,
+      response_format: { type: 'json_object' },
+      max_tokens: 4000,
+    })
+
+    const analysis = JSON.parse(response.choices[0]?.message?.content || '{}')
+
+    console.log('[VISUAL] Analysis complete:', analysis.scene_analysis?.length, 'scenes,',
+      analysis.overall?.scene_changes?.length, 'scene changes')
+
+    // Cleanup frames
+    try {
+      frameFiles.forEach((f: string) => fs.unlinkSync(path.join(framesDir, f)))
+      fs.rmdirSync(framesDir)
+    } catch {}
+
+    res.json(analysis)
+
+  } catch (error: any) {
+    console.error('[VISUAL ERROR]', error.message)
+    res.status(500).json({ message: 'שגיאה בניתוח ויזואלי: ' + error.message })
+  }
+})
+
 // POST /api/auto-editor/enrich-prompt — AI analyzes transcript and enriches user prompt
 app.post('/api/auto-editor/enrich-prompt', async (req, res) => {
   try {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
 
-    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile } = req.body
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, visualAnalysis, energyAnalysis } = req.body
 
     const fullText = (transcript.segments || []).map((s: any) => s.text).join(' ')
     const speakers = [...new Set((transcript.segments || []).map((s: any) => s.speaker))]
     const duration = transcript.total_duration || transcript.totalDuration || 0
+
+    // Build visual analysis context if available
+    const visualContext = visualAnalysis ? `
+ניתוח ויזואלי של הסרטון:
+מיקום צילום: ${visualAnalysis.overall?.location || 'לא ידוע'}
+תאורה: ${visualAnalysis.overall?.lighting_mood || 'לא ידוע'}
+Color grade מומלץ: ${visualAnalysis.overall?.recommended_color_grade || 'clean'}
+אחוז קשר עין: ${visualAnalysis.overall?.eye_contact_percentage || 'לא ידוע'}%
+שינויי סצנה: ${JSON.stringify(visualAnalysis.overall?.scene_changes || [])}
+בעיות איכות: ${JSON.stringify(visualAnalysis.overall?.quality_issues || [])}
+הזדמנויות B-Roll מהניתוח הויזואלי: ${JSON.stringify(visualAnalysis.overall?.broll_opportunities || [])}
+
+פריימים:
+${(visualAnalysis.scene_analysis || []).map((s: any) =>
+  `[${s.time}s] ${s.description} | תאורה: ${s.lighting} | מבט למצלמה: ${s.speaker_looking_at_camera ? 'כן' : 'לא'} | ${s.notable || ''}`
+).join('\n')}
+
+השתמש במידע הויזואלי הזה כדי:
+1. להתאים color grade לתאורה בפועל (אל תשים grade חם על תאורה קרה)
+2. להציע B-Roll שמתאים ויזואלית לסצנה (אותו סגנון תאורה ומקום)
+3. לדעת מתי הדובר לא מסתכל למצלמה (שם לשים B-Roll!)
+4. לזהות שינויי סצנה כנקודות חיתוך טבעיות
+5. להציע crop אם הפריימינג לא טוב
+` : ''
+
+    // Build energy analysis context if available
+    const energyContext = energyAnalysis ? `
+ניתוח אנרגיה ודיבור:
+קצב דיבור: ${energyAnalysis.wordsPerMinute} מילים/דקה (${energyAnalysis.pace})
+נקודות שיא (אנרגיה גבוהה): ${(energyAnalysis.peaks || []).map((p: any) => `${p.time}s: ${p.reason}`).join(', ')}
+נקודות שפל (אנרגיה נמוכה): ${(energyAnalysis.valleys || []).map((v: any) => `${v.time}s: ${v.reason}`).join(', ')}
+שתיקות: ${(energyAnalysis.silences || []).length} (סה"כ ${(energyAnalysis.silences || []).reduce((s: number, x: any) => s + x.duration, 0).toFixed(1)} שניות)
+חילופי דוברים: ${(energyAnalysis.speakerChanges || []).length}
+
+השתמש בזה כדי:
+- בנקודות שיא → זום, מוזיקה חזקה יותר, keep
+- בנקודות שפל → חתוך או הוסף B-Roll
+- שתיקות ארוכות → חתוך (אלא אם זה דרמטי)
+- חילופי דוברים → שנה זווית מצלמה
+` : ''
 
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
@@ -1985,6 +2310,8 @@ app.post('/api/auto-editor/enrich-prompt', async (req, res) => {
   - סגנון: קצר, קצבי, כל שנייה חשובה
   - Hook: בעיה → פתרון תוך 3 שניות
 
+${visualContext}
+${energyContext}
 ${userProfile || ''}
 
 בהתבסס על התמלול, זהה:
@@ -2068,10 +2395,14 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
-    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, platforms } = req.body
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, platforms, detectedType, visualAnalysis, energyAnalysis } = req.body
     if (!transcript) return res.status(400).json({ message: 'חסר transcript' })
 
     const aiChoosesDuration = targetDuration === -1
+
+    // Select SOP based on detected content type
+    const contentType = detectedType || 'corporate'
+    const sop = EDITING_SOPS[contentType] || EDITING_SOPS['corporate']
 
     const durationInstructions = aiChoosesDuration ? `
 אורך הסרטון: אתה מחליט!
@@ -2104,6 +2435,10 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
 - מה יגרום לצופה להישאר?
 - מה המסר המרכזי?
 - איפה הרגעים הכי חזקים?
+
+=== SOP לסוג התוכן שזוהה (${contentType}): ===
+${sop}
+=== סוף SOP ===
 
 ${durationInstructions}
 

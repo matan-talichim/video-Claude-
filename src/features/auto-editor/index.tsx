@@ -4,6 +4,7 @@ import AutoEditorSettings from './components/AutoEditorSettings'
 import ProcessingProgress from './components/ProcessingProgress'
 import ExportScreen from './components/ExportScreen'
 import EnrichmentReview from './components/EnrichmentReview'
+import CompareVersions from './components/CompareVersions'
 import { useAutoEditorStore, type AutoEditorInput } from './store/autoEditorStore'
 import { runAutoEditor, continueAfterEnrichment } from './orchestrator'
 
@@ -91,9 +92,13 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
   // Render via portal so fixed positioning works (escapes Modal's transform)
   let content: ReactNode
 
-  // Screen 4: Results
+  // Screen 5: Results
   if (step === 'done') {
     content = <ExportScreen onReset={handleReset} />
+  }
+  // Screen 4: A/B Comparison
+  else if (step === 'comparing') {
+    content = <CompareVersions />
   }
   // Screen 3: Enrichment Review
   else if (step === 'review_enrichment' && enrichment) {
