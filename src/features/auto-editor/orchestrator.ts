@@ -17,9 +17,21 @@ interface ValidationResult {
 function validateAvailableContent(
   totalDuration: number,
   targetDuration: number,
-  numberOfVideos: number
+  numberOfVideos: number,
+  segments?: Array<{ end?: number }>
 ): ValidationResult {
-  const available = totalDuration * 0.7 // ~70% after cuts
+  let duration = totalDuration
+
+  // Safety: if duration is 0 but we have segments, estimate from them
+  if (duration === 0 && segments && segments.length > 0) {
+    duration = Math.max(...segments.map(s => s.end || 0))
+    if (duration === 0) {
+      duration = segments.length * 3 // ~3 sec per segment fallback
+    }
+    console.log('[VALIDATE] Duration was 0, estimated:', duration)
+  }
+
+  const available = duration * 0.7 // ~70% after cuts
   const required = targetDuration * numberOfVideos
 
   if (available < required) {
@@ -121,10 +133,13 @@ async function findMusicSafe(
   }
 }
 
+/**
+ * Phase 1: Transcribe → Validate → Enrich prompt → Pause for user review
+ */
 export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
   const store = useAutoEditorStore.getState()
-  const { setStep, setProgress, setError, setResults, setProcessedVideos, setInput, addLog,
-    setCachedTranscript, setCachedEditingPlan, setCachedAssets } = store
+  const { setStep, setProgress, setError, setInput, addLog,
+    setCachedTranscript, setEnrichment, setTranscript } = store
 
   // Apply learned preferences as defaults from user profile
   const profile = useUserProfileStore.getState()
@@ -164,13 +179,17 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       addLog('משתמש בתמלול קיים מהמטמון')
     }
 
+    // Store transcript for enrichment review
+    setTranscript(transcript)
+
     // Step 2 — Validation (skip duration validation when AI chooses)
     setStep('validating')
     if (enrichedInput.targetDuration !== -1) {
       const validation = validateAvailableContent(
         transcript.totalDuration,
         enrichedInput.targetDuration,
-        enrichedInput.numberOfVideos
+        enrichedInput.numberOfVideos,
+        transcript.segments
       )
       if (!validation.valid) {
         setError(validation.message!)
@@ -179,12 +198,88 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     }
     addLog('ולידציה עברה בהצלחה')
 
-    // Step 3 — Two-step AI planning: Creative Director + Technical Editor
+    // Step 3 — Enrich prompt with AI (NEW!)
+    setStep('enriching')
+    setProgress({ current: 0, total: 1, label: 'AI מנתח את התוכן ומשפר את הפרומפט...' })
+
+    const enrichRes = await fetch(`${API_BASE}/auto-editor/enrich-prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transcript: {
+          segments: transcript.segments,
+          total_duration: transcript.totalDuration,
+          totalDuration: transcript.totalDuration,
+        },
+        userPrompt: enrichedInput.userPrompt,
+        targetDuration: enrichedInput.targetDuration,
+        numberOfVideos: enrichedInput.numberOfVideos,
+        userProfile: profile.getProfileForPrompt(),
+      }),
+    })
+
+    if (!enrichRes.ok) {
+      const err = await enrichRes.json().catch(() => ({}))
+      throw new Error(err.message || 'שגיאה בשיפור הפרומפט')
+    }
+
+    const enrichment = await enrichRes.json()
+    console.log('[AUTO-EDIT] Enhanced prompt:', enrichment.enhanced_prompt?.substring(0, 100))
+    console.log('[AUTO-EDIT] B-Roll suggestions:', enrichment.broll_suggestions?.length)
+    addLog(`AI שיפר את הפרומפט: ${enrichment.broll_suggestions?.length || 0} הצעות B-Roll`)
+
+    // Store enrichment and pause for user review
+    setEnrichment(enrichment)
+    setStep('review_enrichment')
+
+    // PAUSE HERE - UI will show EnrichmentReview component
+    // User clicks "אשר והתחל עריכה" to call continueAfterEnrichment()
+
+  } catch (err: any) {
+    setError(err.message || 'שגיאה לא צפויה')
+  }
+}
+
+/**
+ * Phase 2: Called after user approves the enriched prompt
+ * Planning → Asset Generation → FFmpeg Processing → Done
+ */
+export async function continueAfterEnrichment(
+  overrides?: { userPrompt?: string; selectedBRoll?: any[] }
+): Promise<void> {
+  const store = useAutoEditorStore.getState()
+  const { setStep, setProgress, setError, setResults, setProcessedVideos, addLog,
+    setCachedEditingPlan, setCachedAssets } = store
+
+  const enrichedInput = store.input
+  if (!enrichedInput) {
+    setError('חסר קלט - נסה שוב')
+    return
+  }
+
+  const transcript = store.transcript || store.cachedTranscript
+  if (!transcript) {
+    setError('חסר תמלול - נסה שוב')
+    return
+  }
+
+  const enrichment = store.enrichment
+
+  // Apply overrides from user review
+  const finalInput: AutoEditorInput = {
+    ...enrichedInput,
+    userPrompt: overrides?.userPrompt || enrichment?.enhanced_prompt || enrichedInput.userPrompt,
+  }
+
+  try {
+    const apis = await checkApiAvailability()
+
+    // Step 4 — Two-step AI planning: Creative Director + Technical Editor
     let editingPlan = useAutoEditorStore.getState().cachedEditingPlan
     if (!editingPlan) {
       setStep('planning')
-      setProgress({ current: 0, total: 2, label: enrichedInput.targetDuration === -1 ? 'הבמאי מנתח ובוחר אורך אופטימלי...' : 'הבמאי מנתח את הסרטון...' })
-      editingPlan = await planWithChatGPT(transcript, enrichedInput)
+      setProgress({ current: 0, total: 2, label: finalInput.targetDuration === -1 ? 'הבמאי מנתח ובוחר אורך אופטימלי...' : 'הבמאי מנתח את הסרטון...' })
+      editingPlan = await planWithChatGPT(transcript, finalInput)
       setProgress({ current: 2, total: 2, label: 'תכנון הושלם!' })
       setCachedEditingPlan(editingPlan)
     } else {
@@ -192,7 +287,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     }
 
     // If AI chooses duration, show what was decided and log it
-    if (enrichedInput.targetDuration === -1 && editingPlan.videos) {
+    if (finalInput.targetDuration === -1 && editingPlan.videos) {
       const durationSummary = editingPlan.videos
         .map((v: any) => `סרטון ${v.videoIndex} = ${v.optimalDuration || '?'}שנ`)
         .join(', ')
@@ -203,11 +298,11 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     // Verify plan quality
     for (const video of editingPlan.videos) {
       const cutsDuration = video.cuts.reduce((sum: number, c: any) => sum + (c.keepEnd - c.keepStart), 0)
-      const videoTarget = enrichedInput.targetDuration === -1 ? (video.optimalDuration || '?') : enrichedInput.targetDuration
+      const videoTarget = finalInput.targetDuration === -1 ? (video.optimalDuration || '?') : finalInput.targetDuration
       addLog(`[אימות] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${videoTarget}s), ${video.brollMoments?.length || 0} B-Roll, ${video.subtitles?.length || 0} כתוביות`)
     }
 
-    // Step 4 — Generate assets with graceful fallbacks
+    // Step 5 — Generate assets with graceful fallbacks
     let backgroundImage: string, brollClips: string[], musicUrl: string
     const cachedAssets = useAutoEditorStore.getState().cachedAssets
     if (cachedAssets) {
@@ -219,8 +314,11 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       setStep('generating_assets')
       const assetResults = await Promise.allSettled([
         generateBackgroundSafe(editingPlan.prompts.backgroundImage, apis.gemini),
-        generateAllBroll(editingPlan.prompts.broll, enrichedInput.brollGenerator, apis),
-        findMusicSafe(editingPlan.prompts.musicSearch, apis.pixabay),
+        generateAllBroll(editingPlan.prompts.broll, finalInput.brollGenerator, apis),
+        findMusicSafe(
+          enrichment?.style?.music_search || editingPlan.prompts.musicSearch,
+          apis.pixabay
+        ),
       ])
       backgroundImage = assetResults[0].status === 'fulfilled' ? assetResults[0].value : ''
       brollClips = assetResults[1].status === 'fulfilled' ? assetResults[1].value : []
@@ -228,7 +326,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       setCachedAssets({ backgroundImage, brollClips, music: musicUrl })
     }
 
-    // Step 5 — Process each video with FFmpeg on server
+    // Step 6 — Process each video with FFmpeg on server
     setStep('editing')
     const processedVideos: VideoResult[] = []
 
@@ -243,7 +341,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
 
       // Determine source file
       const sourceIndex = videoPlan.sourceSegments?.[0]?.sourceFile || 0
-      const sourceUrl = enrichedInput.videoUrls[sourceIndex] || enrichedInput.videoUrls[0]
+      const sourceUrl = finalInput.videoUrls[sourceIndex] || finalInput.videoUrls[0]
 
       addLog(`מעבד סרטון ${i + 1}: שולח לשרת לעיבוד FFmpeg מקצועי...`)
 
@@ -255,7 +353,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         camera_angles: (videoPlan.cameraAngles || []).map((ca: any) => ({
           start: ca.start, end: ca.end, camera: ca.camera,
         })),
-        color_grade: videoPlan.colorGrade || 'clean',
+        color_grade: enrichment?.style?.color || videoPlan.colorGrade || 'clean',
         framing_strategy: videoPlan.framingStrategy || 'blur_background',
         subtitles: videoPlan.subtitles || [],
         graphics: (videoPlan.graphics || []).map((g: any) => ({
@@ -280,10 +378,10 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         body: JSON.stringify({
           videoUrl: sourceUrl,
           videoPlan: fullPlan,
-          targetDuration: enrichedInput.targetDuration === -1
+          targetDuration: finalInput.targetDuration === -1
             ? (videoPlan.optimalDuration || 60)
-            : enrichedInput.targetDuration,
-          platforms: enrichedInput.platforms,
+            : finalInput.targetDuration,
+          platforms: finalInput.platforms,
           musicUrl: musicUrl || null,
           backgroundImage: backgroundImage || null,
           captionStyle: 'modern',
@@ -307,7 +405,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       })
     }
 
-    // Step 6 — Done
+    // Step 7 — Done
     setStep('done')
     setProcessedVideos(processedVideos)
 

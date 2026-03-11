@@ -4,6 +4,8 @@ export type AutoEditorStep =
   | 'idle'
   | 'transcribing'
   | 'validating'
+  | 'enriching'
+  | 'review_enrichment'
   | 'planning'
   | 'generating_assets'
   | 'editing'
@@ -67,6 +69,10 @@ interface AutoEditorStore {
   logs: string[]
   editedFiles: EditedFile[]
 
+  // Enrichment data
+  enrichment: any | null
+  transcript: any | null
+
   // Input saved for reference
   input: AutoEditorInput | null
 
@@ -86,6 +92,8 @@ interface AutoEditorStore {
   setProcessedVideos: (v: VideoResult[]) => void
   addLog: (msg: string) => void
   setInput: (input: AutoEditorInput) => void
+  setEnrichment: (data: any) => void
+  setTranscript: (data: any) => void
   setCachedTranscript: (t: any) => void
   setCachedEditingPlan: (p: any) => void
   setCachedAssets: (a: { backgroundImage: string; brollClips: string[]; music: string }) => void
@@ -102,6 +110,8 @@ const initialState = {
   processedVideos: null as VideoResult[] | null,
   logs: [] as string[],
   editedFiles: [] as EditedFile[],
+  enrichment: null as any | null,
+  transcript: null as any | null,
   input: null as AutoEditorInput | null,
   cachedTranscript: null as any | null,
   cachedEditingPlan: null as any | null,
@@ -137,6 +147,8 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
   },
 
   setInput: (input) => set({ input }),
+  setEnrichment: (enrichment) => set({ enrichment }),
+  setTranscript: (transcript) => set({ transcript }),
 
   setCachedTranscript: (cachedTranscript) => set({ cachedTranscript }),
   setCachedEditingPlan: (cachedEditingPlan) => set({ cachedEditingPlan }),

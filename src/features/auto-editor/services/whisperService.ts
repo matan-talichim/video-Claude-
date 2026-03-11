@@ -85,15 +85,25 @@ export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscr
       const data = await response.json()
       log(`תמלול קובץ ${index + 1} הושלם: ${data.segments?.length || 0} קטעים`)
 
-      return {
-        segments: (data.segments || []).map((seg: any) => ({
-          start: seg.start,
-          end: seg.end,
-          text: seg.text,
-          sourceFile: index,
-        })),
-        duration: data.duration || 0,
+      const segs = (data.segments || []).map((seg: any) => ({
+        start: seg.start,
+        end: seg.end,
+        text: seg.text,
+        sourceFile: index,
+      }))
+
+      // Calculate duration from segments if API returned 0
+      let duration = data.duration || 0
+      if (duration === 0 && segs.length > 0) {
+        duration = Math.max(...segs.map((s: { end: number }) => s.end || 0))
+        if (duration > 0) log(`קובץ ${index + 1}: משך חושב מקטעים: ${duration.toFixed(1)} שניות`)
       }
+      if (duration === 0 && segs.length > 0) {
+        duration = segs.length * 3
+        log(`קובץ ${index + 1}: משך משוער: ${duration.toFixed(1)} שניות`)
+      }
+
+      return { segments: segs, duration }
     })
   )
 
