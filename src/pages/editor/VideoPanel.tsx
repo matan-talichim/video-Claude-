@@ -327,14 +327,45 @@ export default function VideoPanel() {
     }
   }, [effects?.reframe?.ratio])
 
+  // Color correction state
+  const colorCorrection = useEditorStore((s) => s.colorCorrection)
+  const textOverlays = useEditorStore((s) => s.textOverlays)
+  const shapes = useEditorStore((s) => s.shapes)
+  const stickers = useEditorStore((s) => s.stickers)
+  const selectedCanvasItem = useEditorStore((s) => s.selectedCanvasItem)
+  const setSelectedCanvasItem = useEditorStore((s) => s.setSelectedCanvasItem)
+  const updateTextOverlay = useEditorStore((s) => s.updateTextOverlay)
+  const updateShape = useEditorStore((s) => s.updateShape)
+  const updateSticker = useEditorStore((s) => s.updateSticker)
+  const clipCrop = useEditorStore((s) => s.clipCrop)
+
+  const activeTextOverlays = textOverlays.filter((t) => currentTime >= t.startTime && currentTime < t.endTime)
+  const activeShapes = shapes.filter((s) => currentTime >= s.startTime && currentTime < s.endTime)
+  const activeStickers = stickers.filter((s) => currentTime >= s.startTime && currentTime < s.endTime)
+
   // Glass blur filter for video
   const videoFilterStyle = useMemo((): React.CSSProperties => {
     const blur = effects?.glassBlur
+    const filters: string[] = []
     if (blur?.enabled) {
-      return { filter: `blur(${blur.intensity || 5}px)` }
+      filters.push(`blur(${blur.intensity || 5}px)`)
     }
-    return {}
-  }, [effects?.glassBlur])
+    // Color correction filters
+    if (colorCorrection.brightness !== 0) filters.push(`brightness(${1 + colorCorrection.brightness / 100})`)
+    if (colorCorrection.contrast !== 0) filters.push(`contrast(${1 + colorCorrection.contrast / 100})`)
+    if (colorCorrection.saturation !== 0) filters.push(`saturate(${1 + colorCorrection.saturation / 100})`)
+    if (colorCorrection.warmth !== 0) filters.push(`hue-rotate(${colorCorrection.warmth * 0.3}deg)`)
+    if (colorCorrection.sharpness > 0) filters.push(`contrast(${1 + colorCorrection.sharpness / 200})`)
+
+    const style: React.CSSProperties = {}
+    if (filters.length > 0) style.filter = filters.join(' ')
+
+    // Crop
+    if (clipCrop.top > 0 || clipCrop.right > 0 || clipCrop.bottom > 0 || clipCrop.left > 0) {
+      style.clipPath = `inset(${clipCrop.top}% ${clipCrop.right}% ${clipCrop.bottom}% ${clipCrop.left}%)`
+    }
+    return style
+  }, [effects?.glassBlur, colorCorrection, clipCrop])
 
   return (
     <div
@@ -382,6 +413,203 @@ export default function VideoPanel() {
             isSelected={selectedBRollId === broll.id} onSelect={() => setSelectedBRollId(broll.id)} />
         ))}
 
+        {/* Text overlays */}
+        {activeTextOverlays.map((text) => (
+          <div
+            key={text.id}
+            className={`absolute z-[15] cursor-move select-none ${
+              selectedCanvasItem?.id === text.id ? 'ring-2 ring-purple-500 ring-offset-1 ring-offset-transparent' : ''
+            }`}
+            style={{
+              left: `${text.x}%`,
+              top: `${text.y}%`,
+              transform: `translate(-50%, -50%) rotate(${text.rotation}deg)`,
+              fontFamily: text.fontFamily,
+              fontSize: `${text.fontSize}px`,
+              fontWeight: text.fontWeight,
+              fontStyle: text.fontStyle,
+              color: text.color,
+              textAlign: text.textAlign,
+              lineHeight: text.lineHeight,
+              letterSpacing: `${text.letterSpacing}px`,
+              backgroundColor: text.backgroundOpacity > 0 ? `${text.backgroundColor}${Math.round(text.backgroundOpacity * 2.55).toString(16).padStart(2, '0')}` : 'transparent',
+              textShadow: text.shadow ? `${text.shadow.x}px ${text.shadow.y}px ${text.shadow.blur}px ${text.shadow.color}` : undefined,
+              WebkitTextStroke: text.outline ? `${text.outline.width}px ${text.outline.color}` : undefined,
+              padding: '4px 8px',
+              borderRadius: '4px',
+              maxWidth: `${text.width}%`,
+              minWidth: '40px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+            onClick={(e) => { e.stopPropagation(); setSelectedCanvasItem({ type: 'text', id: text.id }) }}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return
+              e.stopPropagation()
+              setSelectedCanvasItem({ type: 'text', id: text.id })
+              const startX = e.clientX
+              const startY = e.clientY
+              const startPosX = text.x
+              const startPosY = text.y
+              const parent = (e.currentTarget.parentElement as HTMLElement)
+              const parentRect = parent.getBoundingClientRect()
+              const onMove = (me: MouseEvent) => {
+                const dx = ((me.clientX - startX) / parentRect.width) * 100
+                const dy = ((me.clientY - startY) / parentRect.height) * 100
+                updateTextOverlay(text.id, {
+                  x: Math.max(0, Math.min(100, startPosX + dx)),
+                  y: Math.max(0, Math.min(100, startPosY + dy)),
+                })
+              }
+              const onUp = () => {
+                window.removeEventListener('mousemove', onMove)
+                window.removeEventListener('mouseup', onUp)
+              }
+              window.addEventListener('mousemove', onMove)
+              window.addEventListener('mouseup', onUp)
+            }}
+          >
+            {text.text}
+          </div>
+        ))}
+
+        {/* Shape overlays */}
+        {activeShapes.map((shape) => (
+          <div
+            key={shape.id}
+            className={`absolute z-[14] cursor-move ${
+              selectedCanvasItem?.id === shape.id ? 'ring-2 ring-purple-500 ring-offset-1 ring-offset-transparent' : ''
+            }`}
+            style={{
+              left: `${shape.x}%`,
+              top: `${shape.y}%`,
+              width: `${shape.width}%`,
+              height: `${shape.height}%`,
+              transform: `rotate(${shape.rotation}deg)`,
+            }}
+            onClick={(e) => { e.stopPropagation(); setSelectedCanvasItem({ type: 'shape', id: shape.id }) }}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return
+              e.stopPropagation()
+              setSelectedCanvasItem({ type: 'shape', id: shape.id })
+              const startX = e.clientX
+              const startY = e.clientY
+              const startPosX = shape.x
+              const startPosY = shape.y
+              const parent = (e.currentTarget.parentElement as HTMLElement)
+              const parentRect = parent.getBoundingClientRect()
+              const onMove = (me: MouseEvent) => {
+                const dx = ((me.clientX - startX) / parentRect.width) * 100
+                const dy = ((me.clientY - startY) / parentRect.height) * 100
+                updateShape(shape.id, {
+                  x: Math.max(0, Math.min(100, startPosX + dx)),
+                  y: Math.max(0, Math.min(100, startPosY + dy)),
+                })
+              }
+              const onUp = () => {
+                window.removeEventListener('mousemove', onMove)
+                window.removeEventListener('mouseup', onUp)
+              }
+              window.addEventListener('mousemove', onMove)
+              window.addEventListener('mouseup', onUp)
+            }}
+          >
+            <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {shape.type === 'rectangle' && (
+                <rect
+                  x="0" y="0" width="100" height="100"
+                  rx={shape.cornerRadius}
+                  fill={shape.fill}
+                  fillOpacity={shape.fillOpacity / 100}
+                  stroke={shape.stroke}
+                  strokeWidth={shape.strokeWidth}
+                />
+              )}
+              {shape.type === 'circle' && (
+                <ellipse
+                  cx="50" cy="50" rx="50" ry="50"
+                  fill={shape.fill}
+                  fillOpacity={shape.fillOpacity / 100}
+                  stroke={shape.stroke}
+                  strokeWidth={shape.strokeWidth}
+                />
+              )}
+              {shape.type === 'triangle' && (
+                <polygon
+                  points="50,0 100,100 0,100"
+                  fill={shape.fill}
+                  fillOpacity={shape.fillOpacity / 100}
+                  stroke={shape.stroke}
+                  strokeWidth={shape.strokeWidth}
+                />
+              )}
+              {shape.type === 'star' && (
+                <polygon
+                  points="50,0 61,35 98,35 68,57 79,91 50,70 21,91 32,57 2,35 39,35"
+                  fill={shape.fill}
+                  fillOpacity={shape.fillOpacity / 100}
+                  stroke={shape.stroke}
+                  strokeWidth={shape.strokeWidth}
+                />
+              )}
+              {shape.type === 'arrow' && (
+                <>
+                  <line x1="10" y1="50" x2="80" y2="50" stroke={shape.stroke} strokeWidth={shape.strokeWidth} />
+                  <polygon points="80,35 100,50 80,65" fill={shape.stroke} />
+                </>
+              )}
+              {shape.type === 'line' && (
+                <line x1="0" y1="50" x2="100" y2="50" stroke={shape.stroke} strokeWidth={shape.strokeWidth} />
+              )}
+            </svg>
+          </div>
+        ))}
+
+        {/* Sticker overlays */}
+        {activeStickers.map((sticker) => (
+          <div
+            key={sticker.id}
+            className={`absolute z-[16] cursor-move select-none ${
+              selectedCanvasItem?.id === sticker.id ? 'ring-2 ring-purple-500 ring-offset-1 ring-offset-transparent' : ''
+            }`}
+            style={{
+              left: `${sticker.x}%`,
+              top: `${sticker.y}%`,
+              transform: `translate(-50%, -50%) rotate(${sticker.rotation}deg)`,
+              fontSize: `${sticker.size}px`,
+              lineHeight: 1,
+            }}
+            onClick={(e) => { e.stopPropagation(); setSelectedCanvasItem({ type: 'sticker', id: sticker.id }) }}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return
+              e.stopPropagation()
+              setSelectedCanvasItem({ type: 'sticker', id: sticker.id })
+              const startX = e.clientX
+              const startY = e.clientY
+              const startPosX = sticker.x
+              const startPosY = sticker.y
+              const parent = (e.currentTarget.parentElement as HTMLElement)
+              const parentRect = parent.getBoundingClientRect()
+              const onMove = (me: MouseEvent) => {
+                const dx = ((me.clientX - startX) / parentRect.width) * 100
+                const dy = ((me.clientY - startY) / parentRect.height) * 100
+                updateSticker(sticker.id, {
+                  x: Math.max(0, Math.min(100, startPosX + dx)),
+                  y: Math.max(0, Math.min(100, startPosY + dy)),
+                })
+              }
+              const onUp = () => {
+                window.removeEventListener('mousemove', onMove)
+                window.removeEventListener('mouseup', onUp)
+              }
+              window.addEventListener('mousemove', onMove)
+              window.addEventListener('mouseup', onUp)
+            }}
+          >
+            {sticker.emoji}
+          </div>
+        ))}
+
         {/* Effect badges - top left */}
         <div className="absolute top-3 left-3 flex flex-col gap-1 z-20 pointer-events-none">
           {effects?.audioEnhanced && (
@@ -417,6 +645,14 @@ export default function VideoPanel() {
         {/* Caption overlay */}
         {trackStates.captions.visible && showCaptions && currentCaption && (
           <CaptionOverlay caption={currentCaption} style={currentCaption.style || captionStyle} currentTime={currentTime} />
+        )}
+
+        {/* Canvas click to deselect */}
+        {selectedCanvasItem && (
+          <div
+            className="absolute inset-0 z-[13]"
+            onClick={() => setSelectedCanvasItem(null)}
+          />
         )}
 
         {/* Center play/pause overlay (shown when paused or hovering) */}

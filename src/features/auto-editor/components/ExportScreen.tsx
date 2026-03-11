@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Download, Play, PartyPopper, X, ExternalLink } from 'lucide-react'
+import { Download, Play, PartyPopper, X } from 'lucide-react'
 import { useAutoEditorStore, type VideoResult, type PlatformFile } from '../store/autoEditorStore'
 
 interface ExportScreenProps {

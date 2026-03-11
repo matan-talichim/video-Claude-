@@ -31,18 +31,20 @@ function generateSRT(
 
 export async function processVideo(input: ProcessVideoInput): Promise<string> {
   const log = useAutoEditorStore.getState().addLog
-  const { videoPlan, backgroundImage, brollClips, music, sourceUrls } = input
+  const { videoPlan, backgroundImage, brollClips: _brollClips, music, sourceUrls } = input
+  void _brollClips
 
   log(`מעבד סרטון ${videoPlan.videoIndex}...`)
 
   // Generate SRT for subtitles
-  const srt = generateSRT(
+  const _srt = generateSRT(
     (videoPlan.subtitles || videoPlan.sourceSegments || []).map((seg) => ({
       start: seg.start,
       end: seg.end,
       text: seg.text || '',
     }))
   )
+  void _srt
 
   // Send to server for actual FFmpeg processing
   const response = await fetch('http://localhost:3001/api/auto-editor/process', {

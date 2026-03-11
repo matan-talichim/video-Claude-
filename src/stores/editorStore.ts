@@ -147,6 +147,78 @@ export interface TrackState {
   visible: boolean
 }
 
+// === New overlay types for Kapwing-level editor ===
+
+export interface TextOverlay {
+  id: string
+  text: string
+  x: number           // percentage 0-100
+  y: number
+  width: number
+  height: number
+  rotation: number
+  fontFamily: string
+  fontSize: number
+  fontWeight: 'normal' | 'bold'
+  fontStyle: 'normal' | 'italic'
+  color: string
+  backgroundColor: string
+  backgroundOpacity: number
+  textAlign: 'right' | 'center' | 'left'
+  lineHeight: number
+  letterSpacing: number
+  shadow: { color: string; blur: number; x: number; y: number } | null
+  outline: { color: string; width: number } | null
+  animation: { entrance: string; exit: string; duration: number }
+  startTime: number
+  endTime: number
+}
+
+export interface ShapeOverlay {
+  id: string
+  type: 'rectangle' | 'circle' | 'line' | 'arrow' | 'star' | 'triangle'
+  x: number
+  y: number
+  width: number
+  height: number
+  rotation: number
+  fill: string
+  fillOpacity: number
+  stroke: string
+  strokeWidth: number
+  cornerRadius: number
+  startTime: number
+  endTime: number
+  animation: string
+}
+
+export interface StickerOverlay {
+  id: string
+  emoji: string
+  x: number
+  y: number
+  size: number
+  rotation: number
+  startTime: number
+  endTime: number
+}
+
+export interface ColorCorrection {
+  brightness: number
+  contrast: number
+  saturation: number
+  warmth: number
+  highlights: number
+  shadows: number
+  sharpness: number
+  vignette: number
+}
+
+export interface SelectedCanvasItem {
+  type: 'text' | 'shape' | 'sticker' | 'broll'
+  id: string
+}
+
 export interface ChapterMarker {
   title: string
   startTime: number
@@ -382,6 +454,38 @@ interface EditorState {
   trimBRollItem: (id: string, edge: 'start' | 'end', newTime: number) => void
   moveCaptionTime: (trackId: string, captionId: string, newStartTime: number) => void
   trimCaption: (trackId: string, captionId: string, edge: 'start' | 'end', newTime: number) => void
+
+  // === New overlay state ===
+  textOverlays: TextOverlay[]
+  addTextOverlay: (text: TextOverlay) => void
+  updateTextOverlay: (id: string, updates: Partial<TextOverlay>) => void
+  removeTextOverlay: (id: string) => void
+
+  shapes: ShapeOverlay[]
+  addShape: (shape: ShapeOverlay) => void
+  updateShape: (id: string, updates: Partial<ShapeOverlay>) => void
+  removeShape: (id: string) => void
+
+  stickers: StickerOverlay[]
+  addSticker: (sticker: StickerOverlay) => void
+  updateSticker: (id: string, updates: Partial<StickerOverlay>) => void
+  removeSticker: (id: string) => void
+
+  colorCorrection: ColorCorrection
+  setColorCorrection: (correction: Partial<ColorCorrection>) => void
+  resetColorCorrection: () => void
+
+  clipSpeed: number
+  clipReversed: boolean
+  setClipSpeed: (speed: number) => void
+  setClipReversed: (reversed: boolean) => void
+
+  clipCrop: { top: number; right: number; bottom: number; left: number }
+  setClipCrop: (crop: Partial<{ top: number; right: number; bottom: number; left: number }>) => void
+  resetClipCrop: () => void
+
+  selectedCanvasItem: SelectedCanvasItem | null
+  setSelectedCanvasItem: (item: SelectedCanvasItem | null) => void
 }
 
 const defaultCaptionStyle: CaptionStyle = {
@@ -443,6 +547,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   enhancedAudioBuffer: null,
   appliedEdits: [],
   editedFiles: [],
+
+  // === New overlay state defaults ===
+  textOverlays: [],
+  shapes: [],
+  stickers: [],
+  colorCorrection: { brightness: 0, contrast: 0, saturation: 0, warmth: 0, highlights: 0, shadows: 0, sharpness: 0, vignette: 0 },
+  clipSpeed: 1,
+  clipReversed: false,
+  clipCrop: { top: 0, right: 0, bottom: 0, left: 0 },
+  selectedCanvasItem: null,
 
   // Multi-language caption tracks
   captionTracks: [],
@@ -1252,6 +1366,60 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       isDirty: true,
     })
   },
+
+  // === New overlay actions ===
+  addTextOverlay: (text) => set((s) => ({ textOverlays: [...s.textOverlays, text], isDirty: true })),
+  updateTextOverlay: (id, updates) => set((s) => ({
+    textOverlays: s.textOverlays.map((t) => t.id === id ? { ...t, ...updates } : t),
+    isDirty: true,
+  })),
+  removeTextOverlay: (id) => set((s) => ({
+    textOverlays: s.textOverlays.filter((t) => t.id !== id),
+    selectedCanvasItem: s.selectedCanvasItem?.id === id ? null : s.selectedCanvasItem,
+    isDirty: true,
+  })),
+
+  addShape: (shape) => set((s) => ({ shapes: [...s.shapes, shape], isDirty: true })),
+  updateShape: (id, updates) => set((s) => ({
+    shapes: s.shapes.map((sh) => sh.id === id ? { ...sh, ...updates } : sh),
+    isDirty: true,
+  })),
+  removeShape: (id) => set((s) => ({
+    shapes: s.shapes.filter((sh) => sh.id !== id),
+    selectedCanvasItem: s.selectedCanvasItem?.id === id ? null : s.selectedCanvasItem,
+    isDirty: true,
+  })),
+
+  addSticker: (sticker) => set((s) => ({ stickers: [...s.stickers, sticker], isDirty: true })),
+  updateSticker: (id, updates) => set((s) => ({
+    stickers: s.stickers.map((st) => st.id === id ? { ...st, ...updates } : st),
+    isDirty: true,
+  })),
+  removeSticker: (id) => set((s) => ({
+    stickers: s.stickers.filter((st) => st.id !== id),
+    selectedCanvasItem: s.selectedCanvasItem?.id === id ? null : s.selectedCanvasItem,
+    isDirty: true,
+  })),
+
+  setColorCorrection: (correction) => set((s) => ({
+    colorCorrection: { ...s.colorCorrection, ...correction },
+    isDirty: true,
+  })),
+  resetColorCorrection: () => set({
+    colorCorrection: { brightness: 0, contrast: 0, saturation: 0, warmth: 0, highlights: 0, shadows: 0, sharpness: 0, vignette: 0 },
+    isDirty: true,
+  }),
+
+  setClipSpeed: (speed) => set({ clipSpeed: speed, isDirty: true }),
+  setClipReversed: (reversed) => set({ clipReversed: reversed, isDirty: true }),
+
+  setClipCrop: (crop) => set((s) => ({
+    clipCrop: { ...s.clipCrop, ...crop },
+    isDirty: true,
+  })),
+  resetClipCrop: () => set({ clipCrop: { top: 0, right: 0, bottom: 0, left: 0 }, isDirty: true }),
+
+  setSelectedCanvasItem: (item) => set({ selectedCanvasItem: item }),
 
   trimCaption: (trackId, captionId, edge, newTime) => {
     const { captionTracks, duration } = get()
