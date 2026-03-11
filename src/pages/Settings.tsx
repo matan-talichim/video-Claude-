@@ -95,7 +95,7 @@ const roleBadgeColors: Record<string, string> = {
 }
 
 interface ApiStatus {
-  openai: { connected: boolean; model: string }
+  openai: { connected: boolean; chatModel: string; transcribeModel: string }
   elevenlabs: { connected: boolean }
   deepl: { connected: boolean }
   gemini: { connected: boolean }
@@ -247,7 +247,7 @@ ${aiResponse}`,
   }
 
   const apiStatus: ApiStatus | null = apiStatusStore.checked ? {
-    openai: { connected: apiStatusStore.openai.connected, model: 'gpt-4o' },
+    openai: { connected: apiStatusStore.openai.connected, chatModel: 'gpt-5.4', transcribeModel: 'gpt-4o-transcribe-diarize' },
     elevenlabs: { connected: apiStatusStore.elevenlabs.connected },
     deepl: { connected: apiStatusStore.deepl.connected },
     gemini: { connected: apiStatusStore.gemini.connected },
@@ -271,7 +271,7 @@ ${aiResponse}`,
       name: 'OpenAI',
       icon: '🤖',
       key: 'openai' as const,
-      features: ['תמלול (Whisper)', 'עוזר AI (GPT-4o)', 'יצירת תמונות (DALL-E 3)'],
+      features: ['תמלול (gpt-4o-transcribe-diarize)', 'עוזר AI (GPT-5.4)', 'יצירת תמונות (DALL-E 3)'],
       description: 'תמלול אוטומטי, עוזר AI חכם ויצירת תמונות',
     },
     {
