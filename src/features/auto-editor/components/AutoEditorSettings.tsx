@@ -240,10 +240,10 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
             </div>
           </div>
 
-          {/* Subtle personalization indicator */}
-          {profile.confidenceScore > 0.3 && (
-            <div className="text-xs text-purple-400/60 text-center">
-              ההגדרות מותאמות אישית לפי העריכות הקודמות שלך
+          {/* Personalization indicator */}
+          {profile.confidenceScore >= 0.3 && (
+            <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 text-center">
+              <span className="text-purple-400 text-sm">✨ ההגדרות מותאמות אישית לפרופיל העריכה שלך</span>
             </div>
           )}
 
