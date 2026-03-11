@@ -1,4 +1,5 @@
 import { useAutoEditorStore, type AutoEditorInput } from '../store/autoEditorStore'
+import { useUserProfileStore } from '../../../stores/userProfileStore'
 import type { FullTranscript } from './whisperService'
 
 const API_BASE = 'http://localhost:3001/api'
@@ -22,7 +23,10 @@ export interface EditingPlan {
   }
 }
 
-const SYSTEM_PROMPT = `אתה עורך וידאו מקצועי לרשתות חברתיות.
+function buildSystemPrompt(): string {
+  const userProfile = useUserProfileStore.getState().getProfileForPrompt()
+
+  return `אתה עורך וידאו מקצועי לרשתות חברתיות.
 
 SOP:
 - הסר שתיקות מעל 0.3 שניות
@@ -35,8 +39,9 @@ SOP:
 - כל סרטון מתחיל ומסיים בנקודה טבעית
 - כל סרטון עצמאי ומובן לבד
 - אם יש עודף חומר — בחר הקטעים הטובים
-
+${userProfile ? '\n' + userProfile + '\nחשוב: אם יש פרופיל משתמש למעלה, התאם את העריכה להעדפות שלו.\nאם הוא לא אוהב הסרת מילות מילוי - אל תסיר.\nאם הוא אוהב הרבה B-Roll - הוסף יותר.\nאם הוא מעדיף פורמט מסוים - השתמש בו.\n' : ''}
 החזר JSON בלבד. ללא טקסט נוסף. ללא markdown.`
+}
 
 export async function planWithChatGPT(
   transcript: FullTranscript,
@@ -64,7 +69,7 @@ export async function planWithChatGPT(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: buildSystemPrompt(),
       userMessage,
       temperature: 0.7,
     }),

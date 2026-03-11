@@ -6,6 +6,7 @@ import { useEditorStore } from '../../stores/editorStore'
 import { useUsageStore } from '../../stores/usageStore'
 import { useApiStatusStore } from '../../stores/apiStatusStore'
 import { useUIStore } from '../../stores/uiStore'
+import { useUserProfileStore } from '../../stores/userProfileStore'
 import { api, ApiError } from '../../services/api'
 import { executeAiActions, formatActionResults } from '../../services/aiActionExecutor'
 import type { AIAction } from '../../services/aiActionExecutor'
@@ -524,7 +525,8 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     if (apiConnected) {
       try {
         const context = getEditorContext()
-        const result = await api.enhancedChat(input, context)
+        const userProfile = useUserProfileStore.getState().getProfileForPrompt()
+        const result = await api.enhancedChat(input, context, userProfile)
 
         // Track usage
         if (result.usage?.totalTokens) {

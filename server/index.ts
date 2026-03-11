@@ -394,14 +394,14 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר.' })
     }
 
-    const { message, transcript, projectName, duration } = req.body
+    const { message, transcript, projectName, duration, userProfile } = req.body
     if (!message) {
       return res.status(400).json({ message: 'לא התקבלה הודעה' })
     }
 
     const systemPrompt = `You are an AI video editor assistant called סטודיו AI. You speak Hebrew only.
 You have access to the user's video project with transcript and editing tools.
-
+${userProfile ? '\n' + userProfile + '\nחשוב: התאם את ההמלצות להעדפות המשתמש אם קיימות.\n' : ''}
 Project: ${projectName || 'ללא שם'}
 Duration: ${duration || 0} seconds
 
@@ -1136,12 +1136,12 @@ app.post('/api/chat/enhanced', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר.' })
 
-    const { message, context } = req.body
+    const { message, context, userProfile } = req.body
     if (!message) return res.status(400).json({ message: 'לא התקבלה הודעה' })
 
     const systemPrompt = `You are a professional AI video editor assistant. You speak Hebrew only.
 You have full control over video editing tools.
-
+${userProfile ? '\n' + userProfile + '\nחשוב: אם יש פרופיל משתמש למעלה, התאם את ההמלצות להעדפות שלו.\n' : ''}
 Current project state:
 - Name: ${context?.projectName || 'ללא שם'}
 - Duration: ${context?.duration || 0} seconds

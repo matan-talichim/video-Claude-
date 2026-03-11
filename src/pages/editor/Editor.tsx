@@ -18,6 +18,7 @@ import { useEditorStore } from '../../stores/editorStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTimelineStore } from '../../stores/timelineStore'
+import { useUserProfileStore } from '../../stores/userProfileStore'
 
 type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'exports' | 'settings'
 
@@ -79,6 +80,15 @@ export default function Editor() {
       })
     }
   }, [id, getProject, loadProject])
+
+  // Silent learning: finalize edit profile when leaving editor
+  useEffect(() => {
+    return () => {
+      if (projectId) {
+        useUserProfileStore.getState().finalizeEdit(projectId)
+      }
+    }
+  }, [projectId])
 
   // Auto-save every 30 seconds
   const doSave = useCallback(() => {

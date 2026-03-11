@@ -118,11 +118,11 @@ export const api = {
     })
   },
 
-  enhancedChat: async (message: string, context: any) => {
+  enhancedChat: async (message: string, context: any, userProfile?: string) => {
     return apiCall('/chat/enhanced', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, context }),
+      body: JSON.stringify({ message, context, userProfile }),
     })
   },
 
