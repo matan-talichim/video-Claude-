@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Mic, Scissors, RotateCcw, Clock, List, Eye, Image, Wand2, Users, Maximize2, Droplets, Share2, Upload, Download, Undo2, Redo2, SplitSquareHorizontal, Trash2, VolumeX, History } from 'lucide-react'
+import { Mic, Scissors, RotateCcw, Clock, List, Eye, Image, Wand2, Users, Maximize2, Droplets, Share2, Upload, Download, Undo2, Redo2, SplitSquareHorizontal, Trash2, VolumeX, History, Type, Shapes, Smile } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import { useUIStore } from '../../stores/uiStore'
+import EmojiPicker from './EmojiPicker'
 
 interface DropdownItem {
   label: string
@@ -130,6 +131,82 @@ export default function EditorToolbar() {
     addToast('סומן סוף טווח', 'info')
   }
 
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+  const emojiRef = useRef<HTMLDivElement>(null)
+
+  const handleAddText = () => {
+    const { addTextOverlay, currentTime: ct, duration: dur, setSelectedCanvasItem } = useEditorStore.getState()
+    const id = `text-${Date.now()}`
+    addTextOverlay({
+      id,
+      text: 'טקסט חדש',
+      x: 50,
+      y: 50,
+      width: 30,
+      height: 10,
+      rotation: 0,
+      fontFamily: 'Heebo',
+      fontSize: 32,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+      color: '#ffffff',
+      backgroundColor: '#000000',
+      backgroundOpacity: 0,
+      textAlign: 'center',
+      lineHeight: 1.2,
+      letterSpacing: 0,
+      shadow: null,
+      outline: null,
+      animation: { entrance: 'none', exit: 'none', duration: 0.5 },
+      startTime: ct,
+      endTime: Math.min(ct + 5, dur || ct + 5),
+    })
+    setSelectedCanvasItem({ type: 'text', id })
+    addToast('נוסף טקסט חדש', 'success')
+  }
+
+  const handleAddShape = () => {
+    const { addShape, currentTime: ct, duration: dur, setSelectedCanvasItem } = useEditorStore.getState()
+    const id = `shape-${Date.now()}`
+    addShape({
+      id,
+      type: 'rectangle',
+      x: 40,
+      y: 40,
+      width: 20,
+      height: 15,
+      rotation: 0,
+      fill: '#7C5CFF',
+      fillOpacity: 80,
+      stroke: '#ffffff',
+      strokeWidth: 2,
+      cornerRadius: 8,
+      startTime: ct,
+      endTime: Math.min(ct + 5, dur || ct + 5),
+      animation: 'none',
+    })
+    setSelectedCanvasItem({ type: 'shape', id })
+    addToast('נוספה צורה חדשה', 'success')
+  }
+
+  const handleAddEmoji = (emoji: string) => {
+    const { addSticker, currentTime: ct, duration: dur, setSelectedCanvasItem } = useEditorStore.getState()
+    const id = `sticker-${Date.now()}`
+    addSticker({
+      id,
+      emoji,
+      x: 50,
+      y: 50,
+      size: 64,
+      rotation: 0,
+      startTime: ct,
+      endTime: Math.min(ct + 5, dur || ct + 5),
+    })
+    setSelectedCanvasItem({ type: 'sticker', id })
+    setShowEmojiPicker(false)
+    addToast('נוסף אימוג׳י', 'success')
+  }
+
   const [showHistory, setShowHistory] = useState(false)
   const historyRef = useRef<HTMLDivElement>(null)
 
@@ -181,6 +258,12 @@ export default function EditorToolbar() {
           break
         case 'h':
           e.preventDefault(); setShowHistory((p) => !p)
+          break
+        case 't':
+          e.preventDefault(); handleAddText()
+          break
+        case '?':
+          e.preventDefault(); useUIStore.getState().toggleShortcutsModal()
           break
       }
     }
@@ -237,6 +320,39 @@ export default function EditorToolbar() {
           <VolumeX size={14} />
           <span className="hidden xl:inline">השתק</span>
         </button>
+        <div className="w-px h-5 bg-white/[0.06] mx-1" />
+        {/* Creative tools */}
+        <button
+          onClick={handleAddText}
+          className="flex items-center gap-1 px-2 py-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary text-xs"
+          title="T - הוסף טקסט"
+        >
+          <Type size={14} />
+          <span className="hidden xl:inline">טקסט</span>
+        </button>
+        <button
+          onClick={handleAddShape}
+          className="flex items-center gap-1 px-2 py-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary text-xs"
+          title="הוסף צורה"
+        >
+          <Shapes size={14} />
+          <span className="hidden xl:inline">צורה</span>
+        </button>
+        <div className="relative" ref={emojiRef}>
+          <button
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            className="flex items-center gap-1 px-2 py-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-text-muted hover:text-text-primary text-xs"
+            title="הוסף אימוג'י"
+          >
+            <Smile size={14} />
+            <span className="hidden xl:inline">אימוג׳י</span>
+          </button>
+          {showEmojiPicker && (
+            <div className="absolute top-full mt-2 right-0 z-50 animate-scale-in">
+              <EmojiPicker onSelect={handleAddEmoji} onClose={() => setShowEmojiPicker(false)} />
+            </div>
+          )}
+        </div>
         <div className="w-px h-5 bg-white/[0.06] mx-1" />
         <button
           onClick={handleUndo}

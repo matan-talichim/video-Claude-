@@ -13,6 +13,12 @@ import AudioPanel from './AudioPanel'
 import ProjectSettingsPanel from './ProjectSettingsPanel'
 import ExportsPanel from './ExportsPanel'
 import EditorModals from './EditorModals'
+import ShortcutsModal from './ShortcutsModal'
+import TextPropertiesPanel from './TextPropertiesPanel'
+import ShapePropertiesPanel from './ShapePropertiesPanel'
+import ColorCorrectionPanel from './ColorCorrectionPanel'
+import SpeedPanel from './SpeedPanel'
+import CropPanel from './CropPanel'
 import ToastContainer from '../../components/Toast'
 import { useEditorStore } from '../../stores/editorStore'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -45,6 +51,13 @@ export default function Editor() {
   const timelineHeight = useTimelineStore((s) => s.timelineHeight)
   const getProject = useProjectsStore((s) => s.getProject)
   const saveEditorState = useProjectsStore((s) => s.saveEditorState)
+
+  const selectedCanvasItem = useEditorStore((s) => s.selectedCanvasItem)
+  const textOverlays = useEditorStore((s) => s.textOverlays)
+  const shapes = useEditorStore((s) => s.shapes)
+
+  const selectedText = selectedCanvasItem?.type === 'text' ? textOverlays.find((t) => t.id === selectedCanvasItem.id) : null
+  const selectedShape = selectedCanvasItem?.type === 'shape' ? shapes.find((s) => s.id === selectedCanvasItem.id) : null
 
   const togglePanel = (panelId: PanelId) => {
     setActivePanel((prev) => (prev === panelId ? null : panelId))
@@ -154,6 +167,12 @@ export default function Editor() {
         return
       }
 
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        useEditorStore.getState().setSelectedCanvasItem(null)
+        return
+      }
+
       if (e.key === 'Tab') {
         e.preventDefault()
         setActivePanel((prev) => {
@@ -248,16 +267,36 @@ export default function Editor() {
         </div>
 
         {/* Panel content - slides in/out */}
-        {activePanel && (
+        {(activePanel || selectedCanvasItem) && (
           <div className="w-[350px] shrink-0 p-2 animate-slide-in-right overflow-hidden">
-            {activePanel === 'transcript' && <TranscriptPanel />}
-            {activePanel === 'ai' && <AISidebar onClose={() => setActivePanel(null)} />}
-            {activePanel === 'media' && id && <MediaSidebar projectId={id} onClose={() => setActivePanel(null)} />}
-            {activePanel === 'broll' && <BRollPanel onClose={() => setActivePanel(null)} />}
-            {activePanel === 'captions' && <CaptionsPanel onClose={() => setActivePanel(null)} />}
-            {activePanel === 'audio' && <AudioPanel onClose={() => setActivePanel(null)} />}
-            {activePanel === 'exports' && <ExportsPanel onClose={() => setActivePanel(null)} />}
-            {activePanel === 'settings' && <ProjectSettingsPanel onClose={() => setActivePanel(null)} />}
+            {/* Properties panels for selected canvas items take priority */}
+            {selectedText && <TextPropertiesPanel text={selectedText} />}
+            {selectedShape && <ShapePropertiesPanel shape={selectedShape} />}
+            {!selectedCanvasItem && activePanel === 'transcript' && <TranscriptPanel />}
+            {!selectedCanvasItem && activePanel === 'ai' && <AISidebar onClose={() => setActivePanel(null)} />}
+            {!selectedCanvasItem && activePanel === 'media' && id && <MediaSidebar projectId={id} onClose={() => setActivePanel(null)} />}
+            {!selectedCanvasItem && activePanel === 'broll' && <BRollPanel onClose={() => setActivePanel(null)} />}
+            {!selectedCanvasItem && activePanel === 'captions' && <CaptionsPanel onClose={() => setActivePanel(null)} />}
+            {!selectedCanvasItem && activePanel === 'audio' && <AudioPanel onClose={() => setActivePanel(null)} />}
+            {!selectedCanvasItem && activePanel === 'exports' && <ExportsPanel onClose={() => setActivePanel(null)} />}
+            {!selectedCanvasItem && activePanel === 'settings' && <ProjectSettingsPanel onClose={() => setActivePanel(null)} />}
+            {/* Color correction, speed, crop panels below main panel */}
+            {!selectedCanvasItem && activePanel && (
+              <div className="mt-2 space-y-2">
+                <details className="bg-bg-card rounded-xl border border-white/[0.06] overflow-hidden">
+                  <summary className="px-4 py-2 text-sm text-gray-300 cursor-pointer hover:bg-white/5">תיקון צבע</summary>
+                  <ColorCorrectionPanel />
+                </details>
+                <details className="bg-bg-card rounded-xl border border-white/[0.06] overflow-hidden">
+                  <summary className="px-4 py-2 text-sm text-gray-300 cursor-pointer hover:bg-white/5">מהירות</summary>
+                  <SpeedPanel />
+                </details>
+                <details className="bg-bg-card rounded-xl border border-white/[0.06] overflow-hidden">
+                  <summary className="px-4 py-2 text-sm text-gray-300 cursor-pointer hover:bg-white/5">חיתוך</summary>
+                  <CropPanel />
+                </details>
+              </div>
+            )}
           </div>
         )}
 
@@ -286,6 +325,7 @@ export default function Editor() {
       </div>
 
       <EditorModals />
+      <ShortcutsModal />
       <ToastContainer />
     </div>
   )
