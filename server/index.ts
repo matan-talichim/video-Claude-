@@ -70,7 +70,7 @@ app.use('/uploads', express.static(uploadsDir))
 
 app.get('/api/status', async (_req, res) => {
   const status = {
-    openai: { connected: !!process.env.OPENAI_API_KEY, model: 'gpt-4o' },
+    openai: { connected: !!process.env.OPENAI_API_KEY, chatModel: 'gpt-5.4', transcribeModel: 'gpt-4o-transcribe-diarize', features: ['Chat (GPT-5.4)', 'Transcribe (Diarize)', 'DALL-E', 'Whisper'] },
     elevenlabs: { connected: !!process.env.ELEVENLABS_API_KEY },
     deepl: { connected: !!process.env.DEEPL_API_KEY },
     gemini: { connected: !!process.env.GEMINI_API_KEY, features: ['Nano Banana', 'Veo 3.1'] },
@@ -169,21 +169,42 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
           { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] }
         )
 
-        // Transcribe chunk
-        const chunkTranscription = await ai.audio.transcriptions.create({
-          model: 'whisper-1',
-          file: fs.createReadStream(chunkPath),
-          language: 'he',
-          response_format: 'verbose_json',
-          timestamp_granularities: ['segment'],
-        })
+        // Transcribe chunk with diarize model (fallback chain)
+        let chunkTranscription: any
+        try {
+          chunkTranscription = await ai.audio.transcriptions.create({
+            model: 'gpt-4o-transcribe-diarize',
+            file: fs.createReadStream(chunkPath),
+            language: 'he',
+            response_format: 'diarized_json',
+            chunking_strategy: 'auto',
+          } as any)
+        } catch (diarizeErr: any) {
+          console.warn(`[SPLIT] Diarize failed for chunk ${i + 1}, falling back:`, diarizeErr.message)
+          try {
+            chunkTranscription = await ai.audio.transcriptions.create({
+              model: 'gpt-4o-transcribe',
+              file: fs.createReadStream(chunkPath),
+              language: 'he',
+              response_format: 'json',
+            } as any)
+          } catch {
+            chunkTranscription = await ai.audio.transcriptions.create({
+              model: 'whisper-1',
+              file: fs.createReadStream(chunkPath),
+              language: 'he',
+              response_format: 'verbose_json',
+              timestamp_granularities: ['segment'],
+            })
+          }
+        }
 
         console.log(`[SPLIT] Chunk ${i + 1} transcribed:`, (chunkTranscription.text || '').length, 'chars')
 
         // Adjust timestamps by adding offset
         const chunkSegments = ((chunkTranscription as any).segments || []).map((seg: any, idx: number) => ({
           id: allSegments.length + idx,
-          speaker: 'דובר 1',
+          speaker: seg.speaker || 'דובר 1',
           speakerId: 1,
           text: (seg.text || '').trim(),
           start: (seg.start || 0) + startTime,
@@ -207,35 +228,22 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
       console.log('[SPLIT] All chunks transcribed! Total segments:', allSegments.length)
 
-      // Try GPT-4o speaker detection for chunked transcription too
-      let chunkSpeakers: any[] = [{ id: 1, name: 'דובר 1', color: '#5C8AFF' }]
-      try {
-        if (allSegments.length > 1) {
-          const fullTextForSpeakers = allSegments.map((s: any) => `[${s.id}] ${s.text}`).join('\n')
-          // Truncate if too long
-          const truncated = fullTextForSpeakers.length > 8000 ? fullTextForSpeakers.slice(0, 8000) : fullTextForSpeakers
-          const speakerRes = await ai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-              { role: 'system', content: 'Analyze this Hebrew transcript and detect speakers. Return JSON: {"speakers":[{"id":1,"name":"דובר 1","description":"..."}],"segments":[{"id":0,"speakerId":1}]}. Return ONLY valid JSON.' },
-              { role: 'user', content: truncated },
-            ],
-            temperature: 0.3,
-            response_format: { type: 'json_object' },
-          })
-          const parsed = JSON.parse(speakerRes.choices[0]?.message?.content || '{}')
-          if (parsed.speakers && parsed.segments) {
-            chunkSpeakers = parsed.speakers.map((s: any, i: number) => ({ id: s.id || i + 1, name: s.name || `דובר ${i + 1}`, description: s.description || '', color: ['#5C8AFF', '#4ADE80', '#FBBF24', '#F472B6'][(s.id || i + 1 - 1) % 4] }))
-            const segMap = new Map(parsed.segments.map((s: any) => [s.id, s.speakerId]))
-            allSegments.forEach((seg: any) => {
-              const spId = segMap.get(seg.id) || 1
-              const sp = chunkSpeakers.find((s: any) => s.id === spId)
-              seg.speakerId = spId
-              seg.speaker = sp?.name || `דובר ${spId}`
-            })
-          }
+      // Map speaker IDs from diarization to Hebrew names with colors
+      const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
+      const speakerMap: Record<string, string> = {}
+      let speakerCount = 0
+      allSegments.forEach((seg: any) => {
+        const rawSpeaker = seg.speaker || 'speaker_0'
+        if (!speakerMap[rawSpeaker]) {
+          speakerCount++
+          speakerMap[rawSpeaker] = `דובר ${speakerCount}`
         }
-      } catch (e: any) { console.warn('[SPLIT] Speaker detection failed:', e.message) }
+        seg.speaker = speakerMap[rawSpeaker]
+        seg.speakerId = Object.keys(speakerMap).indexOf(rawSpeaker) + 1
+      })
+      const chunkSpeakers = Object.values(speakerMap).map((name, i) => ({
+        id: i + 1, name, color: speakerColors[i % speakerColors.length],
+      }))
 
       return res.json({
         text: fullText.trim(),
@@ -250,29 +258,56 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     }
 
     // ===== SINGLE FILE transcription (under 24MB) =====
-    console.log('[TRANSCRIBE 4] Sending to Whisper...')
-    const transcription = await ai.audio.transcriptions.create({
-      model: 'whisper-1',
-      file: fs.createReadStream(mp3Path),
-      language: 'he',
-      response_format: 'verbose_json',
-      timestamp_granularities: ['segment'],
-    })
+    console.log('[TRANSCRIBE 4] Using gpt-4o-transcribe-diarize model')
 
-    console.log('[TRANSCRIBE 5] SUCCESS! Text length:', (transcription.text || '').length)
+    let transcription: any
+    let usedModel = 'gpt-4o-transcribe-diarize'
+
+    try {
+      transcription = await ai.audio.transcriptions.create({
+        model: 'gpt-4o-transcribe-diarize',
+        file: fs.createReadStream(mp3Path),
+        language: 'he',
+        response_format: 'diarized_json',
+        chunking_strategy: 'auto',
+      } as any)
+    } catch (diarizeErr: any) {
+      console.warn('[TRANSCRIBE] Diarize failed, falling back:', diarizeErr.message)
+      usedModel = 'gpt-4o-transcribe (fallback)'
+      try {
+        transcription = await ai.audio.transcriptions.create({
+          model: 'gpt-4o-transcribe',
+          file: fs.createReadStream(mp3Path),
+          language: 'he',
+          response_format: 'json',
+        } as any)
+      } catch (transcribeErr: any) {
+        console.warn('[TRANSCRIBE] gpt-4o-transcribe failed, falling back to whisper-1:', transcribeErr.message)
+        usedModel = 'whisper-1 (fallback)'
+        transcription = await ai.audio.transcriptions.create({
+          model: 'whisper-1',
+          file: fs.createReadStream(mp3Path),
+          language: 'he',
+          response_format: 'verbose_json',
+          timestamp_granularities: ['segment'],
+        })
+      }
+    }
+
+    console.log('[TRANSCRIBE 5] SUCCESS! Model:', usedModel, 'Text length:', (transcription.text || '').length)
     console.log('[TRANSCRIBE 5] Preview:', (transcription.text || '').substring(0, 100))
 
     // Cleanup
     try { fs.unlinkSync(mp3Path); mp3Path = '' } catch {}
 
-    // Format segments with initial speaker assignment
+    // Format segments with speaker info from diarization
     const segments = ((transcription as any).segments || []).map((seg: any, i: number) => ({
       id: i,
-      speaker: 'דובר 1',
+      speaker: seg.speaker || 'דובר 1',
       speakerId: 1,
-      text: seg.text.trim(),
-      start: seg.start,
-      end: seg.end,
+      text: (seg.text || '').trim(),
+      start: seg.start || 0,
+      end: seg.end || 0,
       words: seg.words || [],
     }))
 
@@ -280,48 +315,25 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       segments.push({ id: 0, speaker: 'דובר 1', speakerId: 1, text: transcription.text, start: 0, end: 0, words: [] })
     }
 
-    // Try GPT-4o speaker detection
-    let speakers: any[] = [{ id: 1, name: 'דובר 1', color: '#5C8AFF' }]
-    try {
-      if (segments.length > 1) {
-        const fullText = segments.map((s: any) => `[${s.id}] ${s.text}`).join('\n')
-        const speakerResponse = await ai.chat.completions.create({
-          model: 'gpt-4o',
-          messages: [
-            {
-              role: 'system',
-              content: `Analyze this Hebrew transcript and detect different speakers based on context, topic changes, question/answer patterns, and speaking style. Return JSON with:
-- "speakers": array of { "id": number, "name": "דובר N", "description": "short description" }
-- "segments": array of { "id": number, "speakerId": number }
-If it seems like one speaker only, return a single speaker. Return ONLY valid JSON.`,
-            },
-            { role: 'user', content: fullText },
-          ],
-          temperature: 0.3,
-          response_format: { type: 'json_object' },
-        })
-
-        const parsed = JSON.parse(speakerResponse.choices[0]?.message?.content || '{}')
-        if (parsed.speakers && parsed.segments) {
-          speakers = parsed.speakers.map((s: any, i: number) => ({
-            id: s.id || i + 1,
-            name: s.name || `דובר ${i + 1}`,
-            description: s.description || '',
-            color: ['#5C8AFF', '#4ADE80', '#FBBF24', '#F472B6'][(s.id || i + 1 - 1) % 4],
-          }))
-          const segmentMap = new Map(parsed.segments.map((s: any) => [s.id, s.speakerId]))
-          segments.forEach((seg: any) => {
-            const speakerId = segmentMap.get(seg.id) || 1
-            const speaker = speakers.find((s: any) => s.id === speakerId)
-            seg.speakerId = speakerId
-            seg.speaker = speaker?.name || `דובר ${speakerId}`
-          })
-        }
-        console.log('[TRANSCRIBE] Speaker detection: found', speakers.length, 'speakers')
+    // Map speaker IDs from diarization to Hebrew names with colors
+    const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
+    const speakerMap: Record<string, string> = {}
+    let speakerCount = 0
+    segments.forEach((seg: any) => {
+      const rawSpeaker = seg.speaker || 'speaker_0'
+      if (!speakerMap[rawSpeaker]) {
+        speakerCount++
+        speakerMap[rawSpeaker] = `דובר ${speakerCount}`
       }
-    } catch (speakerErr: any) {
-      console.warn('[TRANSCRIBE] Speaker detection failed, using single speaker:', speakerErr.message)
-    }
+      seg.speaker = speakerMap[rawSpeaker]
+      seg.speakerId = Object.keys(speakerMap).indexOf(rawSpeaker) + 1
+    })
+
+    const speakers = Object.values(speakerMap).map((name, i) => ({
+      id: i + 1, name, color: speakerColors[i % speakerColors.length],
+    }))
+
+    console.log('[TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers')
 
     res.json({
       text: transcription.text || '',
@@ -329,6 +341,7 @@ If it seems like one speaker only, return a single speaker. Return ONLY valid JS
       language: 'he',
       segments,
       speakers,
+      model: usedModel,
     })
   } catch (error: any) {
     console.error('[TRANSCRIBE ERROR]', error.message, error.status)
@@ -359,7 +372,7 @@ app.post('/api/transcribe/speakers', async (req, res) => {
     }
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         {
           role: 'system',
@@ -460,7 +473,7 @@ NEVER just describe what you would do. ALWAYS include the action in the JSON so 
 Always respond with valid JSON only. No markdown, no code blocks, just JSON.`
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: message + (transcript ? `\n\nTranscript:\n${transcript}` : '') },
@@ -530,7 +543,7 @@ app.post('/api/generate-content', async (req, res) => {
     }
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         { role: 'system', content: 'אתה כותב תוכן מקצועי בעברית. החזר את התוכן בלבד, ללא JSON.' },
         { role: 'user', content: `${prompt}\n\nתמלול:\n${transcript}` },
@@ -558,7 +571,7 @@ app.post('/api/chapters', async (req, res) => {
     const { transcript, segments } = req.body
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         {
           role: 'system',
@@ -591,7 +604,7 @@ app.post('/api/suggest-clips', async (req, res) => {
     const { transcript, segments, targetDuration } = req.body
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         {
           role: 'system',
@@ -906,7 +919,7 @@ ${brandName ? `מותג: ${brandName}${brandSlogan ? `, סלוגן: ${brandSloga
 }`
 
     const scriptResult = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [{ role: 'user', content: scriptPrompt }],
       response_format: { type: 'json_object' },
     })
@@ -1112,7 +1125,7 @@ app.post('/api/suggest-broll', async (req, res) => {
     if (!transcript) return res.status(400).json({ message: 'לא התקבל תמלול.' })
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         {
           role: 'system',
@@ -1231,7 +1244,7 @@ Always respond with valid JSON only. No markdown, no code blocks.`
     const transcriptText = context?.transcript || ''
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: message + (transcriptText ? `\n\nTranscript:\n${transcriptText}` : '') },
@@ -1827,7 +1840,7 @@ app.post('/api/chatgpt-plan', async (req, res) => {
     if (!userMessage) return res.status(400).json({ message: 'חסר userMessage' })
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'user' as const, content: userMessage },
@@ -1856,7 +1869,7 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
     if (!transcript) return res.status(400).json({ message: 'חסר transcript' })
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         {
           role: 'system' as const,
@@ -2000,7 +2013,7 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
     if (!creativeBrief || !transcript) return res.status(400).json({ message: 'חסר creativeBrief או transcript' })
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         {
           role: 'system' as const,
@@ -2536,27 +2549,75 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
     const audioPath = fs.existsSync(mp3Path) ? mp3Path : filePath
 
-    console.log('[AUTO-TRANSCRIBE] Sending to Whisper...')
+    console.log('[AUTO-TRANSCRIBE] Sending to gpt-4o-transcribe-diarize...')
 
-    // Transcribe with Whisper
-    const transcription = await ai.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
-      model: 'whisper-1',
-      language: 'he',
-      response_format: 'verbose_json',
-      timestamp_granularities: ['segment'],
-    })
+    // Transcribe with diarize model (fallback chain)
+    let transcription: any
+    let usedModel = 'gpt-4o-transcribe-diarize'
+    try {
+      transcription = await ai.audio.transcriptions.create({
+        model: 'gpt-4o-transcribe-diarize',
+        file: fs.createReadStream(audioPath),
+        language: 'he',
+        response_format: 'diarized_json',
+        chunking_strategy: 'auto',
+      } as any)
+    } catch (diarizeErr: any) {
+      console.warn('[AUTO-TRANSCRIBE] Diarize failed, falling back:', diarizeErr.message)
+      usedModel = 'gpt-4o-transcribe (fallback)'
+      try {
+        transcription = await ai.audio.transcriptions.create({
+          model: 'gpt-4o-transcribe',
+          file: fs.createReadStream(audioPath),
+          language: 'he',
+          response_format: 'json',
+        } as any)
+      } catch {
+        usedModel = 'whisper-1 (fallback)'
+        transcription = await ai.audio.transcriptions.create({
+          file: fs.createReadStream(audioPath),
+          model: 'whisper-1',
+          language: 'he',
+          response_format: 'verbose_json',
+          timestamp_granularities: ['segment'],
+        })
+      }
+    }
 
     // Clean up temp files
     if (fs.existsSync(mp3Path)) try { fs.unlinkSync(mp3Path) } catch {}
     if (isTemp && fs.existsSync(filePath)) try { fs.unlinkSync(filePath) } catch {}
 
-    console.log('[AUTO-TRANSCRIBE] Done:', (transcription.segments || []).length, 'segments,', transcription.duration?.toFixed(1), 'sec')
+    // Map speaker IDs to Hebrew names
+    const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
+    const speakerMap: Record<string, string> = {}
+    let speakerCount = 0
+    const segments = (transcription.segments || []).map((seg: any, i: number) => {
+      const rawSpeaker = seg.speaker || 'speaker_0'
+      if (!speakerMap[rawSpeaker]) {
+        speakerCount++
+        speakerMap[rawSpeaker] = `דובר ${speakerCount}`
+      }
+      return {
+        ...seg,
+        id: i,
+        speaker: speakerMap[rawSpeaker],
+        text: (seg.text || '').trim(),
+      }
+    })
+
+    const speakers = Object.values(speakerMap).map((name, i) => ({
+      name, color: speakerColors[i % speakerColors.length],
+    }))
+
+    console.log('[AUTO-TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers,', (transcription.duration || 0).toFixed(1), 'sec, model:', usedModel)
 
     res.json({
-      segments: transcription.segments || [],
+      segments,
       duration: transcription.duration || 0,
       text: transcription.text || '',
+      speakers,
+      model: usedModel,
     })
   } catch (err: any) {
     console.error('[AUTO-TRANSCRIBE ERROR]', err.message)
@@ -3325,6 +3386,8 @@ app.post('/api/auto-editor/export', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 סטודיו AI Server running on port ${PORT}`)
   console.log(`   OpenAI:      ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log('   OpenAI Chat Model: gpt-5.4')
+  console.log('   OpenAI Transcribe Model: gpt-4o-transcribe-diarize')
   console.log(`   ElevenLabs:  ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   DeepL:       ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Gemini (Nano Banana + Veo): ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)

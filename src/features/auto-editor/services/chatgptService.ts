@@ -183,58 +183,58 @@ function normalizeTechnicalPlan(
   const plan: EditingPlan = {
     videos: (raw.videos || []).map((v: any) => {
       const video: VideoPlan = {
-        videoIndex: v.video_index ?? v.videoIndex,
-        title: v.title ?? '',
+        videoIndex: v.video_index || v.videoIndex,
+        title: v.title || '',
         sourceSegments: [],
         cuts: (v.cuts || []).map((c: any) => ({
-          keepStart: c.keep_start ?? c.keepStart,
-          keepEnd: c.keep_end ?? c.keepEnd,
+          keepStart: c.keep_start || c.keepStart,
+          keepEnd: c.keep_end || c.keepEnd,
         })),
         transitions: [],
         zooms: (v.zooms || []).map((z: any) => ({
-          atTime: z.relative_time ?? z.at_time ?? z.atTime ?? 0,
-          scale: z.scale ?? 1.05,
-          duration: z.duration ?? 3,
-          direction: z.direction ?? 'in',
+          atTime: z.relative_time || z.at_time || z.atTime || 0,
+          scale: z.scale || 1.05,
+          duration: z.duration || 3,
+          direction: z.direction || 'in',
         })),
-        cameraAngles: (v.camera_angles ?? v.cameraAngles ?? []).map((ca: any) => ({
-          start: ca.relative_start ?? ca.start ?? 0,
-          end: ca.relative_end ?? ca.end ?? 0,
-          camera: ca.camera ?? 'wide',
+        cameraAngles: (v.camera_angles || v.cameraAngles || []).map((ca: any) => ({
+          start: ca.relative_start || ca.start || 0,
+          end: ca.relative_end || ca.end || 0,
+          camera: ca.camera || 'wide',
         })),
-        colorGrade: v.color_grade ?? v.colorGrade ?? brief.creative_brief?.color_mood ?? 'cinematic',
-        framingStrategy: v.framing ?? v.framing_strategy ?? v.framingStrategy ?? 'blur_background',
-        brollMoments: (v.broll || v.broll_moments ?? v.brollMoments ?? []).map((b: any) => ({
-          atTime: b.relative_start ?? b.at_time ?? b.atTime ?? 0,
-          duration: b.relative_end && b.relative_start ? b.relative_end - b.relative_start : b.duration ?? 4,
-          prompt: b.prompt ?? '',
+        colorGrade: v.color_grade || v.colorGrade || brief.creative_brief?.color_mood || 'cinematic',
+        framingStrategy: v.framing || v.framing_strategy || v.framingStrategy || 'blur_background',
+        brollMoments: (v.broll || v.broll_moments || v.brollMoments || []).map((b: any) => ({
+          atTime: b.relative_start || b.at_time || b.atTime || 0,
+          duration: b.relative_end && b.relative_start ? b.relative_end - b.relative_start : b.duration || 4,
+          prompt: b.prompt || '',
         })),
         subtitles: (v.subtitles || []).map((s: any) => ({
-          start: s.relative_start ?? s.start ?? 0,
-          end: s.relative_end ?? s.end ?? 0,
-          text: s.text ?? '',
+          start: s.relative_start || s.start || 0,
+          end: s.relative_end || s.end || 0,
+          text: s.text || '',
         })),
         graphics: (v.graphics || []).map((g: any) => ({
-          type: g.type ?? 'key_point',
-          text: g.text ?? g.value ?? '',
-          atTime: g.relative_time ?? g.at_time ?? g.atTime ?? 0,
-          duration: g.duration ?? 3,
-          label: g.label ?? g.subtitle,
+          type: g.type || 'key_point',
+          text: g.text || g.value || '',
+          atTime: g.relative_time || g.at_time || g.atTime || 0,
+          duration: g.duration || 3,
+          label: g.label || g.subtitle,
         })),
         speakers: (v.speakers || []).map((s: any) => ({
-          name: s.name ?? 'דובר',
-          firstAppearance: s.first_appearance_relative ?? s.first_appearance ?? s.firstAppearance ?? 0,
-          displayDuration: s.display_duration ?? s.displayDuration ?? 4,
+          name: s.name || 'דובר',
+          firstAppearance: s.first_appearance_relative || s.first_appearance || s.firstAppearance || 0,
+          displayDuration: s.display_duration || s.displayDuration || 4,
         })),
         segmentsIntensity: [],
-        intro: v.intro ? { title: v.intro.title ?? '', duration: v.intro.duration ?? 3 } : null,
-        outro: v.outro ? { cta: v.outro.text ?? v.outro.cta ?? '', duration: v.outro.duration ?? 3 } : null,
-        musicMoments: (v.music_dynamics ?? v.music_moments ?? v.musicMoments ?? []).map((mm: any) => ({
-          atTime: mm.relative_time ?? mm.at_time ?? mm.atTime ?? 0,
-          volume: typeof mm.volume === 'number' ? (mm.volume > 0.5 ? 'high' : mm.volume < 0.15 ? 'low' : 'normal') : mm.volume ?? 'normal',
+        intro: v.intro ? { title: v.intro.title || '', duration: v.intro.duration || 3 } : null,
+        outro: v.outro ? { cta: v.outro.text || v.outro.cta || '', duration: v.outro.duration || 3 } : null,
+        musicMoments: (v.music_dynamics || v.music_moments || v.musicMoments || []).map((mm: any) => ({
+          atTime: mm.relative_time || mm.at_time || mm.atTime || 0,
+          volume: typeof mm.volume === 'number' ? (mm.volume > 0.5 ? 'high' : mm.volume < 0.15 ? 'low' : 'normal') : mm.volume || 'normal',
         })),
-        musicStyle: brief.creative_brief?.music_mood ?? '',
-        overallVibe: brief.creative_brief?.overall_vibe ?? '',
+        musicStyle: brief.creative_brief?.music_mood || '',
+        overallVibe: brief.creative_brief?.overall_vibe || '',
       }
 
       // Normalize transitions from object array to string array
@@ -243,7 +243,7 @@ function normalizeTechnicalPlan(
           if (typeof v.transitions[0] === 'string') {
             video.transitions = v.transitions
           } else {
-            video.transitions = v.transitions.map((t: any) => t.type ?? 'fade')
+            video.transitions = v.transitions.map((t: any) => t.type || 'fade')
           }
         }
       }
@@ -260,7 +260,7 @@ function normalizeTechnicalPlan(
           video.sourceSegments.push({
             start: seg.start,
             end: seg.end,
-            sourceFile: seg.sourceFile ?? 0,
+            sourceFile: seg.sourceFile || 0,
             text: seg.text,
           })
         }
@@ -269,11 +269,11 @@ function normalizeTechnicalPlan(
       return video
     }),
     prompts: {
-      backgroundImage: raw.prompts?.background_image ?? raw.prompts?.backgroundImage ?? `cinematic dark gradient background, ${brief.creative_brief?.color_mood ?? 'moody'} lighting`,
-      introImage: raw.prompts?.intro_image ?? raw.prompts?.introImage ?? '',
-      outroImage: raw.prompts?.outro_image ?? raw.prompts?.outroImage ?? '',
+      backgroundImage: raw.prompts?.background_image || raw.prompts?.backgroundImage || `cinematic dark gradient background, ${brief.creative_brief?.color_mood || 'moody'} lighting`,
+      introImage: raw.prompts?.intro_image || raw.prompts?.introImage || '',
+      outroImage: raw.prompts?.outro_image || raw.prompts?.outroImage || '',
       broll: [],
-      musicSearch: raw.prompts?.music_search ?? raw.prompts?.musicSearch ?? brief.creative_brief?.music_mood ?? 'upbeat corporate',
+      musicSearch: raw.prompts?.music_search || raw.prompts?.musicSearch || brief.creative_brief?.music_mood || 'upbeat corporate',
     },
   }
 
