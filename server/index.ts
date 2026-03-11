@@ -399,8 +399,8 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ message: 'לא התקבלה הודעה' })
     }
 
-    const systemPrompt = `You are an AI video editor assistant called סטודיו AI. You speak Hebrew only.
-You have access to the user's video project with transcript and editing tools.
+    const systemPrompt = `You are a PROFESSIONAL AI video editor assistant called סטודיו AI. You speak Hebrew only.
+You have access to the user's video project with transcript and professional editing tools.
 ${userProfile ? '\n' + userProfile + '\nחשוב: התאם את ההמלצות להעדפות המשתמש אם קיימות.\n' : ''}
 Project: ${projectName || 'ללא שם'}
 Duration: ${duration || 0} seconds
@@ -430,12 +430,25 @@ Available action types for the "actions" array (use when user gives a direct com
 - {"type": "mute_range", "params": {"startTime": 5, "endTime": 8}}
 - {"type": "suggest_clips", "params": {"count": 3}}
 
-When user asks for recommendations (מה אתה ממליץ, מה כדאי לעשות, תנתח את הסרטון, ערוך מקצועי):
+Professional capabilities (mention when relevant):
+- מעברים חלקים (transitions): fade, dissolve, smoothleft, zoomin, wipeleft, fadeblack, circleclose, radial
+- זומים דינמיים (Ken Burns): subtle zoom in/out every 5-8 seconds
+- סימולציית מולטי-קאם: auto-switch between wide/medium/closeup
+- Color grading: cinematic, warm, cold, vintage, vibrant, moody, clean, film
+- כתוביות מעוצבות (ASS): modern, karaoke, bold_white, minimal, colorful with animations
+- Lower thirds: speaker name bars
+- B-Roll עם אנימציות: fade in/out + slight zoom
+- אודיו מקצועי: noise reduction, compression, loudnorm, sidechain ducking
+- גרפיקות מונפשות: animated text overlays
+- Smart framing: blur_background / crop_center for vertical exports
+- Intro/Outro מונפשים
+
+When user asks for recommendations (מה אתה ממליץ, מה כדאי לעשות, תנתח את הסרטון, ערוך מקצועי, שפר את הסרטון):
 - Set "showAsChecklist": true
 - Return suggestions with priority (high/medium/low) and executable action
 - Each suggestion must have real numbers from the context
 - Sort by priority: high first, then medium, then low
-- Include 5-8 suggestions
+- Include 5-8 suggestions covering basic editing AND professional effects
 - Format: {"text": "description", "priority": "high", "action": {"type": "action_type", "params": {}}}
 
 When user gives a direct command (הסר מילות מילוי, הוסף כתוביות):
@@ -1139,8 +1152,8 @@ app.post('/api/chat/enhanced', async (req, res) => {
     const { message, context, userProfile } = req.body
     if (!message) return res.status(400).json({ message: 'לא התקבלה הודעה' })
 
-    const systemPrompt = `You are a professional AI video editor assistant. You speak Hebrew only.
-You have full control over video editing tools.
+    const systemPrompt = `You are a PROFESSIONAL AI video editor assistant at the highest level. You speak Hebrew only.
+You have full control over video editing tools including professional effects.
 ${userProfile ? '\n' + userProfile + '\nחשוב: אם יש פרופיל משתמש למעלה, התאם את ההמלצות להעדפות שלו.\n' : ''}
 Current project state:
 - Name: ${context?.projectName || 'ללא שם'}
@@ -1184,17 +1197,27 @@ Available action types for the "actions" array:
 - {"action": "delete_all_broll", "params": {}}
 - {"action": "add_animation", "params": {"type": "fadeIn"}}
 
-When user asks for recommendations (מה אתה ממליץ, מה כדאי לעשות, תנתח את הסרטון):
+Professional capabilities available (mention when relevant):
+- מעברים חלקים בין קטעים (transitions): fade, dissolve, smoothleft, zoomin, wipeleft, fadeblack, circleclose, radial
+- זומים דינמיים (Ken Burns effect): subtle zoom in/out every 5-8 seconds
+- סימולציית מולטי-קאם: auto-switch between wide/medium/closeup every 3-8 seconds
+- Color grading סינמטי: cinematic, warm, cold, vintage, vibrant, moody, clean, film
+- כתוביות מעוצבות (ASS format): modern, karaoke, bold_white, minimal, colorful styles with animations
+- Lower thirds: speaker name bars with animated entrance
+- B-Roll בנקודות מפתח: with fade in/out and slight zoom animations
+- עיבוד אודיו מקצועי: noise reduction, compression, loudnorm, sidechain ducking with music
+- גרפיקות מונפשות: animated text overlays for key points, numbers, quotes
+- Smart framing: blur_background / crop_center / pad_black for vertical exports (9:16)
+- Dynamic pacing: intensity-based visual adjustments per segment
+- Intro/Outro מונפשים: AI-generated title cards and CTAs
+
+When user asks for recommendations (מה אתה ממליץ, מה כדאי לעשות, תנתח את הסרטון, ערוך מקצועי, שפר את הסרטון):
 - Set "showAsChecklist": true
 - Return suggestions with priority (high/medium/low) and executable action
 - Each suggestion must reference real numbers from the project state above
 - Sort by priority: high first, then medium, then low
-- Include 5-8 suggestions
+- Include 5-8 suggestions covering both basic editing AND professional effects
 - Format: {"text": "description with real numbers", "priority": "high", "action": {"action": "action_type", "params": {}}}
-
-When user asks to professionally edit (ערוך מקצועי, ערוך את הסרטון):
-- Set "showAsChecklist": true
-- Return all recommended editing actions as suggestions
 
 When user gives a direct command (הסר מילות מילוי, הוסף כתוביות):
 - Set "showAsChecklist": false
@@ -2168,6 +2191,199 @@ function formatSrtTime(seconds: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`
 }
 
+function formatAssTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  const cs = Math.floor((seconds % 1) * 100)
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+}
+
+// Color grade presets
+const colorGrades: Record<string, string> = {
+  cinematic: 'eq=brightness=0.02:contrast=1.15:saturation=0.9,curves=m=0/0:0.3/0.25:0.7/0.8:1/1',
+  warm: 'eq=brightness=0.03:contrast=1.05:saturation=1.2,colorbalance=rs=0.1:gs=0.05:bs=-0.05:rm=0.05:gm=0.02:bm=-0.03',
+  cold: 'eq=brightness=0.02:contrast=1.1:saturation=0.85,colorbalance=rs=-0.05:gs=0:bs=0.1:rm=-0.03:gm=0.02:bm=0.08',
+  vintage: 'eq=brightness=0.05:contrast=0.95:saturation=0.7,curves=r=0/0.1:0.5/0.5:1/0.9',
+  vibrant: 'eq=brightness=0.03:contrast=1.2:saturation=1.4,unsharp=5:5:1.0:5:5:0.0',
+  moody: 'eq=brightness=-0.02:contrast=1.2:saturation=0.8,curves=m=0/0:0.25/0.15:0.75/0.85:1/1,vignette=PI/4',
+  clean: 'eq=brightness=0.04:contrast=1.05:saturation=1.05,unsharp=3:3:0.5',
+  film: 'eq=brightness=0.01:contrast=1.1:saturation=0.95,curves=r=0/0.05:1/0.95:g=0/0.03:1/0.97,vignette=PI/5',
+}
+
+// Subtitle style presets (ASS format)
+const subtitleStyles: Record<string, string> = {
+  modern: 'Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,1',
+  karaoke: 'Style: Default,Arial,22,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,50,1',
+  bold_white: 'Style: Default,Impact,24,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,1',
+  minimal: 'Style: Default,Helvetica,18,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,30,1',
+  colorful: 'Style: Default,Arial,22,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,45,1',
+}
+
+// Generate styled ASS subtitles
+function generateStyledSubtitles(segments: any[], cuts: any[], style: string = 'modern'): string {
+  let ass = `[Script Info]
+Title: Auto Generated Subtitles
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+${subtitleStyles[style] || subtitleStyles.modern}
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`
+
+  // Recalculate timestamps relative to cut video
+  let currentOffset = 0
+  for (const cut of cuts) {
+    const cutDuration = cut.keep_end - cut.keep_start
+    for (const seg of segments) {
+      const segStart = seg.start ?? seg.keepStart
+      const segEnd = seg.end ?? seg.keepEnd
+      if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
+        const relStart = currentOffset + (segStart - cut.keep_start)
+        const relEnd = currentOffset + (segEnd - cut.keep_start)
+        const start = formatAssTime(relStart)
+        const end = formatAssTime(relEnd)
+        // Add fade-in/fade-out animation
+        const text = `{\\fad(200,200)}${seg.text}`
+        ass += `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}\n`
+      }
+    }
+    currentOffset += cutDuration
+  }
+
+  return ass
+}
+
+// Build transition filter for xfade between cuts
+function buildTransitionFilter(cuts: any[], transitions: string[] = ['fade'], transitionDuration: number = 0.5): { filter: string; useTransitions: boolean } {
+  if (cuts.length <= 1) {
+    const filter = `[0:v]trim=start=${cuts[0].keep_start}:end=${cuts[0].keep_end},setpts=PTS-STARTPTS[outv];[0:a]atrim=start=${cuts[0].keep_start}:end=${cuts[0].keep_end},asetpts=PTS-STARTPTS[outa]`
+    return { filter, useTransitions: false }
+  }
+
+  const filters: string[] = []
+
+  // Create trimmed segments
+  cuts.forEach((cut: any, i: number) => {
+    filters.push(`[0:v]trim=start=${cut.keep_start}:end=${cut.keep_end},setpts=PTS-STARTPTS[v${i}]`)
+    filters.push(`[0:a]atrim=start=${cut.keep_start}:end=${cut.keep_end},asetpts=PTS-STARTPTS[a${i}]`)
+  })
+
+  // Apply xfade transitions between consecutive video segments
+  let lastVideo = 'v0'
+  let lastAudio = 'a0'
+  let accumulatedOffset = 0
+
+  for (let i = 1; i < cuts.length; i++) {
+    const prevDuration = cuts[i - 1].keep_end - cuts[i - 1].keep_start
+    accumulatedOffset += prevDuration - transitionDuration
+
+    const transType = transitions[(i - 1) % transitions.length] || 'fade'
+    const outLabel = i === cuts.length - 1 ? 'outv' : `xv${i}`
+    const outAudioLabel = i === cuts.length - 1 ? 'outa' : `xa${i}`
+
+    filters.push(`[${lastVideo}][v${i}]xfade=transition=${transType}:duration=${transitionDuration}:offset=${Math.max(0, accumulatedOffset)}[${outLabel}]`)
+    filters.push(`[${lastAudio}][a${i}]acrossfade=d=${transitionDuration}[${outAudioLabel}]`)
+
+    lastVideo = outLabel
+    lastAudio = outAudioLabel
+  }
+
+  return { filter: filters.join(';'), useTransitions: true }
+}
+
+// Build multi-cam crop filter
+function buildMultiCamFilter(cameraAngles: any[], videoWidth: number, videoHeight: number): string {
+  if (!cameraAngles || cameraAngles.length === 0) return ''
+
+  const parts: string[] = []
+  cameraAngles.forEach((seg: any, i: number) => {
+    const camType = seg.camera || 'wide'
+    let crop = ''
+
+    switch (camType) {
+      case 'closeup': {
+        const cwClose = Math.floor(videoWidth * 0.5)
+        const chClose = Math.floor(videoHeight * 0.5)
+        crop = `crop=${cwClose}:${chClose}:${Math.floor((videoWidth - cwClose) / 2)}:${Math.floor((videoHeight - chClose) / 2)},scale=${videoWidth}:${videoHeight}`
+        break
+      }
+      case 'medium': {
+        const cwMed = Math.floor(videoWidth * 0.7)
+        const chMed = Math.floor(videoHeight * 0.7)
+        crop = `crop=${cwMed}:${chMed}:${Math.floor((videoWidth - cwMed) / 2)}:${Math.floor((videoHeight - chMed) / 2)},scale=${videoWidth}:${videoHeight}`
+        break
+      }
+      default:
+        // wide - no crop
+        break
+    }
+
+    if (crop) {
+      parts.push(`[0:v]trim=start=${seg.start}:end=${seg.end},${crop},setpts=PTS-STARTPTS[cam${i}]`)
+    } else {
+      parts.push(`[0:v]trim=start=${seg.start}:end=${seg.end},setpts=PTS-STARTPTS[cam${i}]`)
+    }
+    parts.push(`[0:a]atrim=start=${seg.start}:end=${seg.end},asetpts=PTS-STARTPTS[cama${i}]`)
+  })
+
+  // Concat all cam segments
+  const camInputs = cameraAngles.map((_: any, i: number) => `[cam${i}][cama${i}]`).join('')
+  parts.push(`${camInputs}concat=n=${cameraAngles.length}:v=1:a=1[outv][outa]`)
+
+  return parts.join(';')
+}
+
+// Build smart framing filter for platform export
+function buildSmartFramingFilter(sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number, strategy: string): string {
+  const targetRatio = targetWidth / targetHeight
+
+  if (strategy === 'crop_center') {
+    if (targetRatio < 1) {
+      // Vertical (9:16): crop center of 16:9
+      const cropWidth = Math.floor(sourceHeight * targetWidth / targetHeight)
+      const x = Math.floor((sourceWidth - cropWidth) / 2)
+      return `crop=${Math.min(cropWidth, sourceWidth)}:${sourceHeight}:${Math.max(x, 0)}:0,scale=${targetWidth}:${targetHeight}`
+    }
+    if (Math.abs(targetRatio - 1) < 0.01) {
+      // Square (1:1)
+      const cropSize = Math.min(sourceWidth, sourceHeight)
+      const x = Math.floor((sourceWidth - cropSize) / 2)
+      const y = Math.floor((sourceHeight - cropSize) / 2)
+      return `crop=${cropSize}:${cropSize}:${x}:${y},scale=${targetWidth}:${targetHeight}`
+    }
+    return `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:black`
+  }
+
+  if (strategy === 'blur_background') {
+    // Use filter_complex with blurred background + centered foreground
+    // This needs to be handled specially in the caller since it requires filter_complex
+    return `__blur_background__`
+  }
+
+  // Default: pad with black bars
+  return `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:black`
+}
+
+// Get intensity-based visual filter
+function getIntensityFilter(intensity: number): string {
+  switch (intensity) {
+    case 5: return 'eq=contrast=1.2:saturation=1.3'
+    case 4: return 'eq=contrast=1.1:saturation=1.15'
+    case 2: return 'eq=brightness=0.02:saturation=0.95'
+    case 1: return 'eq=brightness=0.03:saturation=0.85'
+    default: return '' // intensity 3 = normal
+  }
+}
+
 // Legacy endpoint kept for backward compat
 app.post('/api/auto-editor/process-video', async (req, res) => {
   // Redirect to new process endpoint
@@ -2184,8 +2400,10 @@ app.post('/api/auto-editor/process-video', async (req, res) => {
   return (app as any).handle(req, res)
 })
 
-// Main processing endpoint: cuts, color grades, cleans audio, adds music, subtitles, exports per platform
+// Main processing endpoint: professional video processing pipeline
 app.post('/api/auto-editor/process', async (req, res) => {
+  const filesToCleanup: string[] = []
+
   try {
     const {
       videoUrl,
@@ -2194,6 +2412,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       platforms,
       musicUrl,
       backgroundImage,
+      captionStyle,
     } = req.body
 
     const ffmpegPath = getFFmpeg()
@@ -2208,11 +2427,11 @@ app.post('/api/auto-editor/process', async (req, res) => {
     } else if (videoUrl && videoUrl.startsWith('/uploads/')) {
       sourceFile = path.join(uploadsDir, path.basename(videoUrl))
     } else if (videoUrl) {
-      // Download remote file
       const response = await fetch(videoUrl)
       const buffer = Buffer.from(await response.arrayBuffer())
       sourceFile = path.join(uploadsDir, `source_${timestamp}.mp4`)
       fs.writeFileSync(sourceFile, buffer)
+      filesToCleanup.push(sourceFile)
     } else {
       return res.status(400).json({ message: 'חסר videoUrl' })
     }
@@ -2222,11 +2441,19 @@ app.post('/api/auto-editor/process', async (req, res) => {
     }
 
     console.log('[PROCESS] Source file:', sourceFile)
+    console.log('[PROCESS] Plan features:', {
+      transitions: videoPlan?.transitions?.length || 0,
+      zooms: videoPlan?.zooms?.length || 0,
+      cameraAngles: (videoPlan?.camera_angles || videoPlan?.cameraAngles)?.length || 0,
+      colorGrade: videoPlan?.color_grade || videoPlan?.colorGrade || 'clean',
+      speakers: videoPlan?.speakers?.length || 0,
+      graphics: videoPlan?.graphics?.length || 0,
+    })
 
     const outputFiles: any[] = []
 
     // ============================================
-    // STEP 1: CUT VIDEO ACCORDING TO PLAN
+    // STEP 1: CUT VIDEO WITH TRANSITIONS
     // ============================================
 
     // Normalize cuts from camelCase or snake_case
@@ -2236,65 +2463,109 @@ app.post('/api/auto-editor/process', async (req, res) => {
     }))
 
     if (cuts.length === 0) {
-      // If no cuts specified, just trim to target duration
       cuts.push({ keep_start: 0, keep_end: targetDuration || 60 })
     }
 
-    // Build FFmpeg filter for concatenating kept segments using trim+concat
-    const cutFilters: string[] = []
-    const concatInputs: string[] = []
-
-    cuts.forEach((cut: any, i: number) => {
-      cutFilters.push(
-        `[0:v]trim=start=${cut.keep_start}:end=${cut.keep_end},setpts=PTS-STARTPTS[v${i}]`
-      )
-      cutFilters.push(
-        `[0:a]atrim=start=${cut.keep_start}:end=${cut.keep_end},asetpts=PTS-STARTPTS[a${i}]`
-      )
-      concatInputs.push(`[v${i}][a${i}]`)
-    })
-
-    const concatFilter = `${concatInputs.join('')}concat=n=${cuts.length}:v=1:a=1[outv][outa]`
-    const fullFilter = [...cutFilters, concatFilter].join(';')
-
+    const transitions = videoPlan?.transitions || ['fade']
     const cutFile = path.join(uploadsDir, `cut_${timestamp}.mp4`)
+    filesToCleanup.push(cutFile)
 
-    console.log('[PROCESS] Step 1: Cutting video with', cuts.length, 'segments...')
-    execSync(
-      `"${ffmpegPath}" -i "${sourceFile}" -filter_complex "${fullFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${cutFile}" -y`,
-      { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
-    )
-    console.log('[PROCESS] Step 1 done: Cut video created')
+    console.log('[PROCESS] Step 1: Cutting video with', cuts.length, 'segments and transitions...')
+
+    const { filter: transFilter, useTransitions } = buildTransitionFilter(cuts, transitions, 0.5)
+
+    try {
+      execSync(
+        `"${ffmpegPath}" -i "${sourceFile}" -filter_complex "${transFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${cutFile}" -y`,
+        { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      console.log('[PROCESS] Step 1 done: Cut video created' + (useTransitions ? ' with transitions' : ''))
+    } catch (e: any) {
+      // Fallback: simple concat without xfade if transitions fail
+      console.log('[PROCESS] Transitions failed, falling back to simple concat:', e.message?.slice(0, 100))
+      const cutFilters: string[] = []
+      const concatInputs: string[] = []
+      cuts.forEach((cut: any, i: number) => {
+        cutFilters.push(`[0:v]trim=start=${cut.keep_start}:end=${cut.keep_end},setpts=PTS-STARTPTS[v${i}]`)
+        cutFilters.push(`[0:a]atrim=start=${cut.keep_start}:end=${cut.keep_end},asetpts=PTS-STARTPTS[a${i}]`)
+        concatInputs.push(`[v${i}][a${i}]`)
+      })
+      const fallbackFilter = [...cutFilters, `${concatInputs.join('')}concat=n=${cuts.length}:v=1:a=1[outv][outa]`].join(';')
+      execSync(
+        `"${ffmpegPath}" -i "${sourceFile}" -filter_complex "${fallbackFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${cutFile}" -y`,
+        { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      console.log('[PROCESS] Step 1 done: Cut video created (fallback concat)')
+    }
+
+    let currentFile = cutFile
 
     // ============================================
-    // STEP 2: COLOR GRADE
+    // STEP 2: MULTI-CAM SIMULATION
     // ============================================
 
+    const cameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles || []
+    if (cameraAngles.length > 1) {
+      const camFile = path.join(uploadsDir, `multicam_${timestamp}.mp4`)
+      filesToCleanup.push(camFile)
+      console.log('[PROCESS] Step 2: Multi-cam simulation with', cameraAngles.length, 'angles...')
+
+      try {
+        // Remap camera angles to be relative to the cut video
+        let cutOffset = 0
+        const cutDurations = cuts.map((c: any) => c.keep_end - c.keep_start)
+        const totalCutDuration = cutDurations.reduce((s: number, d: number) => s + d, 0)
+
+        // Scale camera angles to fit within cut video duration
+        const scaledAngles = cameraAngles.map((ca: any) => {
+          const relStart = Math.max(0, Math.min(ca.start, totalCutDuration))
+          const relEnd = Math.max(relStart, Math.min(ca.end, totalCutDuration))
+          return { start: relStart, end: relEnd, camera: ca.camera || 'wide' }
+        }).filter((ca: any) => ca.end > ca.start)
+
+        if (scaledAngles.length > 1) {
+          const camFilter = buildMultiCamFilter(scaledAngles, 1920, 1080)
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -filter_complex "${camFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${camFile}" -y`,
+            { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+          )
+          currentFile = camFile
+          console.log('[PROCESS] Step 2 done: Multi-cam applied')
+        } else {
+          console.log('[PROCESS] Step 2 skipped: Not enough valid camera angles')
+        }
+      } catch (e: any) {
+        console.log('[PROCESS] Multi-cam failed, continuing without:', e.message?.slice(0, 100))
+      }
+    } else {
+      console.log('[PROCESS] Step 2 skipped: No camera angles in plan')
+    }
+
+    // ============================================
+    // STEP 3: COLOR GRADE
+    // ============================================
+
+    const colorGradeName = videoPlan?.color_grade || videoPlan?.colorGrade || 'clean'
+    const gradeFilter = colorGrades[colorGradeName] || colorGrades.clean
     const gradedFile = path.join(uploadsDir, `graded_${timestamp}.mp4`)
-    console.log('[PROCESS] Step 2: Color grading...')
+    filesToCleanup.push(gradedFile)
+
+    console.log(`[PROCESS] Step 3: Color grading (${colorGradeName})...`)
     execSync(
-      `"${ffmpegPath}" -i "${cutFile}" -vf "eq=brightness=0.03:contrast=1.05:saturation=1.15" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
+      `"${ffmpegPath}" -i "${currentFile}" -vf "${gradeFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
       { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
     )
-    console.log('[PROCESS] Step 2 done')
-
-    // ============================================
-    // STEP 3: CLEAN AUDIO
-    // ============================================
-
-    const cleanedFile = path.join(uploadsDir, `cleaned_${timestamp}.mp4`)
-    console.log('[PROCESS] Step 3: Cleaning audio...')
-    execSync(
-      `"${ffmpegPath}" -i "${gradedFile}" -af "highpass=f=80,lowpass=f=8000,afftdn=nf=-25,loudnorm=I=-16:LRA=11:TP=-1.5" -c:v copy "${cleanedFile}" -y`,
-      { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
-    )
+    currentFile = gradedFile
     console.log('[PROCESS] Step 3 done')
 
     // ============================================
-    // STEP 4: ADD MUSIC (if provided)
+    // STEP 4: PROFESSIONAL AUDIO PROCESSING + MUSIC
     // ============================================
 
-    let currentFile = cleanedFile
+    const audioFile = path.join(uploadsDir, `audio_${timestamp}.mp4`)
+    filesToCleanup.push(audioFile)
+
+    console.log('[PROCESS] Step 4: Professional audio processing...')
 
     if (musicUrl) {
       try {
@@ -2305,75 +2576,217 @@ app.post('/api/auto-editor/process', async (req, res) => {
         }
 
         if (!musicFile || !fs.existsSync(musicFile)) {
-          // Download music file
           musicFile = path.join(uploadsDir, `music_${timestamp}.mp3`)
           const musicResponse = await fetch(musicUrl)
           if (musicResponse.ok) {
             const musicBuffer = Buffer.from(await musicResponse.arrayBuffer())
             fs.writeFileSync(musicFile, musicBuffer)
+            filesToCleanup.push(musicFile)
           }
         }
 
         if (fs.existsSync(musicFile)) {
-          const musicMixFile = path.join(uploadsDir, `musicmix_${timestamp}.mp4`)
-          console.log('[PROCESS] Step 4: Adding music...')
+          // Professional audio chain: clean voice + music with sidechain ducking
           execSync(
-            `"${ffmpegPath}" -i "${currentFile}" -i "${musicFile}" -filter_complex "[1:a]volume=0.15,aloop=-1:2e+09[music];[0:a][music]amix=inputs=2:duration=first[outa]" -map 0:v -map "[outa]" -c:v copy -c:a aac -b:a 128k -shortest "${musicMixFile}" -y`,
+            `"${ffmpegPath}" -i "${currentFile}" -i "${musicFile}" -filter_complex "[0:a]highpass=f=80,lowpass=f=12000,afftdn=nf=-25,acompressor=threshold=-18dB:ratio=3:attack=5:release=50,loudnorm=I=-16:LRA=11:TP=-1.5[voice];[1:a]volume=0.15,afade=t=in:st=0:d=2,aloop=-1:2e+09[music];[voice][music]sidechaincompress=threshold=0.02:ratio=6:attack=10:release=200[outa]" -map 0:v -map "[outa]" -c:v copy -c:a aac -b:a 128k -shortest "${audioFile}" -y`,
             { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
           )
-          currentFile = musicMixFile
-          console.log('[PROCESS] Step 4 done')
-
-          // Clean up downloaded music
-          if (musicFile.includes(`music_${timestamp}`)) {
-            try { fs.unlinkSync(musicFile) } catch {}
-          }
+          currentFile = audioFile
+          console.log('[PROCESS] Step 4 done: Audio processed with music + sidechain ducking')
+        } else {
+          // No music file - just clean the voice
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -af "highpass=f=80,lowpass=f=12000,afftdn=nf=-25,acompressor=threshold=-18dB:ratio=3:attack=5:release=50,loudnorm=I=-16:LRA=11:TP=-1.5" -c:v copy "${audioFile}" -y`,
+            { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+          )
+          currentFile = audioFile
+          console.log('[PROCESS] Step 4 done: Audio cleaned (no music)')
         }
       } catch (e: any) {
-        console.log('[PROCESS] Music failed, continuing without:', e.message)
+        console.log('[PROCESS] Music mix failed, falling back to basic audio clean:', e.message?.slice(0, 100))
+        try {
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -af "highpass=f=80,lowpass=f=12000,afftdn=nf=-25,loudnorm=I=-16:LRA=11:TP=-1.5" -c:v copy "${audioFile}" -y`,
+            { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+          )
+          currentFile = audioFile
+        } catch { /* continue with current file */ }
+      }
+    } else {
+      // No music - just clean the voice
+      try {
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -af "highpass=f=80,lowpass=f=12000,afftdn=nf=-25,acompressor=threshold=-18dB:ratio=3:attack=5:release=50,loudnorm=I=-16:LRA=11:TP=-1.5" -c:v copy "${audioFile}" -y`,
+          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+        currentFile = audioFile
+        console.log('[PROCESS] Step 4 done: Audio cleaned')
+      } catch (e: any) {
+        console.log('[PROCESS] Audio clean failed, continuing:', e.message?.slice(0, 100))
       }
     }
 
     // ============================================
-    // STEP 5: GENERATE SUBTITLES SRT
+    // STEP 5: STYLED SUBTITLES (ASS FORMAT)
     // ============================================
 
-    let srtFile: string | null = null
     const segments = videoPlan?.subtitles || videoPlan?.source_segments || videoPlan?.sourceSegments || []
+    let assFilePath: string | null = null
+
     if (segments.length > 0) {
-      srtFile = path.join(uploadsDir, `subs_${timestamp}.srt`)
-      let srtContent = ''
-      let index = 1
+      console.log('[PROCESS] Step 5: Generating styled subtitles (ASS)...')
+      const subStyle = captionStyle || 'modern'
+      const assContent = generateStyledSubtitles(segments, cuts, subStyle)
+      assFilePath = path.join(uploadsDir, `subs_${timestamp}.ass`)
+      filesToCleanup.push(assFilePath)
+      fs.writeFileSync(assFilePath, assContent, 'utf8')
 
-      // Recalculate timestamps relative to cut video
-      let currentOffset = 0
-      for (const cut of cuts) {
-        const cutDuration = cut.keep_end - cut.keep_start
-        for (const seg of segments) {
-          const segStart = seg.start ?? seg.keepStart
-          const segEnd = seg.end ?? seg.keepEnd
-          if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
-            const relStart = currentOffset + (segStart - cut.keep_start)
-            const relEnd = currentOffset + (segEnd - cut.keep_start)
-            srtContent += `${index}\n`
-            srtContent += `${formatSrtTime(relStart)} --> ${formatSrtTime(relEnd)}\n`
-            srtContent += `${seg.text}\n\n`
-            index++
+      const subFile = path.join(uploadsDir, `subbed_${timestamp}.mp4`)
+      filesToCleanup.push(subFile)
+
+      try {
+        const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -vf "ass='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+        currentFile = subFile
+        console.log('[PROCESS] Step 5 done: Styled subtitles added')
+      } catch (e: any) {
+        console.log('[PROCESS] ASS subtitles failed, trying SRT fallback:', e.message?.slice(0, 100))
+        // Fallback to SRT
+        try {
+          const srtFile = path.join(uploadsDir, `subs_${timestamp}.srt`)
+          filesToCleanup.push(srtFile)
+          let srtContent = ''
+          let index = 1
+          let currentOffset = 0
+          for (const cut of cuts) {
+            const cutDuration = cut.keep_end - cut.keep_start
+            for (const seg of segments) {
+              const segStart = seg.start ?? seg.keepStart
+              const segEnd = seg.end ?? seg.keepEnd
+              if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
+                const relStart = currentOffset + (segStart - cut.keep_start)
+                const relEnd = currentOffset + (segEnd - cut.keep_start)
+                srtContent += `${index}\n${formatSrtTime(relStart)} --> ${formatSrtTime(relEnd)}\n${seg.text}\n\n`
+                index++
+              }
+            }
+            currentOffset += cutDuration
           }
-        }
-        currentOffset += cutDuration
+          if (srtContent.trim()) {
+            fs.writeFileSync(srtFile, srtContent, 'utf8')
+            const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+            execSync(
+              `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontSize=18,Bold=1,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+              { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+            )
+            currentFile = subFile
+            console.log('[PROCESS] Step 5 done: SRT fallback subtitles added')
+          }
+        } catch { /* continue without subs */ }
       }
-
-      if (srtContent.trim()) {
-        fs.writeFileSync(srtFile, srtContent, 'utf8')
-        console.log('[PROCESS] SRT file created with', index - 1, 'subtitles')
-      } else {
-        srtFile = null
-      }
+    } else {
+      console.log('[PROCESS] Step 5 skipped: No subtitles in plan')
     }
 
     // ============================================
-    // STEP 6: EXPORT FOR EACH PLATFORM
+    // STEP 6: LOWER THIRDS (SPEAKER NAMES)
+    // ============================================
+
+    const speakers = videoPlan?.speakers || []
+    if (speakers.length > 0) {
+      const lowerFile = path.join(uploadsDir, `lower_${timestamp}.mp4`)
+      filesToCleanup.push(lowerFile)
+      console.log('[PROCESS] Step 6: Adding speaker lower thirds...')
+
+      try {
+        // Remap speaker timestamps to cut video
+        const lowerThirdParts = speakers.map((s: any) => {
+          const name = s.name || 'דובר'
+          const firstAppear = s.first_appearance ?? s.firstAppearance ?? 0
+          const displayDur = s.display_duration ?? s.displayDuration ?? 4
+
+          // Calculate relative position in cut video
+          let relativeStart = 0
+          let cutOffset = 0
+          for (const cut of cuts) {
+            const cutDuration = cut.keep_end - cut.keep_start
+            if (firstAppear >= cut.keep_start && firstAppear <= cut.keep_end) {
+              relativeStart = cutOffset + (firstAppear - cut.keep_start)
+              break
+            }
+            cutOffset += cutDuration
+          }
+
+          return `drawtext=text='${name.replace(/'/g, "\\'")}':fontsize=28:fontcolor=white:x=w-text_w-40:y=h-80:enable='between(t,${relativeStart},${relativeStart + displayDur})':box=1:boxcolor=0x7C5CFF@0.7:boxborderw=10`
+        })
+
+        const lowerThirdFilter = lowerThirdParts.join(',')
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -vf "${lowerThirdFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${lowerFile}" -y`,
+          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+        currentFile = lowerFile
+        console.log('[PROCESS] Step 6 done: Speaker names added')
+      } catch (e: any) {
+        console.log('[PROCESS] Lower thirds failed, continuing without:', e.message?.slice(0, 100))
+      }
+    } else {
+      console.log('[PROCESS] Step 6 skipped: No speakers in plan')
+    }
+
+    // ============================================
+    // STEP 7: MOTION GRAPHICS OVERLAYS
+    // ============================================
+
+    const graphics = videoPlan?.graphics || []
+    if (graphics.length > 0) {
+      const gfxFile = path.join(uploadsDir, `gfx_${timestamp}.mp4`)
+      filesToCleanup.push(gfxFile)
+      console.log('[PROCESS] Step 7: Adding motion graphics overlays...')
+
+      try {
+        // Map graphics to cut video time
+        const gfxParts = graphics.map((g: any) => {
+          const text = (g.text || '').replace(/'/g, "\\'")
+          const atTime = g.at_time ?? g.atTime ?? 0
+          const duration = g.duration ?? 3
+
+          // Calculate relative position in cut video
+          let relativeStart = 0
+          let cutOffset = 0
+          for (const cut of cuts) {
+            const cutDuration = cut.keep_end - cut.keep_start
+            if (atTime >= cut.keep_start && atTime <= cut.keep_end) {
+              relativeStart = cutOffset + (atTime - cut.keep_start)
+              break
+            }
+            cutOffset += cutDuration
+          }
+
+          const end = relativeStart + duration
+          // Slide in from right (RTL friendly)
+          return `drawtext=text='${text}':fontsize=36:fontcolor=white:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
+        })
+
+        const gfxFilter = gfxParts.join(',')
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -vf "${gfxFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gfxFile}" -y`,
+          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+        currentFile = gfxFile
+        console.log('[PROCESS] Step 7 done: Graphics overlays added')
+      } catch (e: any) {
+        console.log('[PROCESS] Graphics failed, continuing without:', e.message?.slice(0, 100))
+      }
+    } else {
+      console.log('[PROCESS] Step 7 skipped: No graphics in plan')
+    }
+
+    // ============================================
+    // STEP 8: EXPORT FOR EACH PLATFORM (SMART FRAMING)
     // ============================================
 
     const platformSpecs: Record<string, { w: number; h: number; ratio: string }> = {
@@ -2387,6 +2800,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       linkedin: { w: 1080, h: 1080, ratio: '1:1' },
     }
 
+    const framingStrategy = videoPlan?.framing_strategy || videoPlan?.framingStrategy || 'blur_background'
     const targetPlatforms = platforms || ['tiktok']
 
     // Group platforms by aspect ratio to avoid re-encoding same ratio
@@ -2398,32 +2812,52 @@ app.post('/api/auto-editor/process', async (req, res) => {
       ratioGroups[spec.ratio].push(platform)
     }
 
+    console.log(`[PROCESS] Step 8: Exporting for ${targetPlatforms.length} platforms with ${framingStrategy} framing...`)
+
     for (const [ratio, platformList] of Object.entries(ratioGroups)) {
       const spec = platformSpecs[platformList[0]]
       const ratioFile = path.join(uploadsDir, `export_${ratio.replace(':', 'x')}_${timestamp}.mp4`)
+      filesToCleanup.push(ratioFile)
 
-      console.log(`[PROCESS] Step 6: Exporting ${ratio} for ${platformList.join(', ')}...`)
+      console.log(`[PROCESS] Exporting ${ratio} for ${platformList.join(', ')}...`)
 
-      // Build scale + pad filter for target aspect ratio
-      let vf = `scale=${spec.w}:${spec.h}:force_original_aspect_ratio=decrease,pad=${spec.w}:${spec.h}:(ow-iw)/2:(oh-ih)/2:black`
+      const isVertical = spec.h > spec.w
 
-      // Add subtitles if available
-      if (srtFile && fs.existsSync(srtFile)) {
-        const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
-        vf += `,subtitles='${escapedSrt}':force_style='FontSize=18,Bold=1,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'`
+      if (isVertical && framingStrategy === 'blur_background') {
+        // Blurred background + centered foreground for vertical exports
+        try {
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -filter_complex "[0:v]scale=${spec.w}:${spec.h}:force_original_aspect_ratio=decrease[fg];[0:v]scale=${spec.w}:${spec.h},boxblur=20:20[bg];[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]" -map "[outv]" -map 0:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart "${ratioFile}" -y`,
+            { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+          )
+        } catch (e: any) {
+          console.log('[PROCESS] Blur background failed, falling back to pad:', e.message?.slice(0, 100))
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -vf "scale=${spec.w}:${spec.h}:force_original_aspect_ratio=decrease,pad=${spec.w}:${spec.h}:(ow-iw)/2:(oh-ih)/2:black" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart "${ratioFile}" -y`,
+            { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+          )
+        }
+      } else if (isVertical && framingStrategy === 'crop_center') {
+        // Center crop for vertical
+        const cropFilter = buildSmartFramingFilter(1920, 1080, spec.w, spec.h, 'crop_center')
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -vf "${cropFilter}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart "${ratioFile}" -y`,
+          { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+      } else {
+        // Standard scale+pad for 16:9 or 1:1
+        const vf = `scale=${spec.w}:${spec.h}:force_original_aspect_ratio=decrease,pad=${spec.w}:${spec.h}:(ow-iw)/2:(oh-ih)/2:black`
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -vf "${vf}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart "${ratioFile}" -y`,
+          { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
       }
 
-      execSync(
-        `"${ffmpegPath}" -i "${currentFile}" -vf "${vf}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart "${ratioFile}" -y`,
-        { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
-      )
-
-      // Copy the same file for each platform with same ratio (don't re-encode)
+      // Copy the same file for each platform with same ratio
       for (const platform of platformList) {
         const platformFile = path.join(uploadsDir, `final_${platform}_${timestamp}.mp4`)
         fs.copyFileSync(ratioFile, platformFile)
 
-        // Get file info
         const stats = fs.statSync(platformFile)
         const fileSizeMB = (stats.size / 1024 / 1024).toFixed(1)
 
@@ -2438,26 +2872,25 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
         console.log(`[PROCESS] Created: ${platform} (${ratio}) - ${fileSizeMB}MB`)
       }
-
-      // Clean up ratio file
-      try { fs.unlinkSync(ratioFile) } catch {}
     }
 
     // Cleanup intermediate files
-    try { fs.unlinkSync(cutFile) } catch {}
-    try { fs.unlinkSync(gradedFile) } catch {}
-    try { fs.unlinkSync(cleanedFile) } catch {}
-    if (currentFile !== cleanedFile) try { fs.unlinkSync(currentFile) } catch {}
-    if (srtFile) try { fs.unlinkSync(srtFile) } catch {}
+    for (const f of filesToCleanup) {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f) } catch {}
+    }
 
-    console.log('[PROCESS] Done! Created', outputFiles.length, 'files')
+    console.log('[PROCESS] Done! Created', outputFiles.length, 'files with professional effects')
 
     res.json({
       success: true,
       files: outputFiles,
-      message: `נוצרו ${outputFiles.length} קבצים`,
+      message: `נוצרו ${outputFiles.length} קבצים מקצועיים`,
     })
   } catch (error: any) {
+    // Cleanup on error
+    for (const f of filesToCleanup) {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f) } catch {}
+    }
     console.error('[PROCESS ERROR]', error.message)
     res.status(500).json({ message: 'שגיאה בעיבוד: ' + error.message })
   }

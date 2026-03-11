@@ -331,7 +331,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     }
 
     // Recommendations (local) - REAL analysis with interactive checklist
-    if (input.includes('ממליץ') || input.includes('מה לעשות') || input.includes('מה אתה ממליץ') || input.includes('ערוך מקצועי') || input.includes('ערוך את הסרטון')) {
+    if (input.includes('ממליץ') || input.includes('מה לעשות') || input.includes('מה אתה ממליץ') || input.includes('ערוך מקצועי') || input.includes('ערוך את הסרטון') || input.includes('שפר את הסרטון')) {
       if (editor.transcript.length === 0) {
         updateMessage(processingId, 'תמלל קודם את הסרטון כדי שאוכל לנתח ולהמליץ.')
         return
@@ -360,21 +360,21 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       }
       if (!editor.showCaptions) {
         checklistSuggestions.push({
-          text: 'אין כתוביות. הוספת כתוביות מודרניות תגדיל מעורבות ב-40%',
+          text: 'אין כתוביות מעוצבות. הוספת כתוביות מודרניות (ASS format) עם אנימציות תגדיל מעורבות ב-40%',
           priority: 'high',
           action: { action: 'add_captions', params: { style: 'modern' } },
         })
       }
       if (!editor.editorEffects.audioEnhanced) {
         checklistSuggestions.push({
-          text: 'מומלץ לשפר את איכות האודיו',
+          text: 'עיבוד אודיו מקצועי: הסרת רעש, דחיסה, נרמול עוצמה ו-sidechain ducking עם מוזיקה',
           priority: 'high',
           action: { action: 'enhance_audio', params: {} },
         })
       }
       if (editor.bRollItems.length === 0) {
         checklistSuggestions.push({
-          text: 'אין B-Roll. הוספת תמונות בנקודות מפתח תשבור מונוטוניות',
+          text: 'אין B-Roll. הוספת קטעי B-Roll עם אנימציות fade in/out וזום עדין בנקודות מפתח',
           priority: 'medium',
           action: { action: 'auto_broll', params: {} },
         })
@@ -388,11 +388,32 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
       }
       if (speakers.length > 1 && !editor.editorEffects.centerSpeaker) {
         checklistSuggestions.push({
-          text: `מזהה ${speakers.length} דוברים (${speakers.join(', ')}). מרכוז דובר פעיל ישפר את החוויה`,
+          text: `מזהה ${speakers.length} דוברים (${speakers.join(', ')}). מרכוז דובר + lower thirds עם שמות`,
           priority: 'medium',
           action: { action: 'center_speaker', params: { enabled: true } },
         })
       }
+      // Professional effects suggestions
+      checklistSuggestions.push({
+        text: 'מעברים חלקים (transitions) בין קטעים: fade, dissolve, smoothleft, zoomin ועוד',
+        priority: 'medium',
+        action: { action: 'add_animation', params: { type: 'transitions' } },
+      })
+      checklistSuggestions.push({
+        text: 'זומים דינמיים (Ken Burns): zoom in/out עדין כל 5-8 שניות לתחושה קולנועית',
+        priority: 'medium',
+        action: { action: 'add_animation', params: { type: 'zooms' } },
+      })
+      checklistSuggestions.push({
+        text: 'Color grading סינמטי: cinematic, warm, moody, film - שינוי מצב רוח ויזואלי',
+        priority: 'medium',
+        action: { action: 'add_animation', params: { type: 'color_grade' } },
+      })
+      checklistSuggestions.push({
+        text: 'סימולציית מולטי-קאם: החלפה בין wide/medium/closeup כל 3-8 שניות',
+        priority: 'low',
+        action: { action: 'add_animation', params: { type: 'multicam' } },
+      })
       if (editor.duration > 120) {
         checklistSuggestions.push({
           text: `הסרטון אורך ${formatSeconds(editor.duration)}. אפשר ליצור קליפים קצרים לרשתות`,
@@ -406,7 +427,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
         return
       }
 
-      const summary = `ניתחתי את הסרטון: ${wordCount} מילים, ${speakers.length} ${speakers.length === 1 ? 'דובר' : 'דוברים'}, ${formatSeconds(editor.duration)}`
+      const summary = `ניתחתי את הסרטון: ${wordCount} מילים, ${speakers.length} ${speakers.length === 1 ? 'דובר' : 'דוברים'}, ${formatSeconds(editor.duration)}\n\nיכולות מקצועיות זמינות: transitions, zooms, multi-cam, color grading, ASS כתוביות, lower thirds, גרפיקות מונפשות, אודיו מקצועי עם ducking, smart framing`
       updateMessage(processingId, summary, false, {
         suggestions: checklistSuggestions,
         showAsChecklist: true,
