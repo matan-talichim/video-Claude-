@@ -19,7 +19,7 @@ export default function TimelinePanel() {
     selectAllClips, removeSelectedClips,
     copySelected, cutSelected, pasteAtTime,
     addMarker, toggleSnap, toggleRipple,
-    duplicateSelected,
+    duplicateSelected, fitToScreen,
     timelineHeight, setTimelineHeight,
     hideContextMenu, snapEnabled,
   } = useTimelineStore()
@@ -222,9 +222,7 @@ export default function TimelinePanel() {
           e.preventDefault()
           if (tracksRef.current && duration > 0) {
             const w = tracksRef.current.clientWidth - 140 // subtract header
-            const newZoom = Math.round((w / (duration * 80)) * 100 * 100) / 100
-            setZoom(Math.max(25, Math.min(400, newZoom)))
-            setScrollLeft(0)
+            fitToScreen(duration, w)
           }
           break
 
@@ -262,7 +260,7 @@ export default function TimelinePanel() {
     splitAtPlayhead, removeSelectedClips, copySelected, cutSelected,
     pasteAtTime, selectAllClips, duplicateSelected, zoom, setZoom,
     setScrollLeft, addMarker, toggleSnap, toggleRipple, clearSelection,
-    hideContextMenu, addToast,
+    hideContextMenu, addToast, fitToScreen,
   ])
 
   // Timeline resize handle
