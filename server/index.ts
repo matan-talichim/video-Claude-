@@ -1817,7 +1817,7 @@ app.post('/api/generate-image-to-video', async (req, res) => {
 // These endpoints proxy external API calls from the frontend auto-editor
 // to avoid CORS issues (browsers block direct calls to external APIs)
 
-// POST /api/chatgpt-plan — ChatGPT editing plan generation
+// POST /api/chatgpt-plan — ChatGPT editing plan generation (legacy, still used as fallback)
 app.post('/api/chatgpt-plan', async (req, res) => {
   try {
     const ai = await getOpenAI()
@@ -1843,6 +1843,389 @@ app.post('/api/chatgpt-plan', async (req, res) => {
   } catch (err: any) {
     console.error('ChatGPT plan error:', err.message)
     res.status(500).json({ message: err.message || 'שגיאת ChatGPT' })
+  }
+})
+
+// POST /api/auto-editor/creative-brief — Step 1: Creative Director analyzes content
+app.post('/api/auto-editor/creative-brief', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
+
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile } = req.body
+    if (!transcript) return res.status(400).json({ message: 'חסר transcript' })
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system' as const,
+          content: `אתה במאי תוכן מקצועי עם 20 שנות ניסיון בעריכת סרטונים לרשתות חברתיות.
+
+התפקיד שלך: לנתח תמלול של סרטון גולמי ולהחליט מה הסיפור, מה הקטעים הכי טובים, ואיך לבנות סרטון שיווקי מנצח.
+
+אתה חושב כמו יוצר תוכן מצליח:
+- מה יעצור גלילה?
+- מה יגרום לצופה להישאר?
+- מה המסר המרכזי?
+- איפה הרגעים הכי חזקים?
+
+כללי ברזל:
+1. הפתיחה חייבת להיות HOOK - משפט חזק שעוצר גלילה תוך 2 שניות
+2. כל 3-5 שניות חייב לקרות משהו חדש (חיתוך, זום, B-Roll, גרפיקה)
+3. קצב מהיר = מצליח ברשתות. אל תפחד לחתוך
+4. B-Roll הוא חובה בכל נקודה שמתארים משהו ויזואלי
+5. הסוף חייב להיות CTA ברור (קריאה לפעולה)
+6. מוזיקה חייבת להתאים למצב הרוח
+7. שתיקות מעל 0.3 שניות = מחיקה
+8. גמגומים, חזרות, תיקונים עצמיים = מחיקה
+9. "אממ", "כאילו", "בעצם", "נו" = מחיקה
+
+כשאתה מנתח, חשוב על:
+- מה הצופה מרגיש בכל רגע?
+- האם יש "עמק" (רגע משעמם)? אם כן - תחתוך אותו
+- האם יש "פסגה" (רגע מרגש)? אם כן - תדגיש עם זום/גרפיקה
+- האם הקצב אחיד? אם כן - תגוון עם B-Roll והחלפות זווית
+
+${userProfile || ''}
+
+החזר JSON:
+{
+  "creative_brief": {
+    "main_message": "המסר המרכזי של הסרטון",
+    "target_emotion": "מה הצופה צריך להרגיש (השראה/סקרנות/דחיפות/אמון)",
+    "hook": "המשפט הפותח שיעצור גלילה",
+    "cta": "קריאה לפעולה בסוף",
+    "pacing": "fast/medium/slow",
+    "music_mood": "אנרגטי/רגוע/דרמטי/משעשע/מעורר השראה",
+    "color_mood": "cinematic/warm/cold/vibrant/moody",
+    "overall_vibe": "תיאור קצר של האווירה"
+  },
+  "content_analysis": {
+    "best_quotes": [
+      { "text": "ציטוט חזק מהתמלול", "start": 5.2, "end": 8.1, "why": "למה זה טוב" }
+    ],
+    "boring_parts": [
+      { "start": 20.0, "end": 35.0, "why": "חזרה על אותו רעיון" }
+    ],
+    "emotional_peaks": [
+      { "time": 15.0, "emotion": "התלהבות", "intensity": 5 }
+    ],
+    "visual_moments": [
+      { "time": 12.0, "description": "מדבר על המוצר - צריך B-Roll של המוצר", "broll_prompt": "close up of modern tech product on clean desk, cinematic lighting" }
+    ],
+    "filler_words": [
+      { "word": "אממ", "count": 12 },
+      { "word": "כאילו", "count": 8 }
+    ],
+    "silences": [
+      { "start": 10.5, "end": 11.2, "duration": 0.7 }
+    ]
+  },
+  "video_plans": [
+    {
+      "video_index": 1,
+      "title": "כותרת מושכת לסרטון",
+      "concept": "תיאור קצר של הקונספט",
+      "hook_segment": { "start": 5.2, "end": 7.0 },
+      "story_arc": [
+        { "role": "hook", "segments": [{ "start": 5.2, "end": 7.0 }], "duration": 1.8 },
+        { "role": "problem", "segments": [{ "start": 0, "end": 4.5 }], "duration": 4.5 },
+        { "role": "solution", "segments": [{ "start": 15, "end": 28 }], "duration": 13 },
+        { "role": "proof", "segments": [{ "start": 40, "end": 48 }], "duration": 8 },
+        { "role": "cta", "segments": [{ "start": 55, "end": 58 }], "duration": 3 }
+      ],
+      "broll_placements": [
+        { "after_segment": 1, "duration": 3, "prompt": "detailed English prompt for AI image/video generation", "type": "product_shot" },
+        { "after_segment": 3, "duration": 4, "prompt": "happy customers using product in modern office", "type": "lifestyle" }
+      ],
+      "graphic_moments": [
+        { "at_time_relative": 12, "type": "number", "text": "85%", "label": "שביעות רצון לקוחות" },
+        { "at_time_relative": 20, "type": "key_point", "text": "פיצ'ר מספר 1" }
+      ],
+      "zoom_points": [
+        { "at_time_relative": 5, "type": "in", "reason": "נקודה חשובה" },
+        { "at_time_relative": 15, "type": "out", "reason": "מעבר נושא" }
+      ],
+      "estimated_duration": 30.3
+    }
+  ]
+}
+
+חשוב מאוד:
+- story_arc: סדר הקטעים לא חייב להיות כרונולוגי! אפשר לפתוח עם ציטוט מהאמצע
+- hook: תמיד תפתח עם המשפט הכי חזק, לא עם ההתחלה
+- estimated_duration: חייב להיות קרוב ל-${targetDuration} שניות (± 3 שניות)
+- broll_placements: MUST include at least 2 B-Roll moments per 30 seconds
+- B-Roll prompts: כתוב באנגלית, מפורט, סינמטי, עם תיאור תאורה וזווית`
+        },
+        {
+          role: 'user' as const,
+          content: `תמלול הסרטון:
+${JSON.stringify(transcript.segments.map((s: any) => ({ start: s.start, end: s.end, text: s.text })))}
+
+משך כולל: ${transcript.total_duration || transcript.totalDuration} שניות
+בקשת המשתמש: ${userPrompt}
+אורך יעד לכל סרטון: ${targetDuration} שניות
+מספר סרטונים: ${numberOfVideos}
+
+נתח את התמלול וצור brief יצירתי מפורט.`
+        }
+      ],
+      response_format: { type: 'json_object' as const },
+      temperature: 0.7,
+    })
+
+    const content = response.choices?.[0]?.message?.content
+    if (!content) return res.status(500).json({ message: 'ChatGPT לא החזיר creative brief' })
+
+    const parsed = JSON.parse(content)
+    console.log('[CREATIVE BRIEF] Main message:', parsed.creative_brief?.main_message)
+    console.log('[CREATIVE BRIEF] Videos planned:', parsed.video_plans?.length)
+
+    res.json(parsed)
+  } catch (err: any) {
+    console.error('Creative brief error:', err.message)
+    res.status(500).json({ message: err.message || 'שגיאת Creative Brief' })
+  }
+})
+
+// POST /api/auto-editor/technical-plan — Step 2: Technical Editor creates frame-accurate plan
+app.post('/api/auto-editor/technical-plan', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
+
+    const { creativeBrief, transcript, targetDuration, platforms } = req.body
+    if (!creativeBrief || !transcript) return res.status(400).json({ message: 'חסר creativeBrief או transcript' })
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system' as const,
+          content: `אתה עורך וידאו טכני מדויק. אתה מקבל brief יצירתי ותמלול, ומייצר תוכנית עריכה טכנית מדויקת לפריים.
+
+התפקיד שלך: להפוך את ה-brief היצירתי לפקודות עריכה מדויקות.
+
+כללי דיוק:
+1. cuts: זמנים מדויקים עד 0.1 שנייה
+2. סכום כל ה-cuts חייב להיות בדיוק ${targetDuration} שניות (± 2 שניות)
+3. כל cut מתחיל ומסתיים על גבול מילה (לא באמצע מילה)
+4. אם ה-brief אומר להתחיל עם hook מהאמצע - החלף סדר ב-cuts
+5. B-Roll: זמנים מדויקים, כולל fade in/out של 0.5 שניות
+6. כתוביות: timestamps מדויקים יחסיים לסרטון החתוך (לא לסרטון המקור!)
+7. מעברים: בחר transition שמתאים בין כל 2 קטעים
+8. זומים: at_time יחסי לסרטון החתוך
+
+חישוב חשוב - כתוביות:
+אחרי שחתכת, הזמנים משתנים!
+אם cuts = [{keep_start:5, keep_end:10}, {keep_start:20, keep_end:35}]
+אז בסרטון החתוך:
+- קטע 1: 0-5 שניות (מקור: 5-10)
+- קטע 2: 5-20 שניות (מקור: 20-35)
+הכתוביות חייבות להתייחס לזמנים של הסרטון החתוך!
+
+מעברים מומלצים:
+- בין קטעים עם אותו נושא: dissolve (0.3s)
+- בין קטעים עם נושא שונה: fadeblack (0.5s)
+- לפני B-Roll: fade (0.3s)
+- אחרי B-Roll: fade (0.3s)
+- נקודה דרמטית: zoomin (0.5s)
+- פתיחה: fadeblack (1s)
+- סגירה: fadeblack (1.5s)
+
+זומים:
+- נקודה חשובה: zoom in 1.05-1.08
+- מעבר נושא: zoom out 1.05
+- רגע רגשי: slow zoom in 1.03 over 3 seconds
+- כל 5-7 שניות חייב zoom כלשהו (מונע תחושת "סטטי")
+
+Camera angles (multi-cam simulation):
+- wide: ללא crop (ברירת מחדל)
+- medium: crop 70% center
+- closeup: crop 50% center
+- החלף כל 3-8 שניות
+- closeup על רגעים חשובים
+- wide על מעברים
+
+Color grade:
+- cinematic: contrast+15%, saturation-10%, warmth+5
+- warm: saturation+20%, warmth+15
+- cold: saturation-15%, warmth-15
+- vibrant: contrast+20%, saturation+40%
+- moody: brightness-2%, contrast+20%, saturation-10%
+
+החזר JSON מדויק:
+{
+  "videos": [
+    {
+      "video_index": 1,
+      "source_file": 0,
+      "title": "כותרת",
+      "total_duration": ${targetDuration},
+      "cuts": [
+        { "keep_start": 5.2, "keep_end": 7.0, "reason": "hook - משפט פתיחה חזק" },
+        { "keep_start": 0.0, "keep_end": 4.5, "reason": "הצגת הבעיה" },
+        { "keep_start": 15.0, "keep_end": 28.0, "reason": "הצגת הפתרון" },
+        { "keep_start": 40.0, "keep_end": 48.0, "reason": "הוכחה חברתית" },
+        { "keep_start": 55.0, "keep_end": 58.0, "reason": "קריאה לפעולה" }
+      ],
+      "transitions": [
+        { "between": [0, 1], "type": "fadeblack", "duration": 0.5 },
+        { "between": [1, 2], "type": "dissolve", "duration": 0.3 },
+        { "between": [2, 3], "type": "fade", "duration": 0.3 },
+        { "between": [3, 4], "type": "fadeblack", "duration": 0.5 }
+      ],
+      "camera_angles": [
+        { "relative_start": 0, "relative_end": 1.8, "camera": "closeup", "reason": "hook" },
+        { "relative_start": 1.8, "relative_end": 6.3, "camera": "wide", "reason": "context" },
+        { "relative_start": 6.3, "relative_end": 10, "camera": "medium", "reason": "talking" },
+        { "relative_start": 10, "relative_end": 13, "camera": "closeup", "reason": "key point" }
+      ],
+      "zooms": [
+        { "relative_time": 0, "scale": 1.06, "duration": 1.8, "direction": "in", "reason": "hook emphasis" },
+        { "relative_time": 5, "scale": 1.04, "duration": 3, "direction": "out", "reason": "breathe" },
+        { "relative_time": 10, "scale": 1.07, "duration": 2, "direction": "in", "reason": "key point" },
+        { "relative_time": 15, "scale": 1.03, "duration": 4, "direction": "in", "reason": "slow build" },
+        { "relative_time": 22, "scale": 1.05, "duration": 2, "direction": "out", "reason": "transition" }
+      ],
+      "broll": [
+        {
+          "relative_start": 6.5,
+          "relative_end": 10.0,
+          "prompt": "Close up of modern SaaS dashboard on laptop screen, clean UI, soft natural lighting, shallow depth of field, 4K cinematic",
+          "transition_in": "fade",
+          "transition_out": "fade",
+          "animation": "slow_zoom_in"
+        },
+        {
+          "relative_start": 18.0,
+          "relative_end": 22.0,
+          "prompt": "Happy diverse team celebrating in modern office, high fiving, warm lighting, cinematic slow motion",
+          "transition_in": "dissolve",
+          "transition_out": "dissolve",
+          "animation": "pan_right"
+        }
+      ],
+      "subtitles": [
+        { "relative_start": 0.0, "relative_end": 1.8, "text": "המשפט הפותח כאן" },
+        { "relative_start": 1.8, "relative_end": 4.0, "text": "המשך טקסט" }
+      ],
+      "graphics": [
+        { "relative_time": 12, "duration": 3, "type": "number_counter", "value": "85%", "label": "שביעות רצון" },
+        { "relative_time": 20, "duration": 2.5, "type": "lower_third", "text": "שם הדובר", "subtitle": "תפקיד" }
+      ],
+      "speakers": [
+        { "name": "דובר ראשי", "first_appearance_relative": 0, "display_duration": 4 }
+      ],
+      "color_grade": "cinematic",
+      "framing": "blur_background",
+      "music_dynamics": [
+        { "relative_time": 0, "volume": 0.3, "reason": "intro - music prominent" },
+        { "relative_time": 1.8, "volume": 0.12, "reason": "speech starts - duck music" },
+        { "relative_time": 6.5, "volume": 0.25, "reason": "B-Roll - music up" },
+        { "relative_time": 10, "volume": 0.12, "reason": "speech resumes" },
+        { "relative_time": 27, "volume": 0.3, "reason": "outro - music up" }
+      ],
+      "intro": {
+        "type": "text_card",
+        "title": "כותרת הסרטון",
+        "duration": 2,
+        "animation": "fade_zoom"
+      },
+      "outro": {
+        "type": "cta_card",
+        "text": "עקבו לעוד תוכן",
+        "duration": 3,
+        "animation": "fade"
+      }
+    }
+  ],
+  "prompts": {
+    "intro_image": "Professional dark gradient title card with golden text, minimalist, 9:16",
+    "outro_image": "Call to action card with subscribe button, modern design, 9:16",
+    "music_search": "upbeat corporate motivation 120bpm"
+  }
+}
+
+VALIDATION before returning:
+1. Sum all (keep_end - keep_start) for cuts = must be ${targetDuration} ± 3
+2. All relative timestamps must be within 0 to total_duration
+3. subtitles must cover most of the speech (not just first few seconds)
+4. At least 2 B-Roll placements per 30 seconds
+5. At least 1 zoom every 7 seconds
+6. camera_angles must cover entire duration with no gaps
+7. transitions between every pair of cuts`
+        },
+        {
+          role: 'user' as const,
+          content: `Creative Brief:
+${JSON.stringify(creativeBrief)}
+
+Full Transcript:
+${JSON.stringify(transcript.segments)}
+
+Target: ${targetDuration} seconds per video
+Platforms: ${(platforms || ['tiktok', 'reels', 'shorts']).join(', ')}
+
+Create precise technical edit plan.`
+        }
+      ],
+      response_format: { type: 'json_object' as const },
+      temperature: 0.3,
+    })
+
+    const content = response.choices?.[0]?.message?.content
+    if (!content) return res.status(500).json({ message: 'ChatGPT לא החזיר technical plan' })
+
+    const plan = JSON.parse(content)
+
+    // VALIDATE and fix the plan
+    for (const video of plan.videos || []) {
+      const cutsDuration = (video.cuts || []).reduce((sum: number, c: any) => sum + (c.keep_end - c.keep_start), 0)
+      if (Math.abs(cutsDuration - targetDuration) > 5) {
+        console.warn(`[TECH PLAN] Video ${video.video_index} duration ${cutsDuration.toFixed(1)}s != target ${targetDuration}s. Adjusting...`)
+        const diff = targetDuration - cutsDuration
+        if (video.cuts && video.cuts.length > 0) {
+          video.cuts[video.cuts.length - 1].keep_end += diff
+        }
+      }
+
+      // Ensure B-Roll exists
+      if (!video.broll || video.broll.length === 0) {
+        console.warn(`[TECH PLAN] Video ${video.video_index} has no B-Roll! Adding default placements.`)
+        const totalDur = targetDuration
+        video.broll = [
+          { relative_start: totalDur * 0.2, relative_end: totalDur * 0.2 + 3, prompt: 'professional business scene, cinematic lighting, 4K', transition_in: 'fade', transition_out: 'fade', animation: 'slow_zoom_in' },
+          { relative_start: totalDur * 0.6, relative_end: totalDur * 0.6 + 4, prompt: 'modern workspace with technology, warm lighting, cinematic', transition_in: 'dissolve', transition_out: 'dissolve', animation: 'pan_right' },
+        ]
+      }
+
+      // Ensure subtitles exist
+      if (!video.subtitles || video.subtitles.length === 0) {
+        console.warn(`[TECH PLAN] Video ${video.video_index} has no subtitles! Generating from cuts.`)
+        video.subtitles = []
+        let relativeOffset = 0
+        for (const cut of video.cuts || []) {
+          const segsInCut = (transcript.segments || []).filter((s: any) => s.start >= cut.keep_start && s.end <= cut.keep_end)
+          for (const seg of segsInCut) {
+            video.subtitles.push({
+              relative_start: relativeOffset + (seg.start - cut.keep_start),
+              relative_end: relativeOffset + (seg.end - cut.keep_start),
+              text: seg.text,
+            })
+          }
+          relativeOffset += (cut.keep_end - cut.keep_start)
+        }
+      }
+    }
+
+    console.log('[TECH PLAN] Videos:', plan.videos?.length, '| Validated and fixed')
+    res.json(plan)
+  } catch (err: any) {
+    console.error('Technical plan error:', err.message)
+    res.status(500).json({ message: err.message || 'שגיאת Technical Plan' })
   }
 })
 

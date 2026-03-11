@@ -177,14 +177,22 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     }
     addLog('ולידציה עברה בהצלחה')
 
-    // Step 3 — ChatGPT plans everything (use cached if prompt unchanged)
+    // Step 3 — Two-step AI planning: Creative Director + Technical Editor
     let editingPlan = useAutoEditorStore.getState().cachedEditingPlan
     if (!editingPlan) {
       setStep('planning')
+      setProgress({ current: 0, total: 2, label: 'הבמאי מנתח את הסרטון...' })
       editingPlan = await planWithChatGPT(transcript, enrichedInput)
+      setProgress({ current: 2, total: 2, label: 'תכנון הושלם!' })
       setCachedEditingPlan(editingPlan)
     } else {
       addLog('משתמש בתכנון קיים מהמטמון')
+    }
+
+    // Verify plan quality
+    for (const video of editingPlan.videos) {
+      const cutsDuration = video.cuts.reduce((sum: number, c: any) => sum + (c.keepEnd - c.keepStart), 0)
+      addLog(`[אימות] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${enrichedInput.targetDuration}s), ${video.brollMoments?.length || 0} B-Roll, ${video.subtitles?.length || 0} כתוביות`)
     }
 
     // Step 4 — Generate assets with graceful fallbacks

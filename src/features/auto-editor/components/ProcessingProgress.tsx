@@ -1,13 +1,13 @@
 import { Loader2, CheckCircle, Circle, XCircle } from 'lucide-react'
 import { useAutoEditorStore, type AutoEditorStep } from '../store/autoEditorStore'
 
-const STEPS_CONFIG: { key: AutoEditorStep; label: string }[] = [
-  { key: 'transcribing', label: 'תמלול הושלם' },
-  { key: 'validating', label: 'ולידציית חומר' },
-  { key: 'planning', label: 'ChatGPT תיכנן עריכה' },
-  { key: 'generating_assets', label: 'יצירת נכסים (רקע, B-Roll, מוזיקה)' },
-  { key: 'editing', label: 'עריכת סרטונים' },
-  { key: 'exporting', label: 'ייצוא לפלטפורמות' },
+const STEPS_CONFIG: { key: AutoEditorStep; label: string; activeLabel?: string }[] = [
+  { key: 'transcribing', label: 'תמלול הושלם', activeLabel: 'מתמלל את הסרטון...' },
+  { key: 'validating', label: 'ולידציית חומר', activeLabel: 'מאמת את החומר...' },
+  { key: 'planning', label: 'תכנון דו-שלבי: במאי + עורך טכני', activeLabel: 'הבמאי מנתח → העורך מתכנן...' },
+  { key: 'generating_assets', label: 'יצירת נכסים (רקע, B-Roll, מוזיקה)', activeLabel: 'מייצר נכסים...' },
+  { key: 'editing', label: 'עריכת סרטונים', activeLabel: 'עורך סרטונים...' },
+  { key: 'exporting', label: 'ייצוא לפלטפורמות', activeLabel: 'מייצא...' },
 ]
 
 function getStepStatus(
@@ -100,7 +100,12 @@ export default function ProcessingProgress() {
                   }`}
                 >
                   {status === 'done' ? '✅' : status === 'active' ? '⏳' : '○'}{' '}
-                  {s.label}
+                  {status === 'active' && s.activeLabel ? s.activeLabel : s.label}
+                  {s.key === 'planning' && status === 'active' && progress.label && (
+                    <span className="text-text-muted text-xs mr-2 block">
+                      {progress.label}
+                    </span>
+                  )}
                   {s.key === 'editing' && status === 'active' && progress.total > 0 && (
                     <span className="text-text-muted text-xs mr-2">
                       ({progress.current}/{progress.total})
