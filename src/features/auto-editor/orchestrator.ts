@@ -225,18 +225,46 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       const sourceIndex = videoPlan.sourceSegments?.[0]?.sourceFile || 0
       const sourceUrl = enrichedInput.videoUrls[sourceIndex] || enrichedInput.videoUrls[0]
 
-      addLog(`מעבד סרטון ${i + 1}: שולח לשרת לעיבוד FFmpeg...`)
+      addLog(`מעבד סרטון ${i + 1}: שולח לשרת לעיבוד FFmpeg מקצועי...`)
+
+      // Build the full plan payload with all professional features
+      const fullPlan = {
+        cuts: videoPlan.cuts.map((c: any) => ({ keepStart: c.keepStart, keepEnd: c.keepEnd })),
+        transitions: videoPlan.transitions || ['fade'],
+        zooms: videoPlan.zooms || [],
+        camera_angles: (videoPlan.cameraAngles || []).map((ca: any) => ({
+          start: ca.start, end: ca.end, camera: ca.camera,
+        })),
+        color_grade: videoPlan.colorGrade || 'clean',
+        framing_strategy: videoPlan.framingStrategy || 'blur_background',
+        subtitles: videoPlan.subtitles || [],
+        graphics: (videoPlan.graphics || []).map((g: any) => ({
+          type: g.type, text: g.text, at_time: g.atTime, duration: g.duration, label: g.label,
+        })),
+        speakers: (videoPlan.speakers || []).map((s: any) => ({
+          name: s.name, first_appearance: s.firstAppearance, display_duration: s.displayDuration,
+        })),
+        segments_intensity: (videoPlan.segmentsIntensity || []).map((si: any) => ({
+          start: si.start, end: si.end, intensity: si.intensity, type: si.type,
+        })),
+        intro: videoPlan.intro || null,
+        outro: videoPlan.outro || null,
+        music_moments: (videoPlan.musicMoments || []).map((mm: any) => ({
+          at_time: mm.atTime, volume: mm.volume,
+        })),
+      }
 
       const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           videoUrl: sourceUrl,
-          videoPlan: videoPlan,
+          videoPlan: fullPlan,
           targetDuration: enrichedInput.targetDuration,
           platforms: enrichedInput.platforms,
           musicUrl: musicUrl || null,
           backgroundImage: backgroundImage || null,
+          captionStyle: 'modern',
         }),
       })
 
