@@ -159,10 +159,10 @@ export default function BRollPanel({ onClose }: { onClose: () => void }) {
   // AI Video state
   const [videoProvider, setVideoProvider] = useState<'veo' | 'seedance'>('veo')
   const [videoPrompt, setVideoPrompt] = useState('')
-  const [videoStyle, setVideoStyle] = useState('cinematic')
+  const [_videoStyle, _setVideoStyle] = useState('cinematic')
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
-  const [motionIntensity, setMotionIntensity] = useState(50)
-  const [cameraMove, setCameraMove] = useState('static')
+  const [_motionIntensity, _setMotionIntensity] = useState(50)
+  const [_cameraMove, _setCameraMove] = useState('static')
   const [videoModel, setVideoModel] = useState<'veo-3.1' | 'veo-3.1-fast' | 'veo-3' | 'veo-3-fast'>('veo-3.1')
   const [videoAspect, setVideoAspect] = useState('16:9')
   const [videoResolution, setVideoResolution] = useState('720p')

@@ -5,7 +5,7 @@ const API_BASE = 'http://localhost:3001/api'
 
 export interface VideoPlan {
   videoIndex: number
-  sourceSegments: Array<{ start: number; end: number; sourceFile: number }>
+  sourceSegments: Array<{ start: number; end: number; sourceFile: number; text: string }>
   cuts: Array<{ keepStart: number; keepEnd: number }>
   zooms: Array<{ atTime: number; scale: number; duration: number }>
   brollMoments: Array<{ atTime: number; duration: number }>
@@ -93,6 +93,7 @@ export async function planWithChatGPT(
         start: s.start,
         end: s.end,
         sourceFile: s.source_file ?? s.sourceFile ?? 0,
+        text: s.text ?? transcript.segments.find((ts: any) => Math.abs(ts.start - s.start) < 0.5)?.text ?? '',
       })),
       cuts: (v.cuts || []).map((c: any) => ({
         keepStart: c.keep_start ?? c.keepStart,

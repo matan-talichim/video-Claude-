@@ -5,7 +5,7 @@ import { useUIStore } from '../../../stores/uiStore'
 
 export default function ContextMenu() {
   const menuRef = useRef<HTMLDivElement>(null)
-  const { contextMenu, hideContextMenu, selectClip, removeSelectedClips, copySelected, cutSelected } = useTimelineStore()
+  const { contextMenu, hideContextMenu, selectClip, removeSelectedClips, copySelected, cutSelected: _cutSelected } = useTimelineStore()
   const pasteAtTime = useTimelineStore((s) => s.pasteAtTime)
   const clipboard = useTimelineStore((s) => s.clipboard)
   const addMarker = useTimelineStore((s) => s.addMarker)

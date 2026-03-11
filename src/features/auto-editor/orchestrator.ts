@@ -71,15 +71,19 @@ async function generateAllBroll(
 
   const generateFn = generator === 'seedance' ? generateBrollSeedance : generateBrollVeo
 
-  try {
-    const results = await Promise.all(
-      prompts.map((p) => generateFn(p.prompt, 4)) // 4 seconds per B-Roll clip
-    )
-    return results
-  } catch (err: any) {
-    addLog(`שגיאה ביצירת B-Roll: ${err.message}. ממשיך ללא B-Roll.`)
-    return []
+  // Generate B-Roll sequentially to avoid rate limits
+  const results: string[] = []
+  for (let i = 0; i < prompts.length; i++) {
+    addLog(`מייצר קטע B-Roll ${i + 1} מתוך ${prompts.length}`)
+    try {
+      const url = await generateFn(prompts[i].prompt, 4)
+      results.push(url)
+    } catch (err: any) {
+      addLog(`שגיאה ביצירת B-Roll ${i + 1}: ${err.message}. מדלג.`)
+      results.push('')
+    }
   }
+  return results.filter(Boolean)
 }
 
 async function generateBackgroundSafe(
@@ -121,8 +125,9 @@ async function findMusicSafe(
 }
 
 export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
-  const { setStep, setProgress, setError, setResults, setInput, addLog } =
-    useAutoEditorStore.getState()
+  const store = useAutoEditorStore.getState()
+  const { setStep, setProgress, setError, setResults, setInput, addLog,
+    setCachedTranscript, setCachedEditingPlan, setCachedAssets } = store
 
   // Save input for reference
   setInput(input)
@@ -132,11 +137,17 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     const apis = await checkApiAvailability()
     addLog(`APIs: Gemini=${apis.gemini ? 'V' : 'X'} Seedance=${apis.seedance ? 'V' : 'X'} Pixabay=${apis.pixabay ? 'V' : 'X'}`)
 
-    // Step 1 — Transcription (step may already be set by the caller after file upload)
-    if (useAutoEditorStore.getState().step !== 'transcribing') {
-      setStep('transcribing')
+    // Step 1 — Transcription (use cached if available from previous run)
+    let transcript = useAutoEditorStore.getState().cachedTranscript
+    if (!transcript) {
+      if (useAutoEditorStore.getState().step !== 'transcribing') {
+        setStep('transcribing')
+      }
+      transcript = await transcribeVideos(input.videoUrls)
+      setCachedTranscript(transcript)
+    } else {
+      addLog('משתמש בתמלול קיים מהמטמון')
     }
-    const transcript = await transcribeVideos(input.videoUrls)
 
     // Step 2 — Validation
     setStep('validating')
@@ -151,17 +162,36 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     }
     addLog('ולידציה עברה בהצלחה')
 
-    // Step 3 — ChatGPT plans everything
-    setStep('planning')
-    const editingPlan = await planWithChatGPT(transcript, input)
+    // Step 3 — ChatGPT plans everything (use cached if prompt unchanged)
+    let editingPlan = useAutoEditorStore.getState().cachedEditingPlan
+    if (!editingPlan) {
+      setStep('planning')
+      editingPlan = await planWithChatGPT(transcript, input)
+      setCachedEditingPlan(editingPlan)
+    } else {
+      addLog('משתמש בתכנון קיים מהמטמון')
+    }
 
-    // Step 4 — Generate assets in parallel (with graceful fallbacks)
-    setStep('generating_assets')
-    const [backgroundImage, brollClips, music] = await Promise.all([
-      generateBackgroundSafe(editingPlan.prompts.backgroundImage, apis.gemini),
-      generateAllBroll(editingPlan.prompts.broll, input.brollGenerator, apis),
-      findMusicSafe(editingPlan.prompts.musicSearch, apis.pixabay),
-    ])
+    // Step 4 — Generate assets with graceful fallbacks (allSettled = one failure doesn't block others)
+    let backgroundImage: string, brollClips: string[], music: string
+    const cachedAssets = useAutoEditorStore.getState().cachedAssets
+    if (cachedAssets) {
+      addLog('משתמש בנכסים קיימים מהמטמון')
+      backgroundImage = cachedAssets.backgroundImage
+      brollClips = cachedAssets.brollClips
+      music = cachedAssets.music
+    } else {
+      setStep('generating_assets')
+      const assetResults = await Promise.allSettled([
+        generateBackgroundSafe(editingPlan.prompts.backgroundImage, apis.gemini),
+        generateAllBroll(editingPlan.prompts.broll, input.brollGenerator, apis),
+        findMusicSafe(editingPlan.prompts.musicSearch, apis.pixabay),
+      ])
+      backgroundImage = assetResults[0].status === 'fulfilled' ? assetResults[0].value : ''
+      brollClips = assetResults[1].status === 'fulfilled' ? assetResults[1].value : []
+      music = assetResults[2].status === 'fulfilled' ? assetResults[2].value : ''
+      setCachedAssets({ backgroundImage, brollClips, music })
+    }
 
     // Step 5 — Process each video (sequential — FFmpeg is heavy)
     setStep('editing')

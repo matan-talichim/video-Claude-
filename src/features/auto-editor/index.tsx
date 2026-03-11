@@ -51,7 +51,7 @@ async function uploadFilesToServer(files: LocalFile[]): Promise<string[]> {
   return serverUrls
 }
 
-export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEntryProps) {
+export default function AutoEditorEntry({ files, onBack, onClose: _onClose }: AutoEditorEntryProps) {
   const step = useAutoEditorStore((s) => s.step)
   const reset = useAutoEditorStore((s) => s.reset)
 

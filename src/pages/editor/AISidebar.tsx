@@ -278,7 +278,7 @@ export default function AISidebar({ onClose }: { onClose: () => void }) {
     }
 
     // Delete all B-Roll
-    if (input.includes('מחק') && input.includes('B-Roll') || (input.includes('מחק') && input.includes('בירול'))) {
+    if ((input.includes('מחק') && input.includes('B-Roll')) || (input.includes('מחק') && input.includes('בירול'))) {
       editor.removeAllBRollItems()
       updateMessage(processingId, '✅ הוסרו כל תמונות ה-B-Roll')
       return

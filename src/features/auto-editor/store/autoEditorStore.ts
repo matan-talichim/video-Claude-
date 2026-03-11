@@ -39,6 +39,11 @@ interface AutoEditorStore {
   // Input saved for reference
   input: AutoEditorInput | null
 
+  // Cached intermediate results for reuse / resume on failure
+  cachedTranscript: any | null
+  cachedEditingPlan: any | null
+  cachedAssets: { backgroundImage: string; brollClips: string[]; music: string } | null
+
   // Completed steps tracking
   completedSteps: AutoEditorStep[]
 
@@ -49,6 +54,9 @@ interface AutoEditorStore {
   setResults: (r: ExportResult[]) => void
   addLog: (msg: string) => void
   setInput: (input: AutoEditorInput) => void
+  setCachedTranscript: (t: any) => void
+  setCachedEditingPlan: (p: any) => void
+  setCachedAssets: (a: { backgroundImage: string; brollClips: string[]; music: string }) => void
   markStepCompleted: (step: AutoEditorStep) => void
   reset: () => void
 }
@@ -60,6 +68,9 @@ const initialState = {
   results: null as ExportResult[] | null,
   logs: [] as string[],
   input: null as AutoEditorInput | null,
+  cachedTranscript: null as any | null,
+  cachedEditingPlan: null as any | null,
+  cachedAssets: null as { backgroundImage: string; brollClips: string[]; music: string } | null,
   completedSteps: [] as AutoEditorStep[],
 }
 
@@ -90,6 +101,10 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
   },
 
   setInput: (input) => set({ input }),
+
+  setCachedTranscript: (cachedTranscript) => set({ cachedTranscript }),
+  setCachedEditingPlan: (cachedEditingPlan) => set({ cachedEditingPlan }),
+  setCachedAssets: (cachedAssets) => set({ cachedAssets }),
 
   markStepCompleted: (step) => {
     set((s) => ({
