@@ -1859,14 +1859,85 @@ app.post('/api/chatgpt-plan', async (req, res) => {
   }
 })
 
+// POST /api/auto-editor/expand-prompt — Expand a short prompt into a detailed professional one
+app.post('/api/auto-editor/expand-prompt', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+
+    const { prompt } = req.body
+    if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system' as const,
+          content: `אתה מומחה לעריכת וידאו. המשתמש כותב בקשה קצרה ואתה מרחיב אותה לפרומפט מפורט ומקצועי.
+
+כללים:
+1. שמור על הכוונה המקורית של המשתמש
+2. הוסף פרטים טכניים שהמשתמש לא חשב עליהם
+3. הוסף הנחיות ל-B-Roll ספציפי ומפורט
+4. הוסף הנחיות לסגנון עריכה, קצב, מעברים
+5. הוסף הנחיות לאודיו ומוזיקה
+6. הוסף הנחיות לכתוביות
+7. הכל בעברית
+8. החזר רק את הפרומפט המורחב, בלי הסברים
+
+דוגמה:
+קלט: "סרטון מגניב לטיקטוק"
+פלט: "צור סרטון TikTok מושך ואנרגטי: פתח עם Hook חזק שעוצר גלילה תוך השנייה הראשונה - תשתמש במשפט הכי מפתיע או מעניין מהתמלול. קצב עריכה מהיר עם חיתוכים כל 2-4 שניות, בלי רגע שקט. הוסף B-Roll ויזואלי ודינמי בכל פעם שהדובר מתאר משהו - תמונות סינמטיות של המוצר/שירות עם תאורה דרמטית, slow motion, ו-Ken Burns effect. כתוביות בסגנון קריוקי מילה-מילה עם הדגשה צבעונית של מילים חשובות. מוזיקה טרנדית ואנרגטית ברקע שיורדת אוטומטית בזמן דיבור. זומים דינמיים: zoom in על נקודות חשובות, zoom out על מעברים. דמה 3 זוויות מצלמה: closeup על הפנים ברגעים רגשיים, medium shot בדיבור רגיל, wide shot בפתיחות. Color grading חי וצבעוני עם ניגודיות גבוהה. הסר את כל הגמגומים, מילות המילוי, השתיקות, והחזרות. סיים עם CTA ברור וכרטיס סיום מונפש."
+
+דוגמה 2:
+קלט: "ערוך את הסרטון בצורה מקצועית"
+פלט: "ערוך את הסרטון ברמה מקצועית גבוהה: נקה את האודיו מרעשי רקע, אזן עוצמה, הוסף highpass ו-lowpass. הסר את כל הגמגומים, מילות המילוי (אממ, כאילו, בעצם, נו), שתיקות מעל חצי שנייה, וחזרות. הוסף color grading סינמטי עם חמימות עדינה וניגודיות מוגברת. הוסף מעברים חלקים בין קטעים - dissolve למעברי נושא, fade to black לסצנות חדשות. הוסף זומים דינמיים עדינים כל 5-7 שניות - zoom in על נקודות מפתח, zoom out על מעברים. דמה מצלמות מרובות עם החלפה כל 4-6 שניות בין wide, medium, ו-closeup. הוסף B-Roll סינמטי ואיכותי בנקודות שמתארים משהו ויזואלי - לפחות 2 קטעי B-Roll לכל 30 שניות. הוסף כתוביות מודרניות ומעוצבות בעברית. הוסף מוזיקת רקע מתאימה שיורדת אוטומטית בזמן דיבור. הוסף שם הדובר בתחתית בהופעה הראשונה. פתח עם הציטוט הכי חזק מהתמלול כ-Hook, וסיים עם קריאה לפעולה ברורה."`
+        },
+        {
+          role: 'user' as const,
+          content: `הרחב את הפרומפט הזה:\n\n"${prompt}"`
+        }
+      ],
+      temperature: 0.7,
+    })
+
+    const expandedPrompt = response.choices[0]?.message?.content?.trim() || prompt
+    const cleaned = expandedPrompt.replace(/^["']|["']$/g, '')
+
+    res.json({ expandedPrompt: cleaned })
+  } catch (error: any) {
+    console.error('[EXPAND PROMPT]', error.message)
+    res.json({ expandedPrompt: req.body.prompt })
+  }
+})
+
 // POST /api/auto-editor/creative-brief — Step 1: Creative Director analyzes content
 app.post('/api/auto-editor/creative-brief', async (req, res) => {
   try {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
-    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile } = req.body
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, platforms } = req.body
     if (!transcript) return res.status(400).json({ message: 'חסר transcript' })
+
+    const aiChoosesDuration = targetDuration === -1
+
+    const durationInstructions = aiChoosesDuration ? `
+אורך הסרטון: אתה מחליט!
+נתח את התמלול וקבע את האורך האופטימלי לכל סרטון.
+שיקולים לקביעת אורך:
+- צפיפות תוכן: אם יש הרבה מידע חשוב בזמן קצר → סרטון ארוך יותר
+- קצב דיבור: דיבור מהיר → אפשר סרטון קצר. דיבור איטי → צריך יותר זמן
+- פלטפורמה: TikTok/Reels: 15-60שנ (אופטימלי: 30-45), YouTube Shorts: 30-60שנ, YouTube: 60-180שנ, LinkedIn: 30-90שנ
+- סוג תוכן: טיפ מהיר: 15-30שנ, הסבר מוצר: 30-60שנ, סיפור/ראיון: 60-180שנ, הדרכה: 60-300שנ
+- נקודות טבעיות: חפש סיום טבעי (משפט סיכום, CTA, סיום רעיון)
+- כלל הזהב: עדיף סרטון קצר ומדויק מסרטון ארוך ומשעמם
+הפלטפורמות שנבחרו: ${(platforms || ['tiktok', 'reels', 'shorts']).join(', ')}
+
+לכל סרטון, החזר בתוך video_plans:
+"optimal_duration": <מספר שניות>,
+"duration_reasoning": "<הסבר קצר למה בחרת את האורך הזה>"
+` : `אורך יעד: ${targetDuration} שניות לכל סרטון.`
 
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
@@ -1882,6 +1953,8 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
 - מה יגרום לצופה להישאר?
 - מה המסר המרכזי?
 - איפה הרגעים הכי חזקים?
+
+${durationInstructions}
 
 כללי ברזל:
 1. הפתיחה חייבת להיות HOOK - משפט חזק שעוצר גלילה תוך 2 שניות
@@ -1960,7 +2033,10 @@ ${userProfile || ''}
         { "at_time_relative": 5, "type": "in", "reason": "נקודה חשובה" },
         { "at_time_relative": 15, "type": "out", "reason": "מעבר נושא" }
       ],
-      "estimated_duration": 30.3
+      "estimated_duration": 30.3,
+      "optimal_duration": 30,
+      "duration_reasoning": "הסבר למה נבחר האורך הזה",
+      "recommended_platform": "TikTok / Reels"
     }
   ]
 }
@@ -1968,7 +2044,7 @@ ${userProfile || ''}
 חשוב מאוד:
 - story_arc: סדר הקטעים לא חייב להיות כרונולוגי! אפשר לפתוח עם ציטוט מהאמצע
 - hook: תמיד תפתח עם המשפט הכי חזק, לא עם ההתחלה
-- estimated_duration: חייב להיות קרוב ל-${targetDuration} שניות (± 3 שניות)
+${aiChoosesDuration ? '- optimal_duration: חובה! קבע אורך אופטימלי לכל סרטון בנפרד. כל סרטון יכול להיות באורך שונה.\n- duration_reasoning: חובה! הסבר קצר בעברית למה בחרת את האורך הזה' : `- estimated_duration: חייב להיות קרוב ל-${targetDuration} שניות (± 3 שניות)`}
 - broll_placements: MUST include at least 2 B-Roll moments per 30 seconds
 - B-Roll prompts: כתוב באנגלית, מפורט, סינמטי, עם תיאור תאורה וזווית`
         },
@@ -1979,10 +2055,11 @@ ${JSON.stringify(transcript.segments.map((s: any) => ({ start: s.start, end: s.e
 
 משך כולל: ${transcript.total_duration || transcript.totalDuration} שניות
 בקשת המשתמש: ${userPrompt}
-אורך יעד לכל סרטון: ${targetDuration} שניות
+${aiChoosesDuration ? 'אורך יעד: AI בוחר - קבע אורך אופטימלי לכל סרטון בנפרד!' : `אורך יעד לכל סרטון: ${targetDuration} שניות`}
 מספר סרטונים: ${numberOfVideos}
+פלטפורמות: ${(platforms || ['tiktok', 'reels', 'shorts']).join(', ')}
 
-נתח את התמלול וצור brief יצירתי מפורט.`
+נתח את התמלול וצור brief יצירתי מפורט.${aiChoosesDuration ? ' חובה לכלול optimal_duration ו-duration_reasoning לכל סרטון!' : ''}`
         }
       ],
       response_format: { type: 'json_object' as const },
@@ -2012,6 +2089,15 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
     const { creativeBrief, transcript, targetDuration, platforms } = req.body
     if (!creativeBrief || !transcript) return res.status(400).json({ message: 'חסר creativeBrief או transcript' })
 
+    const aiChoosesDuration = targetDuration === -1
+
+    // Build per-video duration instructions
+    const perVideoDurationInfo = aiChoosesDuration && creativeBrief?.video_plans
+      ? `כל סרטון יכול להיות באורך שונה (ה-AI בחר):\n${creativeBrief.video_plans.map((v: any) =>
+          `סרטון ${v.video_index}: ${v.optimal_duration || v.estimated_duration || 60} שניות`
+        ).join('\n')}`
+      : `אורך יעד לכל סרטון: ${targetDuration} שניות`
+
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
       messages: [
@@ -2021,9 +2107,11 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
 
 התפקיד שלך: להפוך את ה-brief היצירתי לפקודות עריכה מדויקות.
 
+${perVideoDurationInfo}
+
 כללי דיוק:
 1. cuts: זמנים מדויקים עד 0.1 שנייה
-2. סכום כל ה-cuts חייב להיות בדיוק ${targetDuration} שניות (± 2 שניות)
+2. סכום כל ה-cuts חייב להיות בדיוק כמו אורך היעד לכל סרטון (± 2 שניות)
 3. כל cut מתחיל ומסתיים על גבול מילה (לא באמצע מילה)
 4. אם ה-brief אומר להתחיל עם hook מהאמצע - החלף סדר ב-cuts
 5. B-Roll: זמנים מדויקים, כולל fade in/out של 0.5 שניות
@@ -2076,7 +2164,7 @@ Color grade:
       "video_index": 1,
       "source_file": 0,
       "title": "כותרת",
-      "total_duration": ${targetDuration},
+      "total_duration": "אורך היעד לסרטון זה",
       "cuts": [
         { "keep_start": 5.2, "keep_end": 7.0, "reason": "hook - משפט פתיחה חזק" },
         { "keep_start": 0.0, "keep_end": 4.5, "reason": "הצגת הבעיה" },
@@ -2163,7 +2251,7 @@ Color grade:
 }
 
 VALIDATION before returning:
-1. Sum all (keep_end - keep_start) for cuts = must be ${targetDuration} ± 3
+1. Sum all (keep_end - keep_start) for cuts = must match the target duration for each video ± 3
 2. All relative timestamps must be within 0 to total_duration
 3. subtitles must cover most of the speech (not just first few seconds)
 4. At least 2 B-Roll placements per 30 seconds
@@ -2179,7 +2267,7 @@ ${JSON.stringify(creativeBrief)}
 Full Transcript:
 ${JSON.stringify(transcript.segments)}
 
-Target: ${targetDuration} seconds per video
+${perVideoDurationInfo}
 Platforms: ${(platforms || ['tiktok', 'reels', 'shorts']).join(', ')}
 
 Create precise technical edit plan.`
@@ -2196,10 +2284,23 @@ Create precise technical edit plan.`
 
     // VALIDATE and fix the plan
     for (const video of plan.videos || []) {
+      // Determine target duration for this video (per-video from creative brief, or global)
+      const briefPlan = aiChoosesDuration && creativeBrief?.video_plans
+        ? creativeBrief.video_plans.find((v: any) => v.video_index === video.video_index)
+        : null
+      const videoTargetDuration = briefPlan?.optimal_duration || (aiChoosesDuration ? 60 : targetDuration)
+
+      // Propagate AI-chosen data to the video
+      if (aiChoosesDuration && briefPlan) {
+        video.optimal_duration = briefPlan.optimal_duration
+        video.duration_reasoning = briefPlan.duration_reasoning
+        video.recommended_platform = briefPlan.recommended_platform
+      }
+
       const cutsDuration = (video.cuts || []).reduce((sum: number, c: any) => sum + (c.keep_end - c.keep_start), 0)
-      if (Math.abs(cutsDuration - targetDuration) > 5) {
-        console.warn(`[TECH PLAN] Video ${video.video_index} duration ${cutsDuration.toFixed(1)}s != target ${targetDuration}s. Adjusting...`)
-        const diff = targetDuration - cutsDuration
+      if (Math.abs(cutsDuration - videoTargetDuration) > 5) {
+        console.warn(`[TECH PLAN] Video ${video.video_index} duration ${cutsDuration.toFixed(1)}s != target ${videoTargetDuration}s. Adjusting...`)
+        const diff = videoTargetDuration - cutsDuration
         if (video.cuts && video.cuts.length > 0) {
           video.cuts[video.cuts.length - 1].keep_end += diff
         }
@@ -2208,7 +2309,7 @@ Create precise technical edit plan.`
       // Ensure B-Roll exists
       if (!video.broll || video.broll.length === 0) {
         console.warn(`[TECH PLAN] Video ${video.video_index} has no B-Roll! Adding default placements.`)
-        const totalDur = targetDuration
+        const totalDur = videoTargetDuration
         video.broll = [
           { relative_start: totalDur * 0.2, relative_end: totalDur * 0.2 + 3, prompt: 'professional business scene, cinematic lighting, 4K', transition_in: 'fade', transition_out: 'fade', animation: 'slow_zoom_in' },
           { relative_start: totalDur * 0.6, relative_end: totalDur * 0.6 + 4, prompt: 'modern workspace with technology, warm lighting, cinematic', transition_in: 'dissolve', transition_out: 'dissolve', animation: 'pan_right' },
