@@ -17,6 +17,7 @@ const audioItems: DropdownItem[] = [
   { label: 'הסר חזרות', icon: RotateCcw, modal: 'retakes' },
   { label: 'קצר שתיקות', icon: Clock, modal: 'silence' },
   { label: 'פרקים אוטומטיים', icon: List, modal: 'chapters' },
+  { label: 'הסר רעשים', icon: Mic, modal: 'noiseRemoval' },
 ]
 
 const videoItems: DropdownItem[] = [
@@ -26,6 +27,19 @@ const videoItems: DropdownItem[] = [
   { label: 'מרכז דובר', icon: Users, modal: 'speakerCenter' },
   { label: 'מסגור מחדש', icon: Maximize2, modal: 'reframe' },
   { label: 'טשטוש זכוכית', icon: Droplets, modal: 'glassBlur' },
+]
+
+const aiItems: DropdownItem[] = [
+  { label: 'שפר אוטומטי', icon: Wand2, modal: 'quickStyle' },
+  { label: 'הוסף כתוביות', icon: List, modal: 'captions' },
+  { label: 'קריינות AI', icon: Mic, modal: 'voiceover' },
+  { label: 'Color Grade', icon: Eye, modal: 'colorGrade' },
+]
+
+const effectsItems: DropdownItem[] = [
+  { label: 'מעברים', icon: Image, modal: 'transitions' },
+  { label: 'מהירות', icon: Clock, modal: 'speed' },
+  { label: 'חיתוך (Crop)', icon: Maximize2, modal: 'crop' },
 ]
 
 function Dropdown({ label, emoji, items, accentColor }: { label: string; emoji: string; items: DropdownItem[]; accentColor: string }) {
@@ -278,6 +292,8 @@ export default function EditorToolbar() {
       <div className="flex items-center gap-2">
         <Dropdown label="שמע טוב" emoji="🎵" items={audioItems} accentColor="text-accent-purple" />
         <Dropdown label="תיראה טוב" emoji="🎬" items={videoItems} accentColor="text-accent-blue" />
+        <Dropdown label="AI" emoji="🤖" items={aiItems} accentColor="text-accent-pink" />
+        <Dropdown label="אפקטים" emoji="✨" items={effectsItems} accentColor="text-yellow-400" />
         <div className="w-px h-5 bg-white/[0.06] mx-1" />
         {/* Cut/Split tools */}
         <button

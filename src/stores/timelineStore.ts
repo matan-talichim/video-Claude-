@@ -13,6 +13,7 @@ export interface TimelineTrack {
   visible: boolean
   collapsed: boolean
   order: number
+  height: number
 }
 
 export interface TimelineMarker {
@@ -31,6 +32,10 @@ export interface TimelineClip {
   speed: number
   reversed: boolean
   frozen: boolean
+  url?: string
+  imageUrl?: string
+  text?: string
+  opacity?: number
 }
 
 export interface TransitionItem {
@@ -49,6 +54,12 @@ export interface ContextMenuState {
   trackId: string | null
   time: number
 }
+
+// Zoom constants
+const DEFAULT_ZOOM = 25  // 25% - shows full project
+const MIN_ZOOM = 10      // 10%
+const MAX_ZOOM = 500     // 500%
+const BASE_PPS = 0.8     // base pixels per second multiplier (zoom/100 * 80 = zoom * 0.8)
 
 interface TimelineState {
   // Zoom
@@ -94,6 +105,8 @@ interface TimelineState {
   toggleSnap: () => void
   toggleRipple: () => void
   toggleSpeedTrim: () => void
+  setSnapEnabled: (enabled: boolean) => void
+  setRippleEnabled: (enabled: boolean) => void
 
   // Actions - Selection
   selectClip: (clipId: string, additive?: boolean) => void
@@ -110,6 +123,7 @@ interface TimelineState {
   // Actions - Tracks
   addTrack: (type: TrackType) => void
   removeTrack: (id: string) => void
+  updateTrack: (id: string, updates: Partial<TimelineTrack>) => void
   toggleTrackMute: (id: string) => void
   toggleTrackLock: (id: string) => void
   toggleTrackVisibility: (id: string) => void
@@ -119,9 +133,12 @@ interface TimelineState {
 
   // Actions - Clips
   addClip: (clip: TimelineClip) => void
+  addClipToTrack: (trackId: string, clip: Omit<TimelineClip, 'trackId'>) => void
   removeClip: (id: string) => void
   removeSelectedClips: () => void
   moveClip: (id: string, startTime: number) => void
+  moveClipToTrack: (clipId: string, fromTrackId: string, toTrackId: string) => void
+  updateClipTime: (clipId: string, startTime: number, endTime: number) => void
   splitClip: (id: string, time: number) => void
   setClipSpeed: (id: string, speed: number) => void
   reverseClip: (id: string) => void
@@ -142,21 +159,30 @@ interface TimelineState {
 
   // Actions - Resize
   setTimelineHeight: (height: number) => void
+
+  // Initialize tracks from project data
+  initializeTracks: (data: {
+    videos?: { url?: string; name?: string }[]
+    transcript?: unknown
+    broll?: { imageUrl: string; startTime: number; duration: number; prompt?: string }[]
+    captions?: { id: string; text: string; startTime: number; endTime: number }[]
+    music?: { url?: string; duration?: number }[]
+  }) => void
 }
 
 const MARKER_COLORS = ['#FF6B8A', '#7C5CFF', '#4ADE80', '#FBBF24', '#5C8AFF', '#F97316', '#EC4899', '#14B8A6']
 
 const defaultTracks: TimelineTrack[] = [
-  { id: 'video-1', type: 'video', label: 'וידאו 1', icon: '🎥', color: '#5C8AFF', muted: false, locked: false, visible: true, collapsed: false, order: 0 },
-  { id: 'audio-1', type: 'audio', label: 'אודיו 1', icon: '🎵', color: '#4ADE80', muted: false, locked: false, visible: true, collapsed: false, order: 1 },
-  { id: 'captions-1', type: 'captions', label: 'כתוביות', icon: '💬', color: '#FBBF24', muted: false, locked: false, visible: true, collapsed: false, order: 2 },
-  { id: 'broll-1', type: 'broll', label: 'B-Roll', icon: '🖼️', color: '#A855F7', muted: false, locked: false, visible: true, collapsed: false, order: 3 },
-  { id: 'music-1', type: 'music', label: 'מוזיקה', icon: '🎵', color: '#EC4899', muted: false, locked: false, visible: true, collapsed: false, order: 4 },
-  { id: 'text-1', type: 'text', label: 'טקסט', icon: '📝', color: '#06B6D4', muted: false, locked: false, visible: true, collapsed: false, order: 5 },
+  { id: 'video-1', type: 'video', label: 'וידאו 1', icon: '🎥', color: '#5C8AFF', muted: false, locked: false, visible: true, collapsed: false, order: 0, height: 60 },
+  { id: 'audio-1', type: 'audio', label: 'אודיו 1', icon: '🎵', color: '#4ADE80', muted: false, locked: false, visible: true, collapsed: false, order: 1, height: 60 },
+  { id: 'captions-1', type: 'captions', label: 'כתוביות', icon: '💬', color: '#FBBF24', muted: false, locked: false, visible: true, collapsed: false, order: 2, height: 60 },
+  { id: 'broll-1', type: 'broll', label: 'B-Roll', icon: '🖼️', color: '#A855F7', muted: false, locked: false, visible: true, collapsed: false, order: 3, height: 60 },
+  { id: 'music-1', type: 'music', label: 'מוזיקה', icon: '🎵', color: '#EC4899', muted: false, locked: false, visible: true, collapsed: false, order: 4, height: 60 },
+  { id: 'text-1', type: 'text', label: 'טקסט', icon: '📝', color: '#06B6D4', muted: false, locked: false, visible: true, collapsed: false, order: 5, height: 60 },
 ]
 
 export const useTimelineStore = create<TimelineState>((set, get) => ({
-  zoom: 100,
+  zoom: DEFAULT_ZOOM,
   scrollLeft: 0,
   snapEnabled: true,
   rippleEnabled: false,
@@ -169,21 +195,21 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   transitions: [],
   contextMenu: { visible: false, x: 0, y: 0, clipId: null, trackId: null, time: 0 },
   clipboard: [],
-  timelineHeight: 280,
+  timelineHeight: 320,
 
-  setZoom: (zoom) => set({ zoom: Math.max(25, Math.min(400, zoom)) }),
+  setZoom: (zoom) => set({ zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)) }),
   fitToScreen: (duration, containerWidth) => {
     if (duration <= 0 || containerWidth <= 0) return
-    // pixelsPerSecond = zoom/100 * 80, so containerWidth = duration * (zoom/100 * 80)
-    // zoom = (containerWidth / (duration * 80)) * 100
-    const zoom = Math.round((containerWidth / (duration * 0.8)))
-    set({ zoom: Math.max(25, Math.min(400, zoom)), scrollLeft: 0 })
+    const zoom = Math.round((containerWidth / (duration * BASE_PPS)))
+    set({ zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)), scrollLeft: 0 })
   },
   setScrollLeft: (scrollLeft) => set({ scrollLeft: Math.max(0, scrollLeft) }),
 
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
   toggleRipple: () => set((s) => ({ rippleEnabled: !s.rippleEnabled })),
   toggleSpeedTrim: () => set((s) => ({ speedTrimEnabled: !s.speedTrimEnabled })),
+  setSnapEnabled: (enabled) => set({ snapEnabled: enabled }),
+  setRippleEnabled: (enabled) => set({ rippleEnabled: enabled }),
 
   selectClip: (clipId, additive) => set((s) => {
     if (additive) {
@@ -230,12 +256,15 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
     const c = config[type]
     const id = `${type}-${Date.now()}`
     set((s) => ({
-      tracks: [...s.tracks, { id, type, label: c.label, icon: c.icon, color: c.color, muted: false, locked: false, visible: true, collapsed: false, order: s.tracks.length }],
+      tracks: [...s.tracks, { id, type, label: c.label, icon: c.icon, color: c.color, muted: false, locked: false, visible: true, collapsed: false, order: s.tracks.length, height: 60 }],
     }))
   },
   removeTrack: (id) => set((s) => ({
     tracks: s.tracks.filter((t) => t.id !== id),
     clips: s.clips.filter((c) => c.trackId !== id),
+  })),
+  updateTrack: (id, updates) => set((s) => ({
+    tracks: s.tracks.map((t) => t.id === id ? { ...t, ...updates } : t),
   })),
   toggleTrackMute: (id) => set((s) => ({
     tracks: s.tracks.map((t) => t.id === id ? { ...t, muted: !t.muted } : t),
@@ -260,6 +289,9 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   })),
 
   addClip: (clip) => set((s) => ({ clips: [...s.clips, clip] })),
+  addClipToTrack: (trackId, clip) => set((s) => ({
+    clips: [...s.clips, { ...clip, trackId }],
+  })),
   removeClip: (id) => set((s) => ({
     clips: s.clips.filter((c) => c.id !== id),
     selectedClipIds: s.selectedClipIds.filter((cid) => cid !== id),
@@ -268,10 +300,8 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
     const { selectedClipIds, rippleEnabled, clips } = get()
     if (selectedClipIds.length === 0) return
     if (rippleEnabled) {
-      // For ripple: find earliest removed clip, shift everything after it
       const removedClips = clips.filter((c) => selectedClipIds.includes(c.id))
       const remaining = clips.filter((c) => !selectedClipIds.includes(c.id))
-      // Group by track
       const trackGroups = new Map<string, typeof removedClips>()
       for (const rc of removedClips) {
         if (!trackGroups.has(rc.trackId)) trackGroups.set(rc.trackId, [])
@@ -295,6 +325,12 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   },
   moveClip: (id, startTime) => set((s) => ({
     clips: s.clips.map((c) => c.id === id ? { ...c, startTime: Math.max(0, startTime) } : c),
+  })),
+  moveClipToTrack: (clipId, _fromTrackId, toTrackId) => set((s) => ({
+    clips: s.clips.map((c) => c.id === clipId ? { ...c, trackId: toTrackId } : c),
+  })),
+  updateClipTime: (clipId, startTime, endTime) => set((s) => ({
+    clips: s.clips.map((c) => c.id === clipId ? { ...c, startTime: Math.max(0, startTime), duration: Math.max(0.1, endTime - startTime) } : c),
   })),
   splitClip: (id, time) => {
     const clip = get().clips.find((c) => c.id === id)
@@ -374,4 +410,46 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   setTimelineHeight: (height) => set({
     timelineHeight: Math.max(150, Math.min(window.innerHeight * 0.6, height)),
   }),
+
+  initializeTracks: (data) => {
+    const clips: TimelineClip[] = []
+
+    // Add B-Roll clips
+    if (data.broll) {
+      for (const item of data.broll) {
+        clips.push({
+          id: `broll-clip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          trackId: 'broll-1',
+          startTime: item.startTime,
+          duration: item.duration,
+          label: item.prompt?.slice(0, 20) || 'B-Roll',
+          speed: 1,
+          reversed: false,
+          frozen: false,
+          imageUrl: item.imageUrl,
+        })
+      }
+    }
+
+    // Add caption clips
+    if (data.captions) {
+      for (const cap of data.captions) {
+        clips.push({
+          id: cap.id || `cap-clip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          trackId: 'captions-1',
+          startTime: cap.startTime,
+          duration: cap.endTime - cap.startTime,
+          label: cap.text?.slice(0, 20) || '...',
+          speed: 1,
+          reversed: false,
+          frozen: false,
+          text: cap.text,
+        })
+      }
+    }
+
+    set((s) => ({
+      clips: [...s.clips, ...clips],
+    }))
+  },
 }))

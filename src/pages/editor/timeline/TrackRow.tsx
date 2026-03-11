@@ -1,6 +1,7 @@
 import { useRef, useCallback, useState } from 'react'
 import { useTimelineStore, type TimelineTrack } from '../../../stores/timelineStore'
 import { useEditorStore } from '../../../stores/editorStore'
+import { useUIStore } from '../../../stores/uiStore'
 import { snapToGrid, generateSnapPoints, formatTime } from '../../../hooks/useDrag'
 import TrackHeader from './TrackHeader'
 
@@ -12,11 +13,13 @@ export default function TrackRow({ track }: TrackRowProps) {
   const trackRef = useRef<HTMLDivElement>(null)
   const { zoom, scrollLeft, selectedClipIds, snapEnabled } = useTimelineStore()
   const { currentTime, duration, setCurrentTime } = useEditorStore()
+  const { addToast } = useUIStore()
 
   const selectClip = useTimelineStore((s) => s.selectClip)
   const toggleClipSelection = useTimelineStore((s) => s.toggleClipSelection)
   const showContextMenu = useTimelineStore((s) => s.showContextMenu)
   const markers = useTimelineStore((s) => s.markers)
+  const addClipToTrack = useTimelineStore((s) => s.addClipToTrack)
 
   // Data from editor store based on track type
   const bRollItems = useEditorStore((s) => s.bRollItems)
@@ -30,11 +33,16 @@ export default function TrackRow({ track }: TrackRowProps) {
   const deletedRegions = useEditorStore((s) => s.deletedRegions)
   const backgroundMusic = useEditorStore((s) => s.backgroundMusic)
   const setBackgroundMusic = useEditorStore((s) => s.setBackgroundMusic)
+  const textOverlays = useEditorStore((s) => s.textOverlays)
+  const updateTextOverlay = useEditorStore((s) => s.updateTextOverlay)
 
   const pixelsPerSecond = zoom / 100 * 80
   const totalWidth = duration * pixelsPerSecond
 
   const playheadX = currentTime * pixelsPerSecond - scrollLeft
+
+  // Drop indicator state
+  const [dropIndicator, setDropIndicator] = useState<{ time: number } | null>(null)
 
   // Collect all clip edges for snap points
   const getAllClipEdges = useCallback((): number[] => {
@@ -69,8 +77,13 @@ export default function TrackRow({ track }: TrackRowProps) {
       edges.push(backgroundMusic.startOffset || 0)
       edges.push((backgroundMusic.startOffset || 0) + backgroundMusic.duration)
     }
+    // Text overlays
+    for (const t of textOverlays) {
+      if (t.startTime != null) edges.push(t.startTime)
+      if (t.endTime != null) edges.push(t.endTime)
+    }
     return edges
-  }, [bRollItems, captionTracks, captions, deletedRegions, duration, backgroundMusic])
+  }, [bRollItems, captionTracks, captions, deletedRegions, duration, backgroundMusic, textOverlays])
 
   const getSnapPoints = useCallback(() => {
     return generateSnapPoints(
@@ -100,6 +113,87 @@ export default function TrackRow({ track }: TrackRowProps) {
     e.preventDefault()
     const time = getTimeFromX(e.clientX)
     showContextMenu(e.clientX, e.clientY, null, track.id, time)
+  }
+
+  // Handle drag over for external drops
+  const handleDragOver = (e: React.DragEvent) => {
+    const types = e.dataTransfer.types
+    if (types.includes('application/x-media-item') || types.includes('application/x-broll-item') || types.includes('application/json')) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+      const time = getTimeFromX(e.clientX)
+      setDropIndicator({ time })
+    }
+  }
+
+  const handleDragLeave = () => {
+    setDropIndicator(null)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDropIndicator(null)
+    const dropTime = getTimeFromX(e.clientX)
+
+    // Try broll data
+    const brollData = e.dataTransfer.getData('application/x-broll-item')
+    if (brollData) {
+      try {
+        const item = JSON.parse(brollData)
+        const addBRollItem = useEditorStore.getState().addBRollItem
+        addBRollItem({
+          id: `broll-${Date.now()}`,
+          imageUrl: item.imageUrl,
+          startTime: dropTime,
+          duration: item.duration || 3,
+          source: item.source || 'upload',
+          prompt: item.prompt,
+        })
+        addToast('B-Roll נוסף לציר הזמן', 'success')
+        return
+      } catch { /* ignore */ }
+    }
+
+    // Try generic JSON data
+    const jsonData = e.dataTransfer.getData('application/json')
+    if (jsonData) {
+      try {
+        const data = JSON.parse(jsonData)
+        addClipToTrack(track.id, {
+          id: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          startTime: dropTime,
+          duration: data.duration || 5,
+          label: data.fileName || data.name || 'קליפ חדש',
+          speed: 1,
+          reversed: false,
+          frozen: false,
+          url: data.fileUrl || data.url,
+          imageUrl: data.imageUrl,
+          text: data.text,
+        })
+        addToast(`${data.fileName || 'קליפ'} נוסף לשכבה ${track.label}`, 'success')
+        return
+      } catch { /* ignore */ }
+    }
+
+    // Try media item
+    const mediaData = e.dataTransfer.getData('application/x-media-item')
+    if (mediaData) {
+      try {
+        const data = JSON.parse(mediaData)
+        addClipToTrack(track.id, {
+          id: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          startTime: dropTime,
+          duration: data.duration || 5,
+          label: data.fileName || 'מדיה',
+          speed: 1,
+          reversed: false,
+          frozen: false,
+          url: data.fileUrl,
+        })
+        addToast(`${data.fileName || 'מדיה'} נוסף לשכבה ${track.label}`, 'success')
+      } catch { /* ignore */ }
+    }
   }
 
   // Render track content based on type
@@ -344,14 +438,94 @@ export default function TrackRow({ track }: TrackRowProps) {
   }
 
   const renderTextTrack = () => {
-    return null
+    // Render text overlays that have time ranges
+    const textsWithTime = textOverlays.filter((t) => t.startTime != null && t.endTime != null)
+    if (textsWithTime.length === 0 && textOverlays.length > 0) {
+      // Show text overlays without explicit times as spanning full duration
+      return textOverlays.map((text) => (
+        <DraggableClipBlock
+          key={text.id}
+          id={text.id}
+          startTime={0}
+          endTime={duration > 0 ? duration : 5}
+          color={track.color}
+          label={text.text?.slice(0, 20) || 'טקסט'}
+          trackLocked={track.locked}
+          pixelsPerSecond={pixelsPerSecond}
+          scrollLeft={scrollLeft}
+          selected={selectedClipIds.includes(text.id)}
+          duration={duration}
+          snapEnabled={snapEnabled}
+          getSnapPoints={getSnapPoints}
+          onClick={(e) => {
+            if (e.shiftKey) selectClip(text.id, true)
+            else if (e.metaKey || e.ctrlKey) toggleClipSelection(text.id)
+            else selectClip(text.id)
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            showContextMenu(e.clientX, e.clientY, text.id, track.id, getTimeFromX(e.clientX))
+          }}
+          onMove={(newStart) => {
+            const dur = (text.endTime || duration) - (text.startTime || 0)
+            updateTextOverlay(text.id, { startTime: newStart, endTime: newStart + dur })
+          }}
+          onTrimStart={(newStart) => {
+            updateTextOverlay(text.id, { startTime: newStart })
+          }}
+          onTrimEnd={(newEnd) => {
+            updateTextOverlay(text.id, { endTime: newEnd })
+          }}
+          small
+        />
+      ))
+    }
+
+    return textsWithTime.map((text) => (
+      <DraggableClipBlock
+        key={text.id}
+        id={text.id}
+        startTime={text.startTime!}
+        endTime={text.endTime!}
+        color={track.color}
+        label={text.text?.slice(0, 20) || 'טקסט'}
+        trackLocked={track.locked}
+        pixelsPerSecond={pixelsPerSecond}
+        scrollLeft={scrollLeft}
+        selected={selectedClipIds.includes(text.id)}
+        duration={duration}
+        snapEnabled={snapEnabled}
+        getSnapPoints={getSnapPoints}
+        onClick={(e) => {
+          if (e.shiftKey) selectClip(text.id, true)
+          else if (e.metaKey || e.ctrlKey) toggleClipSelection(text.id)
+          else selectClip(text.id)
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          showContextMenu(e.clientX, e.clientY, text.id, track.id, getTimeFromX(e.clientX))
+        }}
+        onMove={(newStart) => {
+          const dur = text.endTime! - text.startTime!
+          updateTextOverlay(text.id, { startTime: newStart, endTime: newStart + dur })
+        }}
+        onTrimStart={(newStart) => {
+          updateTextOverlay(text.id, { startTime: newStart })
+        }}
+        onTrimEnd={(newEnd) => {
+          updateTextOverlay(text.id, { endTime: newEnd })
+        }}
+        small
+      />
+    ))
   }
 
   return (
-    <div className={`flex transition-all ${track.collapsed ? 'h-6' : 'h-10'} ${!track.visible ? 'opacity-30' : ''}`}>
+    <div className={`flex transition-all ${track.collapsed ? 'h-6' : 'h-14'} ${!track.visible ? 'opacity-30' : ''} ${track.muted ? 'opacity-60' : ''}`}>
       <TrackHeader track={track} />
       <div
         ref={trackRef}
+        data-track-id={track.id}
         className={`flex-1 relative overflow-hidden cursor-pointer ${
           track.locked ? 'cursor-not-allowed' : ''
         }`}
@@ -363,6 +537,9 @@ export default function TrackRow({ track }: TrackRowProps) {
         }}
         onClick={handleTrackClick}
         onContextMenu={handleContextMenu}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
         {/* Track background grid lines */}
         <div className="absolute inset-0 track-bg" />
@@ -376,6 +553,17 @@ export default function TrackRow({ track }: TrackRowProps) {
             className="absolute top-0 bottom-0 w-0.5 bg-[#FF6B8A]/60 z-20 pointer-events-none"
             style={{ left: playheadX }}
           />
+        )}
+
+        {/* Drop indicator */}
+        {dropIndicator && (
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-accent-purple z-50 pointer-events-none"
+            style={{ left: `${dropIndicator.time * pixelsPerSecond - scrollLeft}px` }}
+          >
+            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-accent-purple rounded-full" />
+            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-accent-purple rounded-full" />
+          </div>
         )}
       </div>
     </div>
@@ -490,7 +678,7 @@ function DraggableClipBlock({ id: _id, startTime, endTime, color, label, trackLo
     <div
       className={`absolute top-0.5 rounded group ${
         trackLocked ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
-      } ${selected ? 'ring-1.5 ring-accent-purple shadow-lg shadow-accent-purple/20 z-10 scale-y-[1.05]' : 'hover:brightness-110'} ${
+      } ${selected ? 'ring-1.5 ring-white shadow-lg shadow-white/20 z-10 scale-y-[1.05]' : 'hover:brightness-110'} ${
         isDragging ? 'opacity-80 shadow-xl z-50' : 'transition-shadow'
       }`}
       style={{

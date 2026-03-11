@@ -3,6 +3,9 @@ import { useTimelineStore } from '../../../stores/timelineStore'
 import { useEditorStore } from '../../../stores/editorStore'
 import { formatTime } from '../../../hooks/useDrag'
 
+const MIN_ZOOM = 10
+const MAX_ZOOM = 500
+
 export default function TimelineToolbar() {
   const {
     zoom, setZoom, fitToScreen,
@@ -10,7 +13,7 @@ export default function TimelineToolbar() {
     rippleEnabled, toggleRipple,
     speedTrimEnabled, toggleSpeedTrim,
     selectedClipIds, removeSelectedClips,
-    copySelected, cutSelected: _cutSelected,
+    copySelected,
     clipboard,
   } = useTimelineStore()
 
@@ -40,6 +43,8 @@ export default function TimelineToolbar() {
     }
   }
 
+  const zoomRange = MAX_ZOOM - MIN_ZOOM
+
   return (
     <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/[0.06] bg-bg-panel shrink-0" dir="rtl">
       {/* Left group - Edit tools */}
@@ -63,14 +68,14 @@ export default function TimelineToolbar() {
           label="Ripple"
           active={rippleEnabled}
           onClick={toggleRipple}
-          tooltip="מצב Ripple - קליפים זזים בעת מחיקה"
+          tooltip="מצב Ripple - קליפים זזים בעת מחיקה (R)"
         />
         <ModeToggle
           icon={<Magnet size={14} />}
           label="Snap"
           active={snapEnabled}
           onClick={toggleSnap}
-          tooltip="הצמדה - קליפים נצמדים לקצוות"
+          tooltip="הצמדה - קליפים נצמדים לקצוות (N)"
         />
         <ModeToggle
           icon={<Zap size={14} />}
@@ -96,29 +101,29 @@ export default function TimelineToolbar() {
 
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setZoom(zoom - 25)}
+            onClick={() => setZoom(Math.max(MIN_ZOOM, zoom - 15))}
             className="text-text-muted hover:text-text-primary text-xs font-bold w-5 h-5 flex items-center justify-center rounded hover:bg-white/[0.06]"
           >
             −
           </button>
-          <div className="w-20 h-1.5 bg-white/[0.06] rounded-full relative cursor-pointer group"
+          <div className="w-24 h-1.5 bg-white/[0.06] rounded-full relative cursor-pointer group"
             onClick={(e) => {
               const rect = e.currentTarget.getBoundingClientRect()
               const ratio = (e.clientX - rect.left) / rect.width
-              setZoom(Math.round(25 + ratio * 375))
+              setZoom(Math.round(MIN_ZOOM + ratio * zoomRange))
             }}
           >
             <div
               className="h-full bg-accent-purple/60 rounded-full transition-all"
-              style={{ width: `${((zoom - 25) / 375) * 100}%` }}
+              style={{ width: `${((zoom - MIN_ZOOM) / zoomRange) * 100}%` }}
             />
             <div
               className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-accent-purple rounded-full shadow-lg shadow-accent-purple/30 border-2 border-white/20 transition-all"
-              style={{ left: `calc(${((zoom - 25) / 375) * 100}% - 6px)` }}
+              style={{ left: `calc(${((zoom - MIN_ZOOM) / zoomRange) * 100}% - 6px)` }}
             />
           </div>
           <button
-            onClick={() => setZoom(zoom + 25)}
+            onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + 15))}
             className="text-text-muted hover:text-text-primary text-xs font-bold w-5 h-5 flex items-center justify-center rounded hover:bg-white/[0.06]"
           >
             +

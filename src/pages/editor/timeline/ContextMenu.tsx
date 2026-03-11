@@ -5,13 +5,16 @@ import { useUIStore } from '../../../stores/uiStore'
 
 export default function ContextMenu() {
   const menuRef = useRef<HTMLDivElement>(null)
-  const { contextMenu, hideContextMenu, selectClip, removeSelectedClips, copySelected, cutSelected: _cutSelected } = useTimelineStore()
+  const { contextMenu, hideContextMenu, selectClip, removeSelectedClips, copySelected } = useTimelineStore()
   const pasteAtTime = useTimelineStore((s) => s.pasteAtTime)
   const clipboard = useTimelineStore((s) => s.clipboard)
   const addMarker = useTimelineStore((s) => s.addMarker)
   const addTrack = useTimelineStore((s) => s.addTrack)
   const toggleTrackLock = useTimelineStore((s) => s.toggleTrackLock)
   const toggleTrackVisibility = useTimelineStore((s) => s.toggleTrackVisibility)
+  const setClipSpeed = useTimelineStore((s) => s.setClipSpeed)
+  const reverseClip = useTimelineStore((s) => s.reverseClip)
+  const duplicateSelected = useTimelineStore((s) => s.duplicateSelected)
 
   const splitAtPlayhead = useEditorStore((s) => s.splitAtPlayhead)
   const { addToast } = useUIStore()
@@ -78,6 +81,13 @@ export default function ContextMenu() {
           <MenuItem icon="🗑" label="מחק" shortcut="Del" onClick={() => { if (contextMenu.clipId) selectClip(contextMenu.clipId); removeSelectedClips(); hideContextMenu() }} danger />
           <Divider />
 
+          <MenuItem icon="🔄" label="שכפל" shortcut="⌘D" onClick={() => {
+            if (contextMenu.clipId) selectClip(contextMenu.clipId)
+            duplicateSelected()
+            hideContextMenu()
+          }} />
+          <Divider />
+
           {/* Speed submenu */}
           <SubMenu icon="⚡" label="שנה מהירות...">
             {speedOptions.map((opt) => (
@@ -85,6 +95,9 @@ export default function ContextMenu() {
                 key={opt.value}
                 label={opt.label}
                 onClick={() => {
+                  if (contextMenu.clipId) {
+                    setClipSpeed(contextMenu.clipId, opt.value)
+                  }
                   addToast(`מהירות שונתה ל-${opt.label}`, 'info')
                   hideContextMenu()
                 }}
@@ -93,10 +106,19 @@ export default function ContextMenu() {
           </SubMenu>
 
           <MenuItem icon="🎨" label="תיקון צבע" onClick={() => { addToast('פתח תיקון צבע מסרגל הכלים למעלה', 'info'); hideContextMenu() }} />
-          <MenuItem icon="↺" label="הפוך" onClick={() => { addToast('הקליפ הופך', 'info'); hideContextMenu() }} />
+          <MenuItem icon="↺" label="הפוך" onClick={() => {
+            if (contextMenu.clipId) reverseClip(contextMenu.clipId)
+            addToast('הקליפ הופך', 'info')
+            hideContextMenu()
+          }} />
           <MenuItem icon="⏸" label="הקפא פריים" onClick={() => { addToast('פריים הוקפא', 'info'); hideContextMenu() }} />
           <Divider />
-          <MenuItem icon="🔊" label="נתק אודיו" onClick={() => { addToast('אודיו נותק לטראק נפרד', 'info'); hideContextMenu() }} />
+          <MenuItem icon="🔊" label="נתק אודיו" onClick={() => {
+            // Detach audio: add a new audio track
+            addTrack('audio')
+            addToast('אודיו נותק לטראק נפרד', 'info')
+            hideContextMenu()
+          }} />
 
           {contextMenu.trackId && (
             <>
