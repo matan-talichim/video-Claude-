@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Video, Music, Sparkles, Film, ArrowRight, X } from 'lucide-react'
 import type { AutoEditorInput } from '../store/autoEditorStore'
+import { useUserProfileStore } from '../../../stores/userProfileStore'
 
 interface LocalFile {
   id: string
@@ -45,11 +46,16 @@ function estimateMaxVideos(files: LocalFile[], targetDuration: number): number {
 }
 
 export default function AutoEditorSettings({ files, onStart, onBack, onClose }: AutoEditorSettingsProps) {
+  const profile = useUserProfileStore()
   const [userPrompt, setUserPrompt] = useState('')
   const [targetDuration, setTargetDuration] = useState(60)
   const [customDuration, setCustomDuration] = useState('')
   const [numberOfVideos, setNumberOfVideos] = useState(3)
-  const [brollGenerator, setBrollGenerator] = useState<'seedance' | 'veo'>('seedance')
+  const [brollGenerator, setBrollGenerator] = useState<'seedance' | 'veo'>(
+    (profile.preferredBrollProvider === 'seedance' || profile.preferredBrollProvider === 'veo')
+      ? profile.preferredBrollProvider
+      : 'seedance'
+  )
 
   const closeHandler = onClose || onBack
 
@@ -233,6 +239,13 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
               ))}
             </div>
           </div>
+
+          {/* Subtle personalization indicator */}
+          {profile.confidenceScore > 0.3 && (
+            <div className="text-xs text-purple-400/60 text-center">
+              ההגדרות מותאמות אישית לפי העריכות הקודמות שלך
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="flex items-center gap-3 pt-4 pb-8">

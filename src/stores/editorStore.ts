@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useUserProfileStore } from './userProfileStore'
 
 export interface Word {
   text: string
@@ -477,16 +478,44 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setFadeIn: (seconds) => set({ fadeIn: seconds }),
   setFadeOut: (seconds) => set({ fadeOut: seconds }),
   setBackgroundMusic: (music) => set({ backgroundMusic: music }),
-  setMusicVolume: (volume) => set((s) => s.backgroundMusic ? { backgroundMusic: { ...s.backgroundMusic, volume } } : {}),
+  setMusicVolume: (volume) => {
+    set((s) => s.backgroundMusic ? { backgroundMusic: { ...s.backgroundMusic, volume } } : {})
+    // Silent learning: track music volume changes
+    const pid = get().projectId
+    if (pid) {
+      useUserProfileStore.getState().recordUserChange(pid, { type: 'changed_music_volume', detail: String(volume), timestamp: Date.now() })
+    }
+  },
   setMusicDucking: (enabled) => set((s) => s.backgroundMusic ? { backgroundMusic: { ...s.backgroundMusic, ducking: enabled } } : {}),
-  removeBackgroundMusic: () => set((s) => {
-    if (s.backgroundMusic?.blobUrl) URL.revokeObjectURL(s.backgroundMusic.blobUrl)
-    return { backgroundMusic: null }
-  }),
+  removeBackgroundMusic: () => {
+    const pid = get().projectId
+    set((s) => {
+      if (s.backgroundMusic?.blobUrl) URL.revokeObjectURL(s.backgroundMusic.blobUrl)
+      return { backgroundMusic: null }
+    })
+    // Silent learning: track music removal
+    if (pid) {
+      useUserProfileStore.getState().recordUserChange(pid, { type: 'removed_music', detail: '', timestamp: Date.now() })
+    }
+  },
   setTranscript: (transcript) => set({ transcript, isDirty: true }),
-  setShowCaptions: (show) => set({ showCaptions: show }),
+  setShowCaptions: (show) => {
+    set({ showCaptions: show })
+    // Silent learning: track caption removal
+    const pid = get().projectId
+    if (pid && !show) {
+      useUserProfileStore.getState().recordUserChange(pid, { type: 'removed_captions', detail: '', timestamp: Date.now() })
+    }
+  },
   setCaptions: (captions) => set({ captions }),
-  setCaptionStyle: (style) => set((s) => ({ captionStyle: { ...s.captionStyle, ...style } })),
+  setCaptionStyle: (style) => {
+    set((s) => ({ captionStyle: { ...s.captionStyle, ...style } }))
+    // Silent learning: track caption style changes
+    const pid = get().projectId
+    if (pid && style.preset) {
+      useUserProfileStore.getState().recordUserChange(pid, { type: 'changed_caption_style', detail: style.preset, timestamp: Date.now() })
+    }
+  },
   setSelectedBRollId: (id) => set({ selectedBRollId: id }),
   setRangeStart: (t) => set({ rangeStart: t }),
   setRangeEnd: (t) => set({ rangeEnd: t }),
@@ -515,13 +544,25 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       createdAt: Date.now(),
     }
     const newHistory = [historyItem, ...s.bRollHistory].slice(0, 50)
+    // Silent learning: track B-Roll addition
+    const pid = get().projectId
+    if (pid) {
+      useUserProfileStore.getState().recordUserChange(pid, { type: 'added_broll', detail: item.prompt || '', timestamp: Date.now() })
+    }
     return { bRollItems: [...s.bRollItems, full], bRollHistory: newHistory, isDirty: true }
   }),
-  removeBRollItem: (id) => set((s) => ({
-    bRollItems: s.bRollItems.filter((b) => b.id !== id),
-    selectedBRollId: s.selectedBRollId === id ? null : s.selectedBRollId,
-    isDirty: true,
-  })),
+  removeBRollItem: (id) => {
+    set((s) => ({
+      bRollItems: s.bRollItems.filter((b) => b.id !== id),
+      selectedBRollId: s.selectedBRollId === id ? null : s.selectedBRollId,
+      isDirty: true,
+    }))
+    // Silent learning: track B-Roll removal
+    const pid = get().projectId
+    if (pid) {
+      useUserProfileStore.getState().recordUserChange(pid, { type: 'removed_broll', detail: id, timestamp: Date.now() })
+    }
+  },
   updateBRollItem: (id, updates) => set((s) => ({
     bRollItems: s.bRollItems.map((b) => b.id === id ? { ...b, ...updates } : b),
     isDirty: true,
@@ -655,10 +696,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     deletedRegions: s.deletedRegions.filter(r => !(r.startTime === startTime && r.endTime === endTime)),
   })),
   clearDeletedRegions: () => set({ deletedRegions: [] }),
-  setEditorEffect: (key, value) => set((s) => ({
-    editorEffects: { ...s.editorEffects, [key]: value },
-    isDirty: true,
-  })),
+  setEditorEffect: (key, value) => {
+    set((s) => ({
+      editorEffects: { ...s.editorEffects, [key]: value },
+      isDirty: true,
+    }))
+    // Silent learning: track effect changes
+    const pid = get().projectId
+    if (pid) {
+      if (key === 'eyeContact') {
+        useUserProfileStore.getState().recordUserChange(pid, { type: value ? 'enabled_eye_contact' : 'disabled_eye_contact', detail: '', timestamp: Date.now() })
+      } else if (key === 'reframe' && value?.ratio) {
+        useUserProfileStore.getState().recordUserChange(pid, { type: 'changed_format', detail: value.ratio, timestamp: Date.now() })
+      }
+    }
+  },
 
   toggleTrackMute: (track) => set((s) => ({
     trackStates: { ...s.trackStates, [track]: { ...s.trackStates[track], muted: !s.trackStates[track].muted } },
@@ -720,6 +772,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         previousDeletedRegions,
       }],
     })
+    // Silent learning: record silence shortening
+    const pid = get().projectId
+    if (pid) {
+      useUserProfileStore.getState().recordAutoEditResult(pid, ['shorten_silences'], { count, threshold })
+    }
     return { count, timeSaved }
   },
 
@@ -830,6 +887,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       isDirty: true, redoHistory: [],
       editHistory: [...editHistory, { action: 'removeFillerWords', description: `הוסרו ${totalRemoved} מילות מילוי`, timestamp: Date.now(), previousTranscript, previousDeletedRegions }],
     })
+    // Silent learning: record filler removal
+    const pid = get().projectId
+    if (pid) {
+      useUserProfileStore.getState().recordAutoEditResult(pid, ['remove_fillers'], { count: totalRemoved })
+    }
     return { removed, totalRemoved, timeSaved }
   },
 
@@ -919,7 +981,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   undoLastEdit: () => {
-    const { editHistory, transcript, redoHistory, deletedRegions } = get()
+    const { editHistory, transcript, redoHistory, deletedRegions, projectId } = get()
     if (editHistory.length === 0) return null
     const lastEdit = editHistory[editHistory.length - 1]
     if (lastEdit.previousTranscript) {
@@ -930,6 +992,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         redoHistory: [...redoHistory, { ...lastEdit, previousTranscript: JSON.parse(JSON.stringify(transcript)), previousDeletedRegions: JSON.parse(JSON.stringify(deletedRegions)) }],
         isDirty: true,
       })
+    }
+    // Silent learning: track what user undid
+    if (projectId) {
+      const profile = useUserProfileStore.getState()
+      if (lastEdit.action === 'removeFillerWords') {
+        profile.recordUserChange(projectId, { type: 'undo_filler_removal', detail: lastEdit.description, timestamp: Date.now() })
+      } else if (lastEdit.action === 'shortenSilences') {
+        profile.recordUserChange(projectId, { type: 'undo_silence_shortening', detail: '', timestamp: Date.now() })
+      }
     }
     return lastEdit.description
   },

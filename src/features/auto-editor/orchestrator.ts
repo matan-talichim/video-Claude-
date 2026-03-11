@@ -1,4 +1,5 @@
 import { useAutoEditorStore, type AutoEditorInput } from './store/autoEditorStore'
+import { useUserProfileStore } from '../../stores/userProfileStore'
 import { transcribeVideos } from './services/whisperService'
 import { planWithChatGPT } from './services/chatgptService'
 import { generateBackground } from './services/nanoBananaService'
@@ -129,8 +130,24 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
   const { setStep, setProgress, setError, setResults, setInput, addLog,
     setCachedTranscript, setCachedEditingPlan, setCachedAssets } = store
 
+  // Apply learned preferences as defaults from user profile
+  const profile = useUserProfileStore.getState()
+  const enrichedInput: AutoEditorInput = {
+    ...input,
+    brollGenerator: input.brollGenerator || (profile.preferredBrollProvider as 'seedance' | 'veo') || 'seedance',
+  }
+
+  // Record that auto-edit started for this session
+  const sessionProjectId = `auto-editor-${Date.now()}`
+  profile.recordAutoEditResult(sessionProjectId, ['auto_edit'], {
+    userPrompt: input.userPrompt,
+    targetDuration: input.targetDuration,
+    numberOfVideos: input.numberOfVideos,
+    brollGenerator: enrichedInput.brollGenerator,
+  })
+
   // Save input for reference
-  setInput(input)
+  setInput(enrichedInput)
 
   try {
     // Check available APIs
@@ -143,7 +160,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       if (useAutoEditorStore.getState().step !== 'transcribing') {
         setStep('transcribing')
       }
-      transcript = await transcribeVideos(input.videoUrls)
+      transcript = await transcribeVideos(enrichedInput.videoUrls)
       setCachedTranscript(transcript)
     } else {
       addLog('משתמש בתמלול קיים מהמטמון')
@@ -153,8 +170,8 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     setStep('validating')
     const validation = validateAvailableContent(
       transcript.totalDuration,
-      input.targetDuration,
-      input.numberOfVideos
+      enrichedInput.targetDuration,
+      enrichedInput.numberOfVideos
     )
     if (!validation.valid) {
       setError(validation.message!)
@@ -166,7 +183,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     let editingPlan = useAutoEditorStore.getState().cachedEditingPlan
     if (!editingPlan) {
       setStep('planning')
-      editingPlan = await planWithChatGPT(transcript, input)
+      editingPlan = await planWithChatGPT(transcript, enrichedInput)
       setCachedEditingPlan(editingPlan)
     } else {
       addLog('משתמש בתכנון קיים מהמטמון')
@@ -184,7 +201,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       setStep('generating_assets')
       const assetResults = await Promise.allSettled([
         generateBackgroundSafe(editingPlan.prompts.backgroundImage, apis.gemini),
-        generateAllBroll(editingPlan.prompts.broll, input.brollGenerator, apis),
+        generateAllBroll(editingPlan.prompts.broll, enrichedInput.brollGenerator, apis),
         findMusicSafe(editingPlan.prompts.musicSearch, apis.pixabay),
       ])
       backgroundImage = assetResults[0].status === 'fulfilled' ? assetResults[0].value : ''
@@ -203,7 +220,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         backgroundImage,
         brollClips,
         music,
-        sourceUrls: input.videoUrls,
+        sourceUrls: enrichedInput.videoUrls,
       })
       editedVideos.push(edited)
     }
