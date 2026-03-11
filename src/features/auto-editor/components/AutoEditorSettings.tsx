@@ -32,6 +32,17 @@ const BROLL_OPTIONS: { value: 'seedance' | 'veo'; label: string; desc: string }[
   { value: 'veo', label: 'Google VEO', desc: 'ריאליסטי במיוחד' },
 ]
 
+const PLATFORM_OPTIONS = [
+  { id: 'tiktok', name: 'TikTok', ratio: '9:16', icon: '📱' },
+  { id: 'reels', name: 'Instagram Reels', ratio: '9:16', icon: '📸' },
+  { id: 'shorts', name: 'YouTube Shorts', ratio: '9:16', icon: '🎬' },
+  { id: 'youtube', name: 'YouTube', ratio: '16:9', icon: '▶️' },
+  { id: 'linkedin', name: 'LinkedIn', ratio: '1:1', icon: '💼' },
+  { id: 'facebook', name: 'Facebook', ratio: '16:9', icon: '👤' },
+  { id: 'twitter', name: 'X / Twitter', ratio: '16:9', icon: '🐦' },
+  { id: 'story', name: 'Story', ratio: '9:16', icon: '📲' },
+]
+
 function estimateDuration(files: LocalFile[]): number {
   // Rough estimate: ~1 minute per 10MB for video
   const totalBytes = files.reduce((sum, f) => sum + f.sizeBytes, 0)
@@ -56,6 +67,9 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       ? profile.preferredBrollProvider
       : 'seedance'
   )
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(
+    new Set(['tiktok', 'reels', 'shorts'])
+  )
 
   const closeHandler = onClose || onBack
 
@@ -70,12 +84,26 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
   const effectiveDuration = targetDuration === 0 ? (parseInt(customDuration) || 60) : targetDuration
   const maxVideos = estimateMaxVideos(files, effectiveDuration)
 
+  const togglePlatform = (id: string) => {
+    setSelectedPlatforms(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
   const handleStart = () => {
+    if (selectedPlatforms.size === 0) return
     onStart({
       userPrompt,
       targetDuration: effectiveDuration,
       numberOfVideos,
       brollGenerator,
+      platforms: Array.from(selectedPlatforms),
     })
   }
 
@@ -143,6 +171,33 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
               rows={3}
               className="w-full px-4 py-3 bg-white/[0.03] rounded-xl border border-white/[0.06] text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-purple/40 resize-none transition-colors"
             />
+          </div>
+
+          {/* Platform selection */}
+          <div className="space-y-3">
+            <h4 className="text-sm font-medium text-text-primary">פלטפורמות לייצוא:</h4>
+            <div className="grid grid-cols-2 gap-2">
+              {PLATFORM_OPTIONS.map(platform => (
+                <label key={platform.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer border transition ${
+                  selectedPlatforms.has(platform.id) ? 'border-purple-500 bg-purple-500/15' : 'border-white/10 bg-white/5'
+                }`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedPlatforms.has(platform.id)}
+                    onChange={() => togglePlatform(platform.id)}
+                    className="accent-purple-500"
+                  />
+                  <span>{platform.icon}</span>
+                  <div>
+                    <div className="text-white text-sm">{platform.name}</div>
+                    <div className="text-gray-500 text-xs">{platform.ratio}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {selectedPlatforms.size === 0 && (
+              <p className="text-xs text-red-400">יש לבחור לפחות פלטפורמה אחת</p>
+            )}
           </div>
 
           {/* Duration & Video count grid */}
@@ -243,7 +298,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           {/* Personalization indicator */}
           {profile.confidenceScore >= 0.3 && (
             <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 text-center">
-              <span className="text-purple-400 text-sm">✨ ההגדרות מותאמות אישית לפרופיל העריכה שלך</span>
+              <span className="text-purple-400 text-sm">ההגדרות מותאמות אישית לפרופיל העריכה שלך</span>
             </div>
           )}
 
@@ -251,7 +306,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           <div className="flex items-center gap-3 pt-4 pb-8">
             <button
               onClick={handleStart}
-              disabled={!userPrompt.trim()}
+              disabled={!userPrompt.trim() || selectedPlatforms.size === 0}
               className="flex items-center gap-2 px-8 py-3.5 bg-gradient-to-l from-accent-purple to-purple-600 hover:from-accent-purple/90 hover:to-purple-600/90 rounded-xl text-sm font-bold transition-all shadow-lg shadow-accent-purple/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Sparkles size={18} />

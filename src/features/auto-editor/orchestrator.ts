@@ -1,4 +1,4 @@
-import { useAutoEditorStore, type AutoEditorInput } from './store/autoEditorStore'
+import { useAutoEditorStore, type AutoEditorInput, type VideoResult } from './store/autoEditorStore'
 import { useUserProfileStore } from '../../stores/userProfileStore'
 import { transcribeVideos } from './services/whisperService'
 import { planWithChatGPT } from './services/chatgptService'
@@ -6,8 +6,6 @@ import { generateBackground } from './services/nanoBananaService'
 import { generateBrollSeedance } from './services/seedanceService'
 import { generateBrollVeo } from './services/veoService'
 import { findMusic } from './services/pixabayService'
-import { processVideo } from './services/ffmpegPipeline'
-import { exportAllPlatforms } from './services/exportService'
 
 const API_BASE = 'http://localhost:3001/api'
 
@@ -60,7 +58,6 @@ async function generateAllBroll(
 ): Promise<string[]> {
   const addLog = useAutoEditorStore.getState().addLog
 
-  // Check if the selected generator is available
   if (generator === 'seedance' && !apis.seedance) {
     addLog('Seedance לא מוגדר. מדלג על B-Roll.')
     return []
@@ -72,7 +69,6 @@ async function generateAllBroll(
 
   const generateFn = generator === 'seedance' ? generateBrollSeedance : generateBrollVeo
 
-  // Generate B-Roll sequentially to avoid rate limits
   const results: string[] = []
   for (let i = 0; i < prompts.length; i++) {
     addLog(`מייצר קטע B-Roll ${i + 1} מתוך ${prompts.length}`)
@@ -127,7 +123,7 @@ async function findMusicSafe(
 
 export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
   const store = useAutoEditorStore.getState()
-  const { setStep, setProgress, setError, setResults, setInput, addLog,
+  const { setStep, setProgress, setError, setResults, setProcessedVideos, setInput, addLog,
     setCachedTranscript, setCachedEditingPlan, setCachedAssets } = store
 
   // Apply learned preferences as defaults from user profile
@@ -135,6 +131,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
   const enrichedInput: AutoEditorInput = {
     ...input,
     brollGenerator: input.brollGenerator || (profile.preferredBrollProvider as 'seedance' | 'veo') || 'seedance',
+    platforms: input.platforms?.length ? input.platforms : ['tiktok', 'reels', 'shorts'],
   }
 
   // Record that auto-edit started for this session
@@ -144,6 +141,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     targetDuration: input.targetDuration,
     numberOfVideos: input.numberOfVideos,
     brollGenerator: enrichedInput.brollGenerator,
+    platforms: enrichedInput.platforms,
   })
 
   // Save input for reference
@@ -189,14 +187,14 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       addLog('משתמש בתכנון קיים מהמטמון')
     }
 
-    // Step 4 — Generate assets with graceful fallbacks (allSettled = one failure doesn't block others)
-    let backgroundImage: string, brollClips: string[], music: string
+    // Step 4 — Generate assets with graceful fallbacks
+    let backgroundImage: string, brollClips: string[], musicUrl: string
     const cachedAssets = useAutoEditorStore.getState().cachedAssets
     if (cachedAssets) {
       addLog('משתמש בנכסים קיימים מהמטמון')
       backgroundImage = cachedAssets.backgroundImage
       brollClips = cachedAssets.brollClips
-      music = cachedAssets.music
+      musicUrl = cachedAssets.music
     } else {
       setStep('generating_assets')
       const assetResults = await Promise.allSettled([
@@ -206,31 +204,73 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       ])
       backgroundImage = assetResults[0].status === 'fulfilled' ? assetResults[0].value : ''
       brollClips = assetResults[1].status === 'fulfilled' ? assetResults[1].value : []
-      music = assetResults[2].status === 'fulfilled' ? assetResults[2].value : ''
-      setCachedAssets({ backgroundImage, brollClips, music })
+      musicUrl = assetResults[2].status === 'fulfilled' ? assetResults[2].value : ''
+      setCachedAssets({ backgroundImage, brollClips, music: musicUrl })
     }
 
-    // Step 5 — Process each video (sequential — FFmpeg is heavy)
+    // Step 5 — Process each video with FFmpeg on server
     setStep('editing')
-    const editedVideos: string[] = []
-    for (const [index, videoPlan] of editingPlan.videos.entries()) {
-      setProgress({ current: index + 1, total: editingPlan.videos.length })
-      const edited = await processVideo({
-        videoPlan,
-        backgroundImage,
-        brollClips,
-        music,
-        sourceUrls: enrichedInput.videoUrls,
+    const processedVideos: VideoResult[] = []
+
+    for (let i = 0; i < editingPlan.videos.length; i++) {
+      setProgress({
+        current: i + 1,
+        total: editingPlan.videos.length,
+        label: `עורך סרטון ${i + 1} מתוך ${editingPlan.videos.length}...`,
       })
-      editedVideos.push(edited)
+
+      const videoPlan = editingPlan.videos[i]
+
+      // Determine source file
+      const sourceIndex = videoPlan.sourceSegments?.[0]?.sourceFile || 0
+      const sourceUrl = enrichedInput.videoUrls[sourceIndex] || enrichedInput.videoUrls[0]
+
+      addLog(`מעבד סרטון ${i + 1}: שולח לשרת לעיבוד FFmpeg...`)
+
+      const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: sourceUrl,
+          videoPlan: videoPlan,
+          targetDuration: enrichedInput.targetDuration,
+          platforms: enrichedInput.platforms,
+          musicUrl: musicUrl || null,
+          backgroundImage: backgroundImage || null,
+        }),
+      })
+
+      if (!processRes.ok) {
+        const err = await processRes.json().catch(() => ({}))
+        throw new Error(`שגיאה בעיבוד סרטון ${i + 1}: ${err.message || processRes.statusText}`)
+      }
+
+      const result = await processRes.json()
+      addLog(`סרטון ${i + 1} עובד בהצלחה: ${result.files?.length || 0} קבצים`)
+
+      processedVideos.push({
+        videoIndex: i + 1,
+        files: result.files || [],
+      })
     }
 
-    // Step 6 — Export to all platforms
-    setStep('exporting')
-    const exports = await exportAllPlatforms(editedVideos)
-
+    // Step 6 — Done
     setStep('done')
-    setResults(exports)
+    setProcessedVideos(processedVideos)
+
+    // Also set legacy results format for backward compat
+    const legacyResults = processedVideos.flatMap(v =>
+      v.files.map(f => ({
+        videoIndex: v.videoIndex,
+        platform: f.platform,
+        url: f.url,
+        fileName: f.filename,
+        width: parseInt(f.resolution.split('x')[0]) || 1080,
+        height: parseInt(f.resolution.split('x')[1]) || 1920,
+      }))
+    )
+    setResults(legacyResults)
+
     addLog('העיבוד הושלם בהצלחה!')
   } catch (err: any) {
     setError(err.message || 'שגיאה לא צפויה')
