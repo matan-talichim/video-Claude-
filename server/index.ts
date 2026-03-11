@@ -2074,7 +2074,7 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
 
-    const { videoUrl, duration } = req.body
+    const { videoUrl, duration, promptEvolution } = req.body
     const ffmpegPath = getFFmpeg()
 
     // Determine source file
@@ -2123,11 +2123,8 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
 
     console.log(`[VISUAL] Sending ${selectedFrames.length} frames to GPT Vision...`)
 
-    // Send all frames to GPT for visual analysis
-    const messages: any[] = [
-      {
-        role: 'system',
-        content: `אתה מנתח וידאו מקצועי. אתה מקבל פריימים מסרטון (כל 5 שניות).
+    // Build system prompt (use evolved prompt if provided)
+    const baseVisualSystemPrompt = `אתה מנתח וידאו מקצועי. אתה מקבל פריימים מסרטון (כל 5 שניות).
 
 נתח את הפריימים וזהה:
 1. מה נראה בכל פריים (אנשים, מקום, חפצים, טקסט על מסך)
@@ -2137,7 +2134,15 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
 5. האם יש תנועה או סטטי
 6. האם הפריימינג טוב (הדובר ממורכז? יש אוויר מיותר?)
 7. רגעים בולטים (הבעות פנים, מחוות ידיים, שינוי סצנה)
-8. בעיות טכניות (חושך, טשטוש, חיתוך לא טוב)
+8. בעיות טכניות (חושך, טשטוש, חיתוך לא טוב)`
+
+    const visualSystemPrompt = promptEvolution || baseVisualSystemPrompt
+
+    // Send all frames to GPT for visual analysis
+    const messages: any[] = [
+      {
+        role: 'system',
+        content: `${visualSystemPrompt}
 
 החזר JSON:
 {
@@ -2207,7 +2212,55 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
       fs.rmdirSync(framesDir)
     } catch {}
 
-    res.json(analysis)
+    // Phase 2: Self-reflection - ask the model to improve its own prompt
+    let promptImprovements: string[] = []
+    try {
+      const reflectionResponse = await ai.chat.completions.create({
+        model: 'gpt-5.4',
+        messages: [
+          {
+            role: 'system',
+            content: `אתה מומחה לשיפור פרומפטים. קיבלת את הפרומפט שבו השתמשת לניתוח ויזואלי של סרטון, ואת התוצאה שיצרת.
+
+תפקידך: לזהות מה אפשר לשפר בפרומפט כדי שבפעם הבאה הניתוח יהיה מדויק יותר ושימושי יותר לעריכת וידאו.
+
+חשוב על:
+- שאלות שלא שאלת אבל היו נותנות מידע חשוב
+- פרטים ויזואליים שפספסת
+- מידע שהיה עוזר לעורך וידאו לקבל החלטות
+- דברים ספציפיים לסוג התוכן הזה שכדאי לבדוק בפעם הבאה
+
+חוקים:
+- מקסימום 3 שיפורים חדשים
+- כל שיפור = משפט אחד קצר וברור
+- רק דברים שבאמת יעזרו לעריכה
+- אל תחזור על דברים שכבר קיימים בפרומפט
+- אם הפרומפט כבר מושלם, החזר רשימה ריקה
+
+החזר JSON:
+{
+  "improvements": ["שיפור 1", "שיפור 2"],
+  "reasoning": "הסבר קצר למה השיפורים האלה חשובים"
+}`
+          },
+          {
+            role: 'user',
+            content: `הפרומפט שהשתמשתי:\n${visualSystemPrompt.substring(0, 2000)}\n\nהתוצאה:\n${JSON.stringify(analysis, null, 2).substring(0, 3000)}\n\nמה אפשר לשפר בפרומפט לפעם הבאה?`
+          }
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 500,
+      })
+      const reflection = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}')
+      promptImprovements = reflection.improvements || []
+      if (promptImprovements.length > 0) {
+        console.log('[VISUAL] Self-improvement suggestions:', promptImprovements)
+      }
+    } catch (reflErr: any) {
+      console.warn('[VISUAL] Self-reflection failed (non-critical):', reflErr.message)
+    }
+
+    res.json({ ...analysis, _promptImprovements: promptImprovements })
 
   } catch (error: any) {
     console.error('[VISUAL ERROR]', error.message)
@@ -2221,7 +2274,7 @@ app.post('/api/auto-editor/enrich-prompt', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
 
-    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, visualAnalysis, energyAnalysis } = req.body
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, visualAnalysis, energyAnalysis, promptEvolution } = req.body
 
     const fullText = (transcript.segments || []).map((s: any) => s.text).join(' ')
     const speakers = [...new Set((transcript.segments || []).map((s: any) => s.speaker))]
@@ -2361,7 +2414,7 @@ ${userProfile || ''}
     "music_mood": "energetic/calm/corporate/dramatic",
     "music_search": "specific pixabay search term"
   }
-}`
+}${promptEvolution ? `\n\n${promptEvolution}` : ''}`
         },
         {
           role: 'user' as const,
@@ -2382,7 +2435,51 @@ ${(transcript.segments || []).map((s: any) => `[${(s.start || 0).toFixed(1)}s] $
 
     const result = JSON.parse(response.choices[0]?.message?.content || '{}')
     console.log('[ENRICH PROMPT] Done:', result.detected_type, '|', result.broll_suggestions?.length, 'B-Roll suggestions')
-    res.json(result)
+
+    // Phase 2: Self-reflection
+    let promptImprovements: string[] = []
+    try {
+      const reflectionResponse = await ai.chat.completions.create({
+        model: 'gpt-5.4',
+        messages: [
+          {
+            role: 'system',
+            content: `אתה מומחה לשיפור פרומפטים לניתוח תוכן וידאו.
+
+קיבלת את הפרומפט שבו השתמשת לניתוח תוכן ואת התוצאה.
+
+מה אפשר לשפר? חשוב על:
+- שאלות על הקהל שלא שאלת
+- ניתוח רגשי שחסר
+- B-Roll ספציפי יותר
+- הבנה טובה יותר של מטרת הסרטון
+- דברים שעורך וידאו מקצועי היה שואל
+
+מקסימום 3 שיפורים. כל אחד = משפט אחד.
+
+החזר JSON:
+{
+  "improvements": ["...", "..."],
+  "reasoning": "..."
+}`
+          },
+          {
+            role: 'user',
+            content: `תוצאה: ${JSON.stringify(result, null, 2).substring(0, 2000)}\n\nשפר.`
+          }
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 500,
+      })
+      promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
+      if (promptImprovements.length > 0) {
+        console.log('[ENRICH] Self-improvement suggestions:', promptImprovements)
+      }
+    } catch (reflErr: any) {
+      console.warn('[ENRICH] Self-reflection failed (non-critical):', reflErr.message)
+    }
+
+    res.json({ ...result, _promptImprovements: promptImprovements })
   } catch (error: any) {
     console.error('[ENRICH PROMPT]', error.message)
     res.status(500).json({ message: 'שגיאה בשיפור הפרומפט: ' + error.message })
@@ -2395,7 +2492,7 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
-    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, platforms, detectedType, visualAnalysis, energyAnalysis } = req.body
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, platforms, detectedType, visualAnalysis, energyAnalysis, promptEvolution } = req.body
     if (!transcript) return res.status(400).json({ message: 'חסר transcript' })
 
     const aiChoosesDuration = targetDuration === -1
@@ -2532,7 +2629,7 @@ ${userProfile || ''}
 - hook: תמיד תפתח עם המשפט הכי חזק, לא עם ההתחלה
 ${aiChoosesDuration ? '- optimal_duration: חובה! קבע אורך אופטימלי לכל סרטון בנפרד. כל סרטון יכול להיות באורך שונה.\n- duration_reasoning: חובה! הסבר קצר בעברית למה בחרת את האורך הזה' : `- estimated_duration: חייב להיות קרוב ל-${targetDuration} שניות (± 3 שניות)`}
 - broll_placements: MUST include at least 2 B-Roll moments per 30 seconds
-- B-Roll prompts: כתוב באנגלית, מפורט, סינמטי, עם תיאור תאורה וזווית`
+- B-Roll prompts: כתוב באנגלית, מפורט, סינמטי, עם תיאור תאורה וזווית${promptEvolution ? `\n\n${promptEvolution}` : ''}`
         },
         {
           role: 'user' as const,
@@ -2559,7 +2656,50 @@ ${aiChoosesDuration ? 'אורך יעד: AI בוחר - קבע אורך אופטי
     console.log('[CREATIVE BRIEF] Main message:', parsed.creative_brief?.main_message)
     console.log('[CREATIVE BRIEF] Videos planned:', parsed.video_plans?.length)
 
-    res.json(parsed)
+    // Phase 2: Self-reflection
+    let promptImprovements: string[] = []
+    try {
+      const reflectionResponse = await ai.chat.completions.create({
+        model: 'gpt-5.4',
+        messages: [
+          {
+            role: 'system',
+            content: `אתה מומחה לשיפור פרומפטים לתכנון קריאטיבי של סרטונים.
+
+קיבלת את התוצאה של brief יצירתי. מה אפשר לשפר בפרומפט כדי שבפעם הבאה ה-brief יהיה טוב יותר?
+
+חשוב על:
+- שאלות על קהל היעד שלא נשאלו
+- ניתוח רגשי עמוק יותר
+- hook טוב יותר
+- story arc מורכב יותר
+- התאמה טובה יותר לפלטפורמה
+
+מקסימום 3 שיפורים. כל אחד = משפט אחד.
+
+החזר JSON:
+{
+  "improvements": ["...", "..."],
+  "reasoning": "..."
+}`
+          },
+          {
+            role: 'user',
+            content: `תוצאה: ${JSON.stringify(parsed, null, 2).substring(0, 2000)}\n\nשפר.`
+          }
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 500,
+      })
+      promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
+      if (promptImprovements.length > 0) {
+        console.log('[CREATIVE BRIEF] Self-improvement suggestions:', promptImprovements)
+      }
+    } catch (reflErr: any) {
+      console.warn('[CREATIVE BRIEF] Self-reflection failed (non-critical):', reflErr.message)
+    }
+
+    res.json({ ...parsed, _promptImprovements: promptImprovements })
   } catch (err: any) {
     console.error('Creative brief error:', err.message)
     res.status(500).json({ message: err.message || 'שגיאת Creative Brief' })
@@ -2572,7 +2712,7 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
-    const { creativeBrief, transcript, targetDuration, platforms } = req.body
+    const { creativeBrief, transcript, targetDuration, platforms, promptEvolution } = req.body
     if (!creativeBrief || !transcript) return res.status(400).json({ message: 'חסר creativeBrief או transcript' })
 
     const aiChoosesDuration = targetDuration === -1
@@ -2743,7 +2883,7 @@ VALIDATION before returning:
 4. At least 2 B-Roll placements per 30 seconds
 5. At least 1 zoom every 7 seconds
 6. camera_angles must cover entire duration with no gaps
-7. transitions between every pair of cuts`
+7. transitions between every pair of cuts${promptEvolution ? `\n\n${promptEvolution}` : ''}`
         },
         {
           role: 'user' as const,
@@ -2822,7 +2962,51 @@ Create precise technical edit plan.`
     }
 
     console.log('[TECH PLAN] Videos:', plan.videos?.length, '| Validated and fixed')
-    res.json(plan)
+
+    // Phase 2: Self-reflection
+    let promptImprovements: string[] = []
+    try {
+      const reflectionResponse = await ai.chat.completions.create({
+        model: 'gpt-5.4',
+        messages: [
+          {
+            role: 'system',
+            content: `אתה מומחה לשיפור פרומפטים לתכנון טכני של עריכת וידאו.
+
+קיבלת את התוצאה של תכנון טכני. מה אפשר לשפר בפרומפט כדי שבפעם הבאה התכנון יהיה מדויק יותר?
+
+חשוב על:
+- דיוק בזמנים של חיתוכים
+- מעברים טבעיים יותר
+- זומים שמתאימים לתוכן
+- B-Roll שמשתלב טוב יותר
+- כתוביות מדויקות יותר
+
+מקסימום 3 שיפורים. כל אחד = משפט אחד.
+
+החזר JSON:
+{
+  "improvements": ["...", "..."],
+  "reasoning": "..."
+}`
+          },
+          {
+            role: 'user',
+            content: `תוצאה: ${JSON.stringify(plan, null, 2).substring(0, 2000)}\n\nשפר.`
+          }
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 500,
+      })
+      promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
+      if (promptImprovements.length > 0) {
+        console.log('[TECH PLAN] Self-improvement suggestions:', promptImprovements)
+      }
+    } catch (reflErr: any) {
+      console.warn('[TECH PLAN] Self-reflection failed (non-critical):', reflErr.message)
+    }
+
+    res.json({ ...plan, _promptImprovements: promptImprovements })
   } catch (err: any) {
     console.error('Technical plan error:', err.message)
     res.status(500).json({ message: err.message || 'שגיאת Technical Plan' })

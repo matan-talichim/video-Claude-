@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Video, Music, Sparkles, Film, ArrowRight, X } from 'lucide-react'
 import type { AutoEditorInput } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
+import { usePromptEvolutionStore } from '../../../stores/promptEvolutionStore'
 
 interface LocalFile {
   id: string
@@ -74,6 +75,22 @@ const PRESET_CATEGORIES = [
     ]
   },
 ]
+
+function EvolutionBadge() {
+  const stats = usePromptEvolutionStore(s => s.getStats())
+  const totalLearnings = stats.reduce((sum, s) => sum + s.additions, 0)
+
+  if (totalLearnings === 0) return null
+
+  return (
+    <div className="flex items-center gap-2 bg-purple-500/10 rounded-full px-3 py-1 mb-4" dir="rtl">
+      <span className="text-purple-400 text-xs">&#x1F9EC;</span>
+      <span className="text-purple-300 text-xs">
+        AI למד {totalLearnings} תובנות מ-{stats.reduce((s, st) => s + st.version, 0)} עריכות
+      </span>
+    </div>
+  )
+}
 
 function PromptBuilder({ prompt, setPrompt }: { prompt: string; setPrompt: (p: string) => void }) {
   return (
@@ -210,6 +227,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           <h2 className="text-xl font-bold text-text-primary">עריכה אוטומטית</h2>
           <p className="text-sm text-text-muted">AI יערוך את הסרטונים שלך אוטומטית</p>
         </div>
+
+        <EvolutionBadge />
 
         <div className="w-full space-y-6">
           {/* Selected files */}

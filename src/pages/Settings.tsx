@@ -1,17 +1,124 @@
 import { useState, useEffect } from 'react'
-import { User, CreditCard, Users, Plug, Upload, Check, Loader2, AlertCircle, RefreshCw, Palette } from 'lucide-react'
+import { User, CreditCard, Users, Plug, Upload, Check, Loader2, AlertCircle, RefreshCw, Palette, Dna } from 'lucide-react'
 import { useUIStore } from '../stores/uiStore'
 import { useUsageStore } from '../stores/usageStore'
 import { useApiStatusStore } from '../stores/apiStatusStore'
 import { useUserProfileStore } from '../stores/userProfileStore'
+import { usePromptEvolutionStore } from '../stores/promptEvolutionStore'
 
 const tabs = [
   { id: 'profile', label: 'פרופיל', icon: User },
   { id: 'editing-profile', label: 'פרופיל עריכה', icon: Palette },
+  { id: 'ai', label: 'AI למידה', icon: Dna },
   { id: 'subscription', label: 'מנוי', icon: CreditCard },
   { id: 'team', label: 'צוות', icon: Users },
   { id: 'integrations', label: 'אינטגרציות', icon: Plug },
 ]
+
+const MODEL_NAMES: Record<string, string> = {
+  'visual_analysis': 'ניתוח ויזואלי',
+  'enrichment': 'שיפור פרומפט',
+  'creative_brief': 'תכנון קריאטיבי',
+  'technical_plan': 'תכנון טכני',
+}
+
+function AIEvolutionSettings() {
+  const stats = usePromptEvolutionStore(s => s.getStats())
+  const evolutions = usePromptEvolutionStore(s => s.evolutions)
+  const resetModel = usePromptEvolutionStore(s => s.resetModel)
+  const resetAll = usePromptEvolutionStore(s => s.resetAll)
+
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="flex justify-between items-center">
+        <h3 className="text-white font-medium">למידה עצמית של AI</h3>
+        {stats.length > 0 && (
+          <button onClick={resetAll} className="text-red-400 text-xs hover:text-red-300">
+            אפס הכל
+          </button>
+        )}
+      </div>
+
+      <p className="text-xs text-gray-500">
+        כל מודל AI משפר את עצמו אוטומטית. ככל שתשתמש יותר, העריכות יהיו טובות יותר.
+      </p>
+
+      {stats.length === 0 ? (
+        <div className="text-center py-8 text-gray-600 text-sm">
+          עוד לא התחילה למידה. ערוך סרטון ראשון!
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {stats.map(stat => (
+            <div key={stat.modelId} className="bg-white/5 rounded-xl p-4">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-white text-sm">{MODEL_NAMES[stat.modelId] || stat.modelId}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">v{stat.version}</span>
+                  <button onClick={() => resetModel(stat.modelId)} className="text-gray-600 hover:text-red-400 text-xs">
+                    אפס
+                  </button>
+                </div>
+              </div>
+
+              {/* Evolution progress bar */}
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-l from-purple-500 to-blue-500 rounded-full transition-all"
+                    style={{ width: `${Math.min(100, stat.additions * 7)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-400">{stat.additions}/15</span>
+              </div>
+
+              {/* Success rate */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-gray-500">הצלחה:</span>
+                <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      stat.successRate > 0.7 ? 'bg-green-500' :
+                      stat.successRate > 0.5 ? 'bg-yellow-500' : 'bg-red-500'
+                    }`}
+                    style={{ width: `${stat.successRate * 100}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-gray-400">{Math.round(stat.successRate * 100)}%</span>
+              </div>
+
+              {/* Show what was learned */}
+              {stat.additions > 0 && (
+                <details className="mt-2">
+                  <summary className="text-[10px] text-purple-400 cursor-pointer hover:text-purple-300">
+                    מה נלמד ({stat.additions} תובנות)
+                  </summary>
+                  <div className="mt-1 space-y-1 pr-2">
+                    {evolutions[stat.modelId]?.additions.map((add, i) => (
+                      <div key={i} className="text-[10px] text-gray-400 flex gap-1">
+                        <span className="text-purple-500">&#x2022;</span>
+                        <span>{add}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Total edits counter */}
+      {stats.length > 0 && (
+        <div className="text-center bg-purple-500/10 rounded-xl p-3">
+          <span className="text-purple-300 text-sm">
+            סה"כ {stats.reduce((s, st) => s + st.version, 0)} מחזורי למידה
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
 
 const PROFILE_PROMPT = `אני עורך וידאו ואני משתמש בתוכנת עריכה עם AI. אני רוצה שתשאל אותי שאלות על סגנון העריכה שלי כדי ליצור פרופיל עריכה מדויק.
 
@@ -501,6 +608,10 @@ ${aiResponse}`,
               )}
             </div>
           </div>
+        )}
+
+        {activeTab === 'ai' && (
+          <AIEvolutionSettings />
         )}
 
         {activeTab === 'subscription' && (

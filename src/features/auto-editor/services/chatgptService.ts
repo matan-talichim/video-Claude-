@@ -1,6 +1,8 @@
 import { useAutoEditorStore, type AutoEditorInput } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
+import { usePromptEvolutionStore } from '../../../stores/promptEvolutionStore'
 import type { FullTranscript } from './whisperService'
+import { BASE_CREATIVE_BRIEF_PROMPT, BASE_TECHNICAL_PLAN_PROMPT } from '../constants/basePrompts'
 
 const API_BASE = 'http://localhost:3001/api'
 
@@ -107,6 +109,9 @@ async function getCreativeBrief(
 
   log('שלב 1: הבמאי מנתח את התוכן...')
 
+  // Get evolved prompt for creative brief
+  const evolvedBriefPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('creative_brief', BASE_CREATIVE_BRIEF_PROMPT)
+
   const response = await fetch(`${API_BASE}/auto-editor/creative-brief`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -127,6 +132,7 @@ async function getCreativeBrief(
       detectedType: detectedType || '',
       visualAnalysis: visualAnalysis || null,
       energyAnalysis: energyAnalysis || null,
+      promptEvolution: evolvedBriefPrompt !== BASE_CREATIVE_BRIEF_PROMPT ? evolvedBriefPrompt : undefined,
     }),
   })
 
@@ -136,6 +142,12 @@ async function getCreativeBrief(
   }
 
   const brief = await response.json()
+
+  // Collect prompt improvements from creative brief
+  if (brief._promptImprovements?.length > 0) {
+    usePromptEvolutionStore.getState().recordEvolution('creative_brief', brief._promptImprovements)
+    log(`[למידה] תכנון קריאטיבי למד ${brief._promptImprovements.length} תובנות חדשות`)
+  }
 
   log(`במאי: "${brief.creative_brief?.main_message || 'מנתח...'}"`)
   log(`רגש יעד: ${brief.creative_brief?.target_emotion || 'לא ידוע'}`)
@@ -157,6 +169,9 @@ async function getTechnicalPlan(
 
   log('שלב 2: העורך מתכנן חיתוכים מדויקים...')
 
+  // Get evolved prompt for technical plan
+  const evolvedPlanPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('technical_plan', BASE_TECHNICAL_PLAN_PROMPT)
+
   const response = await fetch(`${API_BASE}/auto-editor/technical-plan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -174,6 +189,7 @@ async function getTechnicalPlan(
       },
       targetDuration: input.targetDuration,
       platforms: input.platforms,
+      promptEvolution: evolvedPlanPrompt !== BASE_TECHNICAL_PLAN_PROMPT ? evolvedPlanPrompt : undefined,
     }),
   })
 
@@ -182,7 +198,15 @@ async function getTechnicalPlan(
     throw new Error(`שגיאת Technical Plan: ${err.message || response.statusText}`)
   }
 
-  return await response.json()
+  const result = await response.json()
+
+  // Collect prompt improvements from technical plan
+  if (result._promptImprovements?.length > 0) {
+    usePromptEvolutionStore.getState().recordEvolution('technical_plan', result._promptImprovements)
+    log(`[למידה] תכנון טכני למד ${result._promptImprovements.length} תובנות חדשות`)
+  }
+
+  return result
 }
 
 // Normalize technical plan response to EditingPlan format
