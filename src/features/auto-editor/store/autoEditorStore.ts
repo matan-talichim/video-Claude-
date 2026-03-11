@@ -23,6 +23,9 @@ export interface PlatformFile {
 export interface VideoResult {
   videoIndex: number
   files: PlatformFile[]
+  optimalDuration?: number
+  durationReasoning?: string
+  recommendedPlatform?: string
 }
 
 // Keep old type for backward compat

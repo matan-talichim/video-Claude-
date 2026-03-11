@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { Download, Play, PartyPopper, X } from 'lucide-react'
 import { useAutoEditorStore, type VideoResult, type PlatformFile } from '../store/autoEditorStore'
+import { useProjectsStore } from '../../../stores/projectsStore'
 
 interface ExportScreenProps {
   onReset: () => void
@@ -104,6 +105,16 @@ function VideoCard({ video, file, onPreview }: VideoCardProps) {
         </div>
       </div>
 
+      {/* AI duration info */}
+      {video.optimalDuration && (
+        <div className="text-xs text-gray-400 mb-2">
+          {video.optimalDuration}שנ {video.recommendedPlatform && `• ${video.recommendedPlatform}`}
+          {video.durationReasoning && (
+            <span className="text-gray-600 block mt-0.5">💡 {video.durationReasoning}</span>
+          )}
+        </div>
+      )}
+
       {/* Thumbnail with play overlay */}
       <div
         className="relative rounded-lg overflow-hidden bg-black aspect-video mb-3 cursor-pointer group"
@@ -144,6 +155,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
 
   const [previewFile, setPreviewFile] = useState<{ file: PlatformFile; videoIndex: number } | null>(null)
   const [selectedVideoIdx, setSelectedVideoIdx] = useState(0)
+  const [openingEditor, setOpeningEditor] = useState(false)
 
   // Use processedVideos (new format) if available, otherwise fallback to legacy results
   const videos: VideoResult[] = processedVideos || []
@@ -170,6 +182,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
   if (videos.length === 0) return null
 
   const totalFiles = videos.reduce((sum, v) => sum + v.files.length, 0)
+  const isAiDuration = input?.targetDuration === -1
 
   const handleDownloadSelected = () => {
     const selectedVideo = videos[selectedVideoIdx]
@@ -193,6 +206,59 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
     })
   }
 
+  const openInMainEditor = async () => {
+    setOpeningEditor(true)
+
+    try {
+      const projectName = `עריכה אוטומטית - ${new Date().toLocaleDateString('he-IL')}`
+      const videoFiles: Array<{ file: File; blobUrl: string; mediaType: 'video' | 'audio' }> = []
+
+      for (const videoResult of videos) {
+        const mainFile = videoResult.files[0]
+        if (!mainFile) continue
+
+        const response = await fetch(mainFile.url)
+        const blob = await response.blob()
+        const file = new File([blob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
+        const blobUrl = URL.createObjectURL(blob)
+
+        videoFiles.push({
+          file,
+          blobUrl,
+          mediaType: 'video',
+        })
+      }
+
+      const projectsStore = useProjectsStore.getState()
+      const projectId = projectsStore.addProject({
+        name: projectName,
+        source: 'upload',
+        videos: videoFiles,
+      })
+
+      // Store all platform versions as edited files
+      const editedFiles = videos.flatMap(video =>
+        video.files.map(file => ({
+          id: crypto.randomUUID(),
+          name: `סרטון ${video.videoIndex} - ${PLATFORM_LABELS[file.platform] || file.platform}`,
+          format: file.ratio,
+          platform: file.platform,
+          blobUrl: file.url,
+          createdAt: new Date(),
+          appliedEdits: ['עריכה אוטומטית'],
+        }))
+      )
+      const editorStore = useAutoEditorStore.getState()
+      editorStore.setEditedFiles(editedFiles)
+
+      window.location.href = `/editor/${projectId}`
+    } catch (error) {
+      console.error('Failed to open in editor:', error)
+    }
+
+    setOpeningEditor(false)
+  }
+
   return (
     <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto">
       <div className="min-h-screen flex flex-col items-center py-8 px-4 max-w-4xl mx-auto space-y-6 animate-fade-in" dir="rtl">
@@ -205,9 +271,24 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
             הסרטונים מוכנים!
           </h2>
           <p className="text-sm text-text-muted">
-            {videos.length} סרטונים | {totalFiles} קבצים | {input?.targetDuration} שניות כל אחד
+            {videos.length} סרטונים | {totalFiles} קבצים{isAiDuration ? '' : ` | ${input?.targetDuration} שניות כל אחד`}
           </p>
         </div>
+
+        {/* AI Duration reasoning */}
+        {isAiDuration && videos.some(v => v.optimalDuration) && (
+          <div className="w-full bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+            <h4 className="text-purple-300 text-sm font-medium mb-2">🤖 AI בחר את האורך:</h4>
+            {videos.map(v => (
+              <div key={v.videoIndex} className="text-xs text-gray-400 mb-1">
+                <span className="text-white">סרטון {v.videoIndex}: {v.optimalDuration} שניות</span>
+                {v.durationReasoning && (
+                  <span className="text-gray-500"> — {v.durationReasoning}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Video tabs */}
         {videos.length > 1 && (
@@ -247,31 +328,44 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
           </div>
         )}
 
-        {/* Export buttons */}
-        <div className="flex items-center gap-3 pt-2 flex-wrap justify-center">
+        {/* Action buttons */}
+        <div className="w-full space-y-3 mt-6">
+          {/* Primary: Open in editor */}
           <button
-            onClick={handleDownloadSelected}
-            className="flex items-center gap-2 px-5 py-3 bg-accent-purple hover:bg-accent-purple/90 rounded-xl text-sm font-medium transition-all shadow-lg shadow-accent-purple/20"
+            onClick={openInMainEditor}
+            disabled={openingEditor}
+            className="w-full bg-purple-600 hover:bg-purple-500 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
           >
-            <Download size={16} />
-            ייצא סרטון נבחר ({videos[selectedVideoIdx]?.files.length || 0} קבצים)
+            {openingEditor ? '⏳ פותח...' : '✏️ פתח בעורך להמשך עריכה'}
           </button>
-          <button
-            onClick={handleDownloadAll}
-            className="flex items-center gap-2 px-5 py-3 bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.06] rounded-xl text-sm font-medium text-text-secondary transition-colors"
-          >
-            <Download size={16} />
-            ייצא הכל ({totalFiles} קבצים)
-          </button>
-        </div>
+          <p className="text-xs text-gray-500 text-center">
+            פתח את הסרטון הערוך בעורך הראשי כדי לבצע התאמות, להוסיף אלמנטים, ולייצא
+          </p>
 
-        {/* Start over */}
-        <div className="text-center pt-2 pb-8">
+          {/* Secondary: Downloads */}
+          <div className="flex items-center gap-3 flex-wrap justify-center">
+            <button
+              onClick={handleDownloadSelected}
+              className="flex items-center gap-2 px-5 py-3 bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.06] rounded-xl text-sm font-medium text-text-secondary transition-colors"
+            >
+              <Download size={16} />
+              הורד סרטון נבחר ({videos[selectedVideoIdx]?.files.length || 0} קבצים)
+            </button>
+            <button
+              onClick={handleDownloadAll}
+              className="flex items-center gap-2 px-5 py-3 bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.06] rounded-xl text-sm font-medium text-text-secondary transition-colors"
+            >
+              <Download size={16} />
+              הורד הכל ({totalFiles} קבצים)
+            </button>
+          </div>
+
+          {/* Tertiary: Start over */}
           <button
             onClick={onReset}
-            className="text-sm text-text-muted hover:text-text-primary transition-colors"
+            className="text-gray-500 hover:text-white text-sm text-center w-full py-2 transition-colors"
           >
-            ← התחל מחדש
+            ← התחל עריכה חדשה
           </button>
         </div>
       </div>

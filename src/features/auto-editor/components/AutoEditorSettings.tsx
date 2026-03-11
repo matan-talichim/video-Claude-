@@ -20,11 +20,13 @@ interface AutoEditorSettingsProps {
 }
 
 const DURATION_OPTIONS = [
-  { value: 15, label: '15 שנ׳' },
-  { value: 30, label: '30 שנ׳' },
-  { value: 60, label: '60 שנ׳' },
-  { value: 90, label: '90 שנ׳' },
-  { value: 0, label: 'מותאם' },
+  { value: 15, label: '15 שנ׳', desc: 'Story / Reel' },
+  { value: 30, label: '30 שנ׳', desc: 'TikTok / Reel' },
+  { value: 60, label: '60 שנ׳', desc: 'Reel / Short' },
+  { value: 90, label: '90 שנ׳', desc: 'YouTube Short' },
+  { value: 180, label: '3 דקות', desc: 'YouTube' },
+  { value: -1, label: '🤖 AI בוחר', desc: 'הזמן האופטימלי' },
+  { value: 0, label: 'מותאם', desc: 'הזן ידנית' },
 ]
 
 const BROLL_OPTIONS: { value: 'seedance' | 'veo'; label: string; desc: string }[] = [
@@ -43,14 +45,178 @@ const PLATFORM_OPTIONS = [
   { id: 'story', name: 'Story', ratio: '9:16', icon: '📲' },
 ]
 
+const PROMPT_PRESETS: Record<string, Array<{ label: string; text: string }>> = {
+  'ניקוי': [
+    { label: '🧹 הסר גמגומים', text: 'הסר את כל הגמגומים והתיקונים העצמיים' },
+    { label: '✂️ הסר מילות מילוי', text: 'הסר את כל מילות המילוי כמו אממ, כאילו, בעצם, נו' },
+    { label: '🔇 קצר שתיקות', text: 'קצר את כל השתיקות הארוכות לשתיקות קצרות וטבעיות' },
+    { label: '🔄 הסר חזרות', text: 'הסר קטעים שבהם הדובר אומר את אותו דבר פעמיים' },
+  ],
+  'ויזואלי': [
+    { label: '🖼 הוסף B-Roll', text: 'הוסף קטעי B-Roll ויזואליים בזמנים שמתארים משהו' },
+    { label: '🎨 שפר צבע', text: 'הוסף color grading סינמטי ומקצועי' },
+    { label: '🔍 הוסף זומים', text: 'הוסף זומים דינמיים על נקודות חשובות' },
+    { label: '📸 מולטי-קאם', text: 'דמה מצלמות מרובות עם החלפת זוויות כל כמה שניות' },
+    { label: '🌅 מעברים חלקים', text: 'הוסף מעברים חלקים בין הקטעים (לא חיתוך קשה)' },
+  ],
+  'טקסט וכתוביות': [
+    { label: '💬 הוסף כתוביות', text: 'הוסף כתוביות מעוצבות בעברית' },
+    { label: '💬 כתוביות קריוקי', text: 'הוסף כתוביות בסגנון קריוקי (מילה-מילה)' },
+    { label: '📝 הוסף כותרות', text: 'הוסף כותרות וגרפיקות על נקודות מפתח' },
+    { label: '🏷 שם דובר', text: 'הוסף שם הדובר בתחתית המסך' },
+  ],
+  'אודיו': [
+    { label: '🎙 הוסף קריינות', text: 'צור קריינות AI מקצועית לסרטון בעברית' },
+    { label: '🎵 הוסף מוזיקה', text: 'הוסף מוזיקת רקע שמתאימה לאווירה' },
+    { label: '🔊 שפר אודיו', text: 'שפר את איכות האודיו, הסר רעשי רקע ואזן עוצמה' },
+    { label: '🎚 הנמך מוזיקה בדיבור', text: 'הנמך אוטומטית את המוזיקה כשמישהו מדבר' },
+  ],
+  'סגנון': [
+    { label: '⚡ קצב מהיר', text: 'עריכה בקצב מהיר עם חיתוכים תכופים, מתאים לרשתות חברתיות' },
+    { label: '🎬 סינמטי', text: 'סגנון סינמטי, קולנועי, עם תאורה חמה ומעברים חלקים' },
+    { label: '🎯 מקצועי', text: 'סגנון מקצועי ונקי, מתאים לעסקים' },
+    { label: '🎉 אנרגטי', text: 'סגנון אנרגטי ושמח עם קצב מהיר ומוזיקה קצבית' },
+    { label: '🧘 רגוע', text: 'סגנון רגוע ואלגנטי, קצב איטי, צבעים רכים' },
+  ],
+  'מבנה': [
+    { label: '🪝 פתיחה חזקה (Hook)', text: 'התחל עם המשפט הכי חזק כדי לעצור גלילה' },
+    { label: '📢 CTA בסוף', text: 'סיים עם קריאה לפעולה ברורה' },
+    { label: '🎬 Intro מונפש', text: 'הוסף כרטיס כותרת מונפש בפתיחה' },
+    { label: '🔚 Outro מונפש', text: 'הוסף כרטיס סיום עם CTA' },
+  ],
+}
+
+const PROMPT_TEMPLATES = [
+  {
+    label: '📱 סרטון TikTok מושלם',
+    text: 'צור סרטון TikTok מושלם: פתיחה עם Hook חזק שעוצר גלילה, קצב מהיר עם חיתוכים כל 3 שניות, B-Roll ויזואלי בכל נקודה שמתארים משהו, כתוביות קריוקי מילה-מילה, מוזיקה אנרגטית ברקע שיורדת בזמן דיבור, זומים דינמיים על נקודות חשובות, הסר את כל הגמגומים והשתיקות, סיים עם CTA ברור'
+  },
+  {
+    label: '💼 סרטון עסקי מקצועי',
+    text: 'צור סרטון עסקי מקצועי: סגנון נקי ומינימליסטי, color grading חם, כתוביות קלאסיות, מוזיקה תאגידית שקטה, B-Roll של משרד מודרני, הסר גמגומים ושתיקות, הוסף שם הדובר בתחתית, מעברים חלקים, קצב בינוני'
+  },
+  {
+    label: '🎓 סרטון הדרכה',
+    text: 'צור סרטון הדרכה ברור: כתוביות גדולות וברורות, הדגשת נקודות מפתח עם גרפיקה, B-Roll כשמתארים תהליכים, קצב בינוני-איטי, מוזיקה רגועה ברקע, חלוקה לפרקים, הסר גמגומים ושתיקות מיותרות'
+  },
+  {
+    label: '🎤 פודקאסט / ראיון',
+    text: 'ערוך פודקאסט/ראיון: הסר את כל הגמגומים, השתיקות הארוכות והחזרות. דמה מולטי-קאם עם החלפת זוויות. הוסף שמות דוברים. כתוביות מודרניות. מוזיקת רקע שקטה. שיפור אודיו מקצועי'
+  },
+  {
+    label: '📸 Instagram Reels',
+    text: 'צור Reels מושלם: פורמט 9:16, פתיחה עם Hook תוך שנייה, B-Roll דינמי כל 4 שניות, כתוביות קריוקי צבעוניות, מוזיקה טרנדית, זומים מהירים, מעברים אנרגטיים, color grading חי וצבעוני, קצב מהיר מאוד'
+  },
+]
+
+async function expandPromptWithAI(shortPrompt: string): Promise<string> {
+  const response = await fetch('http://localhost:3001/api/auto-editor/expand-prompt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: shortPrompt }),
+  })
+  const data = await response.json()
+  return data.expandedPrompt
+}
+
+function PromptBuilder({ prompt, setPrompt }: { prompt: string; setPrompt: (p: string) => void }) {
+  const [expanding, setExpanding] = useState(false)
+  const [showOriginal, setShowOriginal] = useState(false)
+  const [originalPrompt, setOriginalPrompt] = useState('')
+
+  const addToPrompt = (text: string) => {
+    const separator = prompt.trim() ? '. ' : ''
+    setPrompt(prompt + separator + text)
+  }
+
+  const expandWithAI = async () => {
+    if (!prompt.trim()) return
+    setExpanding(true)
+    setOriginalPrompt(prompt)
+
+    try {
+      const expanded = await expandPromptWithAI(prompt)
+      setPrompt(expanded)
+      setShowOriginal(true)
+    } catch (e) {
+      console.error('Expand failed:', e)
+    }
+
+    setExpanding(false)
+  }
+
+  return (
+    <div dir="rtl" className="space-y-4">
+      {/* Full templates */}
+      <div>
+        <h4 className="text-sm font-medium text-purple-400 mb-2">🎬 תבניות מוכנות:</h4>
+        <div className="flex flex-wrap gap-2">
+          {PROMPT_TEMPLATES.map(t => (
+            <button key={t.label} onClick={() => setPrompt(t.text)}
+              className="bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs px-3 py-1.5 rounded-full hover:bg-purple-500/25 transition">
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Category chips */}
+      {Object.entries(PROMPT_PRESETS).map(([category, chips]) => (
+        <div key={category}>
+          <h4 className="text-sm font-medium text-gray-400 mb-2">{category}:</h4>
+          <div className="flex flex-wrap gap-2">
+            {chips.map(chip => (
+              <button key={chip.label} onClick={() => addToPrompt(chip.text)}
+                className="bg-white/5 border border-white/10 text-gray-300 text-xs px-3 py-1.5 rounded-full hover:bg-white/10 hover:border-purple-500/30 transition">
+                {chip.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Prompt textarea */}
+      <div>
+        <div className="flex justify-between items-center mb-2">
+          <h4 className="text-sm font-medium text-white">✍️ הפרומפט שלך:</h4>
+          {prompt && (
+            <button onClick={() => { setPrompt(''); setShowOriginal(false) }} className="text-xs text-gray-500 hover:text-red-400">
+              🗑 נקה
+            </button>
+          )}
+        </div>
+        <textarea
+          value={prompt}
+          onChange={e => setPrompt(e.target.value)}
+          placeholder="תאר איך אתה רוצה את הסרטון... או לחץ על הצ'יפים למעלה לבניית הפרומפט"
+          className="w-full h-32 bg-black/30 text-white rounded-xl p-4 text-sm resize-none border border-white/10 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition"
+          dir="rtl"
+        />
+        <div className="flex justify-between mt-2">
+          <span className="text-xs text-gray-500">{prompt.length} תווים</span>
+          <button onClick={expandWithAI} disabled={!prompt.trim() || expanding}
+            className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+            {expanding ? '⏳ מרחיב...' : '✨ הרחב עם AI'}
+          </button>
+        </div>
+        {showOriginal && (
+          <button onClick={() => { setPrompt(originalPrompt); setShowOriginal(false) }}
+            className="text-xs text-gray-500 hover:text-white mt-1">
+            ↩ חזור לפרומפט המקורי
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function estimateDuration(files: LocalFile[]): number {
-  // Rough estimate: ~1 minute per 10MB for video
   const totalBytes = files.reduce((sum, f) => sum + f.sizeBytes, 0)
   return Math.round(totalBytes / (10 * 1024 * 1024)) * 60
 }
 
 function estimateMaxVideos(files: LocalFile[], targetDuration: number): number {
-  if (targetDuration === 0) return 1
+  if (targetDuration <= 0) return 1
   const estimated = estimateDuration(files)
   const available = estimated * 0.7
   return Math.max(1, Math.floor(available / targetDuration))
@@ -108,7 +274,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
   }
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto flex items-center justify-center">
+    <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto flex items-start justify-center">
       <div className="w-full max-w-2xl mx-auto p-8 relative" dir="rtl">
         {/* Close button */}
         <button
@@ -159,19 +325,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
             </div>
           </div>
 
-          {/* Prompt */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-text-primary block">
-              תאר איך אתה רוצה את הסרטון:
-            </label>
-            <textarea
-              value={userPrompt}
-              onChange={(e) => setUserPrompt(e.target.value)}
-              placeholder="לדוגמה: סרטון אנרגטי על שירות X, קצבי, ויב מודרני, מותאם לרשתות חברתיות..."
-              rows={3}
-              className="w-full px-4 py-3 bg-white/[0.03] rounded-xl border border-white/[0.06] text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-purple/40 resize-none transition-colors"
-            />
-          </div>
+          {/* Prompt Builder with chips */}
+          <PromptBuilder prompt={userPrompt} setPrompt={setUserPrompt} />
 
           {/* Platform selection */}
           <div className="space-y-3">
@@ -200,73 +355,89 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
             )}
           </div>
 
-          {/* Duration & Video count grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Duration */}
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-text-primary block">אורך כל סרטון:</label>
-              <div className="flex flex-wrap gap-2">
-                {DURATION_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setTargetDuration(opt.value)}
-                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-                      targetDuration === opt.value
-                        ? 'bg-accent-purple text-white shadow-lg shadow-accent-purple/20'
-                        : 'bg-white/[0.04] text-text-secondary hover:bg-white/[0.08] border border-white/[0.06]'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              {targetDuration === 0 && (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    value={customDuration}
-                    onChange={(e) => setCustomDuration(e.target.value)}
-                    placeholder="מספר שניות"
-                    min={5}
-                    max={300}
-                    className="w-32 px-3 py-2 bg-white/[0.03] rounded-xl border border-white/[0.06] text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-purple/40 transition-colors"
-                  />
-                  <span className="text-sm text-text-muted">שניות</span>
-                </div>
-              )}
+          {/* Duration selection */}
+          <div className="space-y-3">
+            <h4 className="text-sm font-medium text-text-primary">⏱ אורך כל סרטון:</h4>
+            <div className="grid grid-cols-3 gap-2">
+              {DURATION_OPTIONS.map(option => (
+                <button
+                  key={option.value}
+                  onClick={() => setTargetDuration(option.value)}
+                  className={`p-3 rounded-xl border text-center transition ${
+                    targetDuration === option.value
+                      ? 'border-purple-500 bg-purple-500/15'
+                      : 'border-white/10 bg-white/5 hover:border-white/20'
+                  }`}
+                >
+                  <div className="text-white font-medium text-sm">{option.label}</div>
+                  <div className="text-gray-500 text-xs">{option.desc}</div>
+                </button>
+              ))}
             </div>
 
-            {/* Number of videos */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-text-primary">כמה סרטונים?</label>
-                <span className="text-xs text-text-muted">
-                  (מקסימום: {maxVideos})
-                </span>
+            {/* Custom duration input */}
+            {targetDuration === 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">מותאם:</span>
+                <input
+                  type="number"
+                  value={customDuration}
+                  onChange={(e) => setCustomDuration(e.target.value)}
+                  placeholder="מספר שניות"
+                  min={5}
+                  max={600}
+                  className="w-32 px-3 py-2 bg-white/[0.03] rounded-xl border border-white/[0.06] text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-purple/40 transition-colors"
+                />
+                <span className="text-sm text-text-muted">שניות</span>
               </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setNumberOfVideos(Math.max(1, numberOfVideos - 1))}
-                  className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.06] text-text-secondary hover:bg-white/[0.08] transition-colors flex items-center justify-center text-lg font-bold"
-                >
-                  −
-                </button>
-                <div className="w-16 h-10 rounded-xl bg-white/[0.06] border border-accent-purple/30 flex items-center justify-center">
-                  <span className="text-lg font-bold text-accent-purple">{numberOfVideos}</span>
-                </div>
-                <button
-                  onClick={() => setNumberOfVideos(Math.min(20, numberOfVideos + 1))}
-                  className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.06] text-text-secondary hover:bg-white/[0.08] transition-colors flex items-center justify-center text-lg font-bold"
-                >
-                  +
-                </button>
-              </div>
-              {numberOfVideos > maxVideos && (
-                <p className="text-xs text-yellow-400">
-                  ייתכן שאין מספיק חומר עבור {numberOfVideos} סרטונים. מומלץ עד {maxVideos}.
+            )}
+
+            {/* AI explanation when selected */}
+            {targetDuration === -1 && (
+              <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 mt-2">
+                <p className="text-purple-300 text-sm">
+                  🤖 ה-AI ינתח את התוכן ויבחר את האורך האופטימלי לכל סרטון:
                 </p>
-              )}
+                <ul className="text-gray-400 text-xs mt-2 space-y-1">
+                  <li>• מנתח את קצב הדיבור וצפיפות התוכן</li>
+                  <li>• מזהה נקודות פתיחה וסגירה טבעיות</li>
+                  <li>• מתאים את האורך לפלטפורמה שנבחרה</li>
+                  <li>• מוודא שכל סרטון מספר סיפור שלם</li>
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* Number of videos */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-text-primary">כמה סרטונים?</label>
+              <span className="text-xs text-text-muted">
+                (מקסימום: {maxVideos})
+              </span>
             </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setNumberOfVideos(Math.max(1, numberOfVideos - 1))}
+                className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.06] text-text-secondary hover:bg-white/[0.08] transition-colors flex items-center justify-center text-lg font-bold"
+              >
+                −
+              </button>
+              <div className="w-16 h-10 rounded-xl bg-white/[0.06] border border-accent-purple/30 flex items-center justify-center">
+                <span className="text-lg font-bold text-accent-purple">{numberOfVideos}</span>
+              </div>
+              <button
+                onClick={() => setNumberOfVideos(Math.min(20, numberOfVideos + 1))}
+                className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.06] text-text-secondary hover:bg-white/[0.08] transition-colors flex items-center justify-center text-lg font-bold"
+              >
+                +
+              </button>
+            </div>
+            {numberOfVideos > maxVideos && (
+              <p className="text-xs text-yellow-400">
+                ייתכן שאין מספיק חומר עבור {numberOfVideos} סרטונים. מומלץ עד {maxVideos}.
+              </p>
+            )}
           </div>
 
           {/* B-Roll generator */}
