@@ -10,6 +10,7 @@ export interface VideoPlan {
   cuts: Array<{ keepStart: number; keepEnd: number }>
   zooms: Array<{ atTime: number; scale: number; duration: number }>
   brollMoments: Array<{ atTime: number; duration: number }>
+  subtitles: Array<{ start: number; end: number; text: string }>
   musicStyle: string
   overallVibe: string
 }
@@ -23,24 +24,68 @@ export interface EditingPlan {
   }
 }
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(targetDuration: number): string {
   const userProfile = useUserProfileStore.getState().getProfileForPrompt()
 
-  return `אתה עורך וידאו מקצועי לרשתות חברתיות.
+  return `אתה עורך וידאו מקצועי. אתה מקבל תמלול של סרטון ומחזיר תוכנית עריכה מדויקת.
 
-SOP:
-- הסר שתיקות מעל 0.3 שניות
-- הסר גמגומים ותיקונים עצמיים
-- זום עדין כל 5-7 משפטים
-- B-Roll כשיש תיאור ויזואלי (3-5 שניות לקטע)
-- מוזיקה שקטה מהדיבור תמיד
+חוקים:
+1. כל סרטון חייב להיות באורך היעד (${targetDuration} שניות ± 3 שניות)
+2. בחר את הקטעים הכי טובים מהתמלול
+3. הסר שתיקות מעל 0.5 שניות
+4. הסר גמגומים ותיקונים עצמיים
+5. כל סרטון צריך להתחיל ולהסתיים בנקודה טבעית
+6. כל סרטון עצמאי ומובן בפני עצמו
 
 חוקי חלוקה:
 - כל סרטון מתחיל ומסיים בנקודה טבעית
 - כל סרטון עצמאי ומובן לבד
 - אם יש עודף חומר — בחר הקטעים הטובים
+- זום עדין כל 5-7 משפטים
+- B-Roll כשיש תיאור ויזואלי (3-5 שניות לקטע)
+
+חשוב מאוד: ה-cuts חייבים להיות מדויקים!
+- keep_start: הזמן שבו מתחילים לשמור (בשניות מתחילת הסרטון המקורי)
+- keep_end: הזמן שבו מפסיקים לשמור
+- סכום כל ה-(keep_end - keep_start) חייב להיות בדיוק ${targetDuration} שניות
+- cuts הם הקטעים שנשמרים (לא הקטעים שנמחקים)
+
 ${userProfile ? '\n' + userProfile + '\nחשוב: אם יש פרופיל משתמש למעלה, התאם את העריכה להעדפות שלו.\nאם הוא לא אוהב הסרת מילות מילוי - אל תסיר.\nאם הוא אוהב הרבה B-Roll - הוסף יותר.\nאם הוא מעדיף פורמט מסוים - השתמש בו.\n' : ''}
-החזר JSON בלבד. ללא טקסט נוסף. ללא markdown.`
+החזר JSON בלבד:
+{
+  "videos": [
+    {
+      "video_index": 1,
+      "source_file": 0,
+      "title": "כותרת קצרה לסרטון",
+      "cuts": [
+        { "keep_start": 0.0, "keep_end": 8.5 },
+        { "keep_start": 12.3, "keep_end": 25.7 },
+        { "keep_start": 30.0, "keep_end": 36.0 }
+      ],
+      "subtitles": [
+        { "start": 0.0, "end": 2.5, "text": "טקסט כתובית" }
+      ],
+      "zooms": [
+        { "at_time": 5.0, "scale": 1.05, "duration": 0.5 }
+      ],
+      "broll_moments": [
+        { "at_time": 12.0, "duration": 3, "prompt": "תיאור לB-Roll" }
+      ]
+    }
+  ],
+  "prompts": {
+    "background_image": "prompt for background",
+    "broll": [{ "prompt": "scene description", "duration": 3 }],
+    "music_search": "search term for music"
+  }
+}
+
+חשוב:
+- cuts הם הקטעים שנשמרים (לא הקטעים שנמחקים)
+- הסכום של כל ה-cuts חייב להיות ${targetDuration} שניות
+- subtitles הם הכתוביות שיוצגו בסרטון הסופי (עם timestamps יחסיים לסרטון המקורי)
+- ללא טקסט נוסף. ללא markdown.`
 }
 
 export async function planWithChatGPT(
@@ -69,7 +114,7 @@ export async function planWithChatGPT(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      systemPrompt: buildSystemPrompt(),
+      systemPrompt: buildSystemPrompt(input.targetDuration),
       userMessage,
       temperature: 0.7,
     }),
@@ -113,6 +158,11 @@ export async function planWithChatGPT(
         atTime: b.at_time ?? b.atTime,
         duration: b.duration,
       })),
+      subtitles: (v.subtitles || []).map((s: any) => ({
+        start: s.start,
+        end: s.end,
+        text: s.text,
+      })),
       musicStyle: v.music_style ?? v.musicStyle ?? '',
       overallVibe: v.overall_vibe ?? v.overallVibe ?? '',
     })),
@@ -125,6 +175,21 @@ export async function planWithChatGPT(
       })),
       musicSearch: parsed.prompts?.music_search ?? parsed.prompts?.musicSearch ?? '',
     },
+  }
+
+  // Validate cuts sum to approximately target duration
+  for (const video of plan.videos) {
+    const totalCutDuration = video.cuts.reduce((sum, c) => sum + (c.keepEnd - c.keepStart), 0)
+    log(`סרטון ${video.videoIndex}: סך חיתוכים = ${totalCutDuration.toFixed(1)}s (יעד: ${input.targetDuration}s)`)
+
+    // If no cuts, create a default cut to target duration
+    if (video.cuts.length === 0) {
+      video.cuts.push({
+        keepStart: 0,
+        keepEnd: Math.min(input.targetDuration, transcript.totalDuration),
+      })
+      log(`סרטון ${video.videoIndex}: נוצר חיתוך ברירת מחדל`)
+    }
   }
 
   return plan

@@ -11,6 +11,21 @@ export type AutoEditorStep =
   | 'done'
   | 'error'
 
+export interface PlatformFile {
+  platform: string
+  ratio: string
+  resolution: string
+  filename: string
+  url: string
+  sizeMB: number
+}
+
+export interface VideoResult {
+  videoIndex: number
+  files: PlatformFile[]
+}
+
+// Keep old type for backward compat
 export interface ExportResult {
   videoIndex: number
   platform: string
@@ -26,15 +41,28 @@ export interface AutoEditorInput {
   targetDuration: number
   numberOfVideos: number
   brollGenerator: 'seedance' | 'veo'
+  platforms: string[]
+}
+
+export interface EditedFile {
+  id: string
+  name: string
+  format: string
+  platform: string
+  blobUrl: string
+  createdAt: Date
+  appliedEdits: string[]
 }
 
 interface AutoEditorStore {
   // State
   step: AutoEditorStep
-  progress: { current: number; total: number }
+  progress: { current: number; total: number; label?: string }
   error: string | null
   results: ExportResult[] | null
+  processedVideos: VideoResult[] | null
   logs: string[]
+  editedFiles: EditedFile[]
 
   // Input saved for reference
   input: AutoEditorInput | null
@@ -49,24 +77,28 @@ interface AutoEditorStore {
 
   // Actions
   setStep: (step: AutoEditorStep) => void
-  setProgress: (p: { current: number; total: number }) => void
+  setProgress: (p: { current: number; total: number; label?: string }) => void
   setError: (msg: string) => void
   setResults: (r: ExportResult[]) => void
+  setProcessedVideos: (v: VideoResult[]) => void
   addLog: (msg: string) => void
   setInput: (input: AutoEditorInput) => void
   setCachedTranscript: (t: any) => void
   setCachedEditingPlan: (p: any) => void
   setCachedAssets: (a: { backgroundImage: string; brollClips: string[]; music: string }) => void
   markStepCompleted: (step: AutoEditorStep) => void
+  setEditedFiles: (files: EditedFile[]) => void
   reset: () => void
 }
 
 const initialState = {
   step: 'idle' as AutoEditorStep,
-  progress: { current: 0, total: 0 },
+  progress: { current: 0, total: 0 } as { current: number; total: number; label?: string },
   error: null as string | null,
   results: null as ExportResult[] | null,
+  processedVideos: null as VideoResult[] | null,
   logs: [] as string[],
+  editedFiles: [] as EditedFile[],
   input: null as AutoEditorInput | null,
   cachedTranscript: null as any | null,
   cachedEditingPlan: null as any | null,
@@ -94,6 +126,7 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
   },
 
   setResults: (results) => set({ results }),
+  setProcessedVideos: (processedVideos) => set({ processedVideos }),
 
   addLog: (msg) => {
     const timestamp = new Date().toLocaleTimeString('he-IL')
@@ -113,6 +146,8 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
         : [...s.completedSteps, step],
     }))
   },
+
+  setEditedFiles: (editedFiles) => set({ editedFiles }),
 
   reset: () => set(initialState),
 }))

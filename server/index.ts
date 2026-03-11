@@ -2160,62 +2160,310 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
 // ==================== AUTO-EDITOR: VIDEO PROCESSING ====================
 
+function formatSrtTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  const ms = Math.floor((seconds % 1) * 1000)
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`
+}
+
+// Legacy endpoint kept for backward compat
 app.post('/api/auto-editor/process-video', async (req, res) => {
+  // Redirect to new process endpoint
+  req.url = '/api/auto-editor/process'
+  req.body = {
+    videoUrl: req.body.sourceUrls?.[0] || '',
+    videoPlan: req.body.videoPlan || {},
+    targetDuration: 60,
+    platforms: ['tiktok'],
+    musicUrl: req.body.music || null,
+    backgroundImage: req.body.backgroundImage || null,
+  }
+  // Forward to main handler
+  return (app as any).handle(req, res)
+})
+
+// Main processing endpoint: cuts, color grades, cleans audio, adds music, subtitles, exports per platform
+app.post('/api/auto-editor/process', async (req, res) => {
   try {
-    const { videoPlan, backgroundImage, brollClips, music, sourceUrls, filters } = req.body
+    const {
+      videoUrl,
+      videoPlan,
+      targetDuration,
+      platforms,
+      musicUrl,
+      backgroundImage,
+    } = req.body
 
-    if (!videoPlan || !sourceUrls?.length) {
-      return res.status(400).json({ message: 'חסרים נתונים לעיבוד הסרטון' })
+    const ffmpegPath = getFFmpeg()
+    const timestamp = Date.now()
+
+    // Resolve source file path
+    let sourceFile: string
+    if (videoUrl && videoUrl.includes('localhost')) {
+      const urlPath = new URL(videoUrl, `http://localhost:${PORT}`).pathname
+      const filename = path.basename(urlPath)
+      sourceFile = path.join(uploadsDir, filename)
+    } else if (videoUrl && videoUrl.startsWith('/uploads/')) {
+      sourceFile = path.join(uploadsDir, path.basename(videoUrl))
+    } else if (videoUrl) {
+      // Download remote file
+      const response = await fetch(videoUrl)
+      const buffer = Buffer.from(await response.arrayBuffer())
+      sourceFile = path.join(uploadsDir, `source_${timestamp}.mp4`)
+      fs.writeFileSync(sourceFile, buffer)
+    } else {
+      return res.status(400).json({ message: 'חסר videoUrl' })
     }
 
-    const ffmpeg = getFFmpeg()
-    const outputPath = path.join(uploadsDir, `auto-edited-${Date.now()}.mp4`)
-
-    // Build FFmpeg filter combining: cuts + color grade + subtitles + audio cleanup
-    const inputFile = sourceUrls[0].replace(`http://localhost:${PORT}/uploads/`, '')
-    const inputPath = path.join(uploadsDir, inputFile.split('/').pop() || inputFile)
-
-    if (!fs.existsSync(inputPath)) {
-      return res.status(404).json({ message: 'קובץ המקור לא נמצא בשרת' })
+    if (!fs.existsSync(sourceFile)) {
+      return res.status(400).json({ message: 'קובץ המקור לא נמצא: ' + sourceFile })
     }
 
-    // Apply cuts and color grading with a single FFmpeg command
-    const cutFilters = (filters?.cuts || []).map((c: any, i: number) =>
-      `between(t,${c.startTime},${c.endTime})`
-    ).join('+')
+    console.log('[PROCESS] Source file:', sourceFile)
 
-    const selectFilter = cutFilters ? `select='${cutFilters}',setpts=N/FRAME_RATE/TB` : ''
-    const colorFilter = filters?.colorGrade || ''
-    const audioCleanup = filters?.audioCleanup || ''
+    const outputFiles: any[] = []
 
-    const vfParts = [selectFilter, colorFilter].filter(Boolean).join(',')
-    const afParts = [cutFilters ? `aselect='${cutFilters}',asetpts=N/SR/TB` : '', audioCleanup].filter(Boolean).join(',')
+    // ============================================
+    // STEP 1: CUT VIDEO ACCORDING TO PLAN
+    // ============================================
 
-    const vf = vfParts ? `-vf "${vfParts}"` : ''
-    const af = afParts ? `-af "${afParts}"` : ''
+    // Normalize cuts from camelCase or snake_case
+    let cuts = (videoPlan?.cuts || []).map((c: any) => ({
+      keep_start: c.keep_start ?? c.keepStart ?? 0,
+      keep_end: c.keep_end ?? c.keepEnd ?? targetDuration,
+    }))
 
-    console.log(`[AUTO-EDIT] Processing video ${videoPlan.videoIndex}...`)
+    if (cuts.length === 0) {
+      // If no cuts specified, just trim to target duration
+      cuts.push({ keep_start: 0, keep_end: targetDuration || 60 })
+    }
 
+    // Build FFmpeg filter for concatenating kept segments using trim+concat
+    const cutFilters: string[] = []
+    const concatInputs: string[] = []
+
+    cuts.forEach((cut: any, i: number) => {
+      cutFilters.push(
+        `[0:v]trim=start=${cut.keep_start}:end=${cut.keep_end},setpts=PTS-STARTPTS[v${i}]`
+      )
+      cutFilters.push(
+        `[0:a]atrim=start=${cut.keep_start}:end=${cut.keep_end},asetpts=PTS-STARTPTS[a${i}]`
+      )
+      concatInputs.push(`[v${i}][a${i}]`)
+    })
+
+    const concatFilter = `${concatInputs.join('')}concat=n=${cuts.length}:v=1:a=1[outv][outa]`
+    const fullFilter = [...cutFilters, concatFilter].join(';')
+
+    const cutFile = path.join(uploadsDir, `cut_${timestamp}.mp4`)
+
+    console.log('[PROCESS] Step 1: Cutting video with', cuts.length, 'segments...')
     execSync(
-      `"${ffmpeg}" -i "${inputPath}" ${vf} ${af} -c:v libx264 -preset fast -c:a aac "${outputPath}" -y`,
-      { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+      `"${ffmpegPath}" -i "${sourceFile}" -filter_complex "${fullFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${cutFile}" -y`,
+      { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
     )
+    console.log('[PROCESS] Step 1 done: Cut video created')
 
-    const outputFilename = path.basename(outputPath)
-    console.log(`[AUTO-EDIT] Done: ${outputFilename}`)
+    // ============================================
+    // STEP 2: COLOR GRADE
+    // ============================================
+
+    const gradedFile = path.join(uploadsDir, `graded_${timestamp}.mp4`)
+    console.log('[PROCESS] Step 2: Color grading...')
+    execSync(
+      `"${ffmpegPath}" -i "${cutFile}" -vf "eq=brightness=0.03:contrast=1.05:saturation=1.15" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
+      { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+    console.log('[PROCESS] Step 2 done')
+
+    // ============================================
+    // STEP 3: CLEAN AUDIO
+    // ============================================
+
+    const cleanedFile = path.join(uploadsDir, `cleaned_${timestamp}.mp4`)
+    console.log('[PROCESS] Step 3: Cleaning audio...')
+    execSync(
+      `"${ffmpegPath}" -i "${gradedFile}" -af "highpass=f=80,lowpass=f=8000,afftdn=nf=-25,loudnorm=I=-16:LRA=11:TP=-1.5" -c:v copy "${cleanedFile}" -y`,
+      { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+    console.log('[PROCESS] Step 3 done')
+
+    // ============================================
+    // STEP 4: ADD MUSIC (if provided)
+    // ============================================
+
+    let currentFile = cleanedFile
+
+    if (musicUrl) {
+      try {
+        let musicFile = ''
+        if (musicUrl.includes('localhost')) {
+          const musicFilename = path.basename(new URL(musicUrl, `http://localhost:${PORT}`).pathname)
+          musicFile = path.join(uploadsDir, musicFilename)
+        }
+
+        if (!musicFile || !fs.existsSync(musicFile)) {
+          // Download music file
+          musicFile = path.join(uploadsDir, `music_${timestamp}.mp3`)
+          const musicResponse = await fetch(musicUrl)
+          if (musicResponse.ok) {
+            const musicBuffer = Buffer.from(await musicResponse.arrayBuffer())
+            fs.writeFileSync(musicFile, musicBuffer)
+          }
+        }
+
+        if (fs.existsSync(musicFile)) {
+          const musicMixFile = path.join(uploadsDir, `musicmix_${timestamp}.mp4`)
+          console.log('[PROCESS] Step 4: Adding music...')
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -i "${musicFile}" -filter_complex "[1:a]volume=0.15,aloop=-1:2e+09[music];[0:a][music]amix=inputs=2:duration=first[outa]" -map 0:v -map "[outa]" -c:v copy -c:a aac -b:a 128k -shortest "${musicMixFile}" -y`,
+            { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+          )
+          currentFile = musicMixFile
+          console.log('[PROCESS] Step 4 done')
+
+          // Clean up downloaded music
+          if (musicFile.includes(`music_${timestamp}`)) {
+            try { fs.unlinkSync(musicFile) } catch {}
+          }
+        }
+      } catch (e: any) {
+        console.log('[PROCESS] Music failed, continuing without:', e.message)
+      }
+    }
+
+    // ============================================
+    // STEP 5: GENERATE SUBTITLES SRT
+    // ============================================
+
+    let srtFile: string | null = null
+    const segments = videoPlan?.subtitles || videoPlan?.source_segments || videoPlan?.sourceSegments || []
+    if (segments.length > 0) {
+      srtFile = path.join(uploadsDir, `subs_${timestamp}.srt`)
+      let srtContent = ''
+      let index = 1
+
+      // Recalculate timestamps relative to cut video
+      let currentOffset = 0
+      for (const cut of cuts) {
+        const cutDuration = cut.keep_end - cut.keep_start
+        for (const seg of segments) {
+          const segStart = seg.start ?? seg.keepStart
+          const segEnd = seg.end ?? seg.keepEnd
+          if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
+            const relStart = currentOffset + (segStart - cut.keep_start)
+            const relEnd = currentOffset + (segEnd - cut.keep_start)
+            srtContent += `${index}\n`
+            srtContent += `${formatSrtTime(relStart)} --> ${formatSrtTime(relEnd)}\n`
+            srtContent += `${seg.text}\n\n`
+            index++
+          }
+        }
+        currentOffset += cutDuration
+      }
+
+      if (srtContent.trim()) {
+        fs.writeFileSync(srtFile, srtContent, 'utf8')
+        console.log('[PROCESS] SRT file created with', index - 1, 'subtitles')
+      } else {
+        srtFile = null
+      }
+    }
+
+    // ============================================
+    // STEP 6: EXPORT FOR EACH PLATFORM
+    // ============================================
+
+    const platformSpecs: Record<string, { w: number; h: number; ratio: string }> = {
+      tiktok: { w: 1080, h: 1920, ratio: '9:16' },
+      reels: { w: 1080, h: 1920, ratio: '9:16' },
+      shorts: { w: 1080, h: 1920, ratio: '9:16' },
+      story: { w: 1080, h: 1920, ratio: '9:16' },
+      youtube: { w: 1920, h: 1080, ratio: '16:9' },
+      facebook: { w: 1920, h: 1080, ratio: '16:9' },
+      twitter: { w: 1920, h: 1080, ratio: '16:9' },
+      linkedin: { w: 1080, h: 1080, ratio: '1:1' },
+    }
+
+    const targetPlatforms = platforms || ['tiktok']
+
+    // Group platforms by aspect ratio to avoid re-encoding same ratio
+    const ratioGroups: Record<string, string[]> = {}
+    for (const platform of targetPlatforms) {
+      const spec = platformSpecs[platform]
+      if (!spec) continue
+      if (!ratioGroups[spec.ratio]) ratioGroups[spec.ratio] = []
+      ratioGroups[spec.ratio].push(platform)
+    }
+
+    for (const [ratio, platformList] of Object.entries(ratioGroups)) {
+      const spec = platformSpecs[platformList[0]]
+      const ratioFile = path.join(uploadsDir, `export_${ratio.replace(':', 'x')}_${timestamp}.mp4`)
+
+      console.log(`[PROCESS] Step 6: Exporting ${ratio} for ${platformList.join(', ')}...`)
+
+      // Build scale + pad filter for target aspect ratio
+      let vf = `scale=${spec.w}:${spec.h}:force_original_aspect_ratio=decrease,pad=${spec.w}:${spec.h}:(ow-iw)/2:(oh-ih)/2:black`
+
+      // Add subtitles if available
+      if (srtFile && fs.existsSync(srtFile)) {
+        const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+        vf += `,subtitles='${escapedSrt}':force_style='FontSize=18,Bold=1,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'`
+      }
+
+      execSync(
+        `"${ffmpegPath}" -i "${currentFile}" -vf "${vf}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart "${ratioFile}" -y`,
+        { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+
+      // Copy the same file for each platform with same ratio (don't re-encode)
+      for (const platform of platformList) {
+        const platformFile = path.join(uploadsDir, `final_${platform}_${timestamp}.mp4`)
+        fs.copyFileSync(ratioFile, platformFile)
+
+        // Get file info
+        const stats = fs.statSync(platformFile)
+        const fileSizeMB = (stats.size / 1024 / 1024).toFixed(1)
+
+        outputFiles.push({
+          platform,
+          ratio,
+          resolution: `${spec.w}x${spec.h}`,
+          filename: path.basename(platformFile),
+          url: `http://localhost:${PORT}/uploads/${path.basename(platformFile)}`,
+          sizeMB: parseFloat(fileSizeMB),
+        })
+
+        console.log(`[PROCESS] Created: ${platform} (${ratio}) - ${fileSizeMB}MB`)
+      }
+
+      // Clean up ratio file
+      try { fs.unlinkSync(ratioFile) } catch {}
+    }
+
+    // Cleanup intermediate files
+    try { fs.unlinkSync(cutFile) } catch {}
+    try { fs.unlinkSync(gradedFile) } catch {}
+    try { fs.unlinkSync(cleanedFile) } catch {}
+    if (currentFile !== cleanedFile) try { fs.unlinkSync(currentFile) } catch {}
+    if (srtFile) try { fs.unlinkSync(srtFile) } catch {}
+
+    console.log('[PROCESS] Done! Created', outputFiles.length, 'files')
 
     res.json({
-      url: `http://localhost:${PORT}/uploads/${outputFilename}`,
-      outputUrl: `/uploads/${outputFilename}`,
+      success: true,
+      files: outputFiles,
+      message: `נוצרו ${outputFiles.length} קבצים`,
     })
-  } catch (err: any) {
-    console.error('[AUTO-EDIT ERROR]', err.message)
-    res.status(500).json({ message: 'שגיאה בעיבוד הסרטון: ' + err.message })
+  } catch (error: any) {
+    console.error('[PROCESS ERROR]', error.message)
+    res.status(500).json({ message: 'שגיאה בעיבוד: ' + error.message })
   }
 })
 
-// ==================== AUTO-EDITOR: EXPORT ====================
-
+// Legacy export endpoint
 app.post('/api/auto-editor/export', async (req, res) => {
   try {
     const { videoUrl, platform, width, height, fps, videoIndex } = req.body

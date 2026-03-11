@@ -46,7 +46,7 @@ export default function ProcessingProgress() {
           </h2>
           {step === 'editing' && progress.total > 0 && (
             <p className="text-sm text-text-muted">
-              סרטון {progress.current} מתוך {progress.total}
+              {progress.label || `סרטון ${progress.current} מתוך ${progress.total}`}
             </p>
           )}
         </div>
