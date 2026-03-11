@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Video, Music, Sparkles, Film, ArrowRight } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Video, Music, Sparkles, Film, ArrowRight, X } from 'lucide-react'
 import type { AutoEditorInput } from '../store/autoEditorStore'
 
 interface LocalFile {
@@ -15,6 +15,7 @@ interface AutoEditorSettingsProps {
   files: LocalFile[]
   onStart: (input: Omit<AutoEditorInput, 'videoUrls'>) => void
   onBack: () => void
+  onClose?: () => void
 }
 
 const DURATION_OPTIONS = [
@@ -43,12 +44,22 @@ function estimateMaxVideos(files: LocalFile[], targetDuration: number): number {
   return Math.max(1, Math.floor(available / targetDuration))
 }
 
-export default function AutoEditorSettings({ files, onStart, onBack }: AutoEditorSettingsProps) {
+export default function AutoEditorSettings({ files, onStart, onBack, onClose }: AutoEditorSettingsProps) {
   const [userPrompt, setUserPrompt] = useState('')
   const [targetDuration, setTargetDuration] = useState(60)
   const [customDuration, setCustomDuration] = useState('')
   const [numberOfVideos, setNumberOfVideos] = useState(3)
   const [brollGenerator, setBrollGenerator] = useState<'seedance' | 'veo'>('seedance')
+
+  const closeHandler = onClose || onBack
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeHandler()
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [closeHandler])
 
   const effectiveDuration = targetDuration === 0 ? (parseInt(customDuration) || 60) : targetDuration
   const maxVideos = estimateMaxVideos(files, effectiveDuration)
@@ -63,12 +74,21 @@ export default function AutoEditorSettings({ files, onStart, onBack }: AutoEdito
   }
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto">
-      <div className="min-h-screen flex flex-col items-center py-8 px-4 max-w-3xl mx-auto" dir="rtl">
+    <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto flex items-center justify-center">
+      <div className="w-full max-w-2xl mx-auto p-8 relative" dir="rtl">
         {/* Close button */}
         <button
+          onClick={closeHandler}
+          className="absolute top-6 left-6 text-gray-400 hover:text-white text-xl transition-colors"
+          aria-label="סגור"
+        >
+          <X size={20} />
+        </button>
+
+        {/* Back button */}
+        <button
           onClick={onBack}
-          className="self-start mb-4 flex items-center gap-1 px-3 py-2 text-sm text-text-muted hover:text-text-primary transition-colors rounded-lg hover:bg-white/[0.05]"
+          className="mb-4 flex items-center gap-1 px-3 py-2 text-sm text-text-muted hover:text-text-primary transition-colors rounded-lg hover:bg-white/[0.05]"
         >
           <ArrowRight size={16} />
           חזרה
@@ -79,8 +99,8 @@ export default function AutoEditorSettings({ files, onStart, onBack }: AutoEdito
           <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-accent-purple/20 to-accent-pink/20 flex items-center justify-center border border-accent-purple/20">
             <Sparkles size={28} className="text-accent-purple" />
           </div>
-          <h2 className="text-xl font-bold text-text-primary">עריכה אוטומטית לשיווק</h2>
-          <p className="text-sm text-text-muted">AI יערוך את הסרטונים שלך אוטומטית לפרסום בכל הפלטפורמות</p>
+          <h2 className="text-xl font-bold text-text-primary">עריכה אוטומטית</h2>
+          <p className="text-sm text-text-muted">AI יערוך את הסרטונים שלך אוטומטית</p>
         </div>
 
         <div className="w-full space-y-6">
