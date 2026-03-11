@@ -215,8 +215,36 @@ export interface ColorCorrection {
 }
 
 export interface SelectedCanvasItem {
-  type: 'text' | 'shape' | 'sticker' | 'broll'
+  type: 'text' | 'shape' | 'sticker' | 'broll' | 'video' | 'audio' | 'caption'
   id: string
+}
+
+export interface ProjectVersion {
+  id: string
+  name: string
+  date: number
+  state: {
+    tracks?: unknown
+    projectSize?: { width: number; height: number }
+    captionStyle?: CaptionStyle
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    effects?: Record<string, any>
+  }
+}
+
+export interface GlossaryTerm {
+  source: string
+  target: string
+}
+
+export interface ProjectMediaFile {
+  id: string
+  name: string
+  url: string
+  type: 'video' | 'audio' | 'image'
+  size: number
+  duration?: number
+  file?: File
 }
 
 export interface ChapterMarker {
@@ -294,9 +322,34 @@ interface EditorState {
   speakers: SpeakerInfo[]
   deletedRegions: DeletedRegion[]
   // Editor tool settings
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   editorEffects: Record<string, any>
   // Chapters
   chapters: ChapterMarker[]
+
+  // Project size / aspect ratio
+  projectSize: { width: number; height: number }
+  setProjectSize: (w: number, h: number) => void
+  showSafeZones: boolean
+  setShowSafeZones: (show: boolean) => void
+  bgColor: string
+  setBgColor: (color: string) => void
+
+  // Version history
+  versions: ProjectVersion[]
+  saveVersion: (name?: string) => void
+  restoreVersion: (versionId: string) => void
+
+  // Project media library
+  projectMedia: ProjectMediaFile[]
+  addMediaToProject: (media: ProjectMediaFile) => void
+  removeMediaFromProject: (id: string) => void
+
+  // Translation glossary
+  glossaryTerms: GlossaryTerm[]
+  addGlossaryTerm: () => void
+  updateGlossaryTerm: (index: number, field: 'source' | 'target', value: string) => void
+  removeGlossaryTerm: (index: number) => void
   // Enhanced audio buffer (after processing)
   enhancedAudioBuffer: AudioBuffer | null
   // Applied edits tracking
@@ -544,6 +597,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   deletedRegions: [],
   editorEffects: {},
   chapters: [],
+  projectSize: { width: 1920, height: 1080 },
+  showSafeZones: false,
+  bgColor: '#000000',
+  versions: [],
+  projectMedia: [],
+  glossaryTerms: [],
   enhancedAudioBuffer: null,
   appliedEdits: [],
   editedFiles: [],
@@ -585,6 +644,51 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   setVolume: (volume) => set({ volume }),
+
+  // Project size
+  setProjectSize: (w, h) => set({ projectSize: { width: w, height: h }, isDirty: true }),
+  setShowSafeZones: (show) => set({ showSafeZones: show }),
+  setBgColor: (color) => set({ bgColor: color }),
+
+  // Version history
+  saveVersion: (name) => {
+    const state = get()
+    const version: ProjectVersion = {
+      id: crypto.randomUUID(),
+      name: name || `גרסה ${state.versions.length + 1}`,
+      date: Date.now(),
+      state: {
+        projectSize: state.projectSize,
+        captionStyle: state.captionStyle,
+        effects: state.editorEffects,
+      },
+    }
+    set({ versions: [...state.versions, version] })
+  },
+  restoreVersion: (versionId) => {
+    const version = get().versions.find(v => v.id === versionId)
+    if (version) {
+      const updates: Partial<EditorState> = {}
+      if (version.state.projectSize) updates.projectSize = version.state.projectSize
+      if (version.state.captionStyle) updates.captionStyle = version.state.captionStyle
+      if (version.state.effects) updates.editorEffects = version.state.effects
+      set(updates)
+    }
+  },
+
+  // Project media library
+  addMediaToProject: (media) => set((s) => ({ projectMedia: [...s.projectMedia, media] })),
+  removeMediaFromProject: (id) => set((s) => ({ projectMedia: s.projectMedia.filter(m => m.id !== id) })),
+
+  // Glossary
+  addGlossaryTerm: () => set((s) => ({ glossaryTerms: [...s.glossaryTerms, { source: '', target: '' }] })),
+  updateGlossaryTerm: (index, field, value) => set((s) => ({
+    glossaryTerms: s.glossaryTerms.map((t, i) => i === index ? { ...t, [field]: value } : t),
+  })),
+  removeGlossaryTerm: (index) => set((s) => ({
+    glossaryTerms: s.glossaryTerms.filter((_, i) => i !== index),
+  })),
+
   setMasterVolume: (v) => set({ masterVolume: v }),
   setNoiseReduction: (enabled) => set({ noiseReduction: enabled }),
   setNoiseReductionIntensity: (v) => set({ noiseReductionIntensity: v }),

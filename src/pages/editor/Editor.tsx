@@ -1,67 +1,37 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowRight, Save, Check, FileText, Bot, FolderOpen, Image, Subtitles, Volume2, Settings, Package } from 'lucide-react'
-import EditorToolbar from './EditorToolbar'
-import TranscriptPanel from './TranscriptPanel'
-import VideoPanel from './VideoPanel'
+import { useParams } from 'react-router-dom'
+import TopBar from './TopBar'
+import LeftPanel from './LeftPanel'
+import Canvas from './Canvas'
+import InspectorPanel from './InspectorPanel'
 import TimelinePanel from './TimelinePanel'
-import AISidebar from './AISidebar'
-import CaptionsPanel from './CaptionsPanel'
-import BRollPanel from './BRollPanel'
-import MediaSidebar from './MediaSidebar'
-import AudioPanel from './AudioPanel'
-import ProjectSettingsPanel from './ProjectSettingsPanel'
-import ExportsPanel from './ExportsPanel'
 import EditorModals from './EditorModals'
 import ShortcutsModal from './ShortcutsModal'
-import TextPropertiesPanel from './TextPropertiesPanel'
-import ShapePropertiesPanel from './ShapePropertiesPanel'
-import ColorCorrectionPanel from './ColorCorrectionPanel'
-import SpeedPanel from './SpeedPanel'
-import CropPanel from './CropPanel'
 import ToastContainer from '../../components/Toast'
 import { useEditorStore } from '../../stores/editorStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTimelineStore } from '../../stores/timelineStore'
 import { useUserProfileStore } from '../../stores/userProfileStore'
-
-type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'exports' | 'settings' | 'colorCorrection' | 'speed' | 'crop'
-
-const panelTabs: { id: PanelId; icon: typeof FileText; label: string; tooltip: string }[] = [
-  { id: 'transcript', icon: FileText, label: 'תמלול', tooltip: 'תמלול - עריכת טקסט' },
-  { id: 'ai', icon: Bot, label: 'עוזר AI', tooltip: 'עוזר AI - עריכה חכמה' },
-  { id: 'media', icon: FolderOpen, label: 'קבצים', tooltip: 'קבצים - ניהול מדיה' },
-  { id: 'broll', icon: Image, label: 'B-Roll', tooltip: 'B-Roll - קטעי וידאו משלימים' },
-  { id: 'captions', icon: Subtitles, label: 'כתוביות', tooltip: 'כתוביות - עריכת כתוביות' },
-  { id: 'audio', icon: Volume2, label: 'אודיו', tooltip: 'אודיו - עריכת שמע' },
-  { id: 'exports', icon: Package, label: 'ערוכים', tooltip: 'ערוכים - קבצים מיוצאים' },
-  { id: 'settings', icon: Settings, label: 'הגדרות', tooltip: 'הגדרות - הגדרות הפרויקט' },
-]
+import type { SelectedCanvasItem } from '../../stores/editorStore'
 
 export default function Editor() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
-  const [activePanel, setActivePanel] = useState<PanelId | null>('transcript')
+  const [activeLeftTab, setActiveLeftTab] = useState<string>('media')
   const [timelineExpanded, setTimelineExpanded] = useState(true)
-  const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const { loadProject, projectId, projectName, isDirty, markSaved, mediaBlobUrl, transcript, editHistory, deletedRegions } = useEditorStore()
+  const selectedCanvasItem = useEditorStore((s) => s.selectedCanvasItem)
+  const setSelectedCanvasItem = useEditorStore((s) => s.setSelectedCanvasItem)
   const timelineHeight = useTimelineStore((s) => s.timelineHeight)
   const getProject = useProjectsStore((s) => s.getProject)
   const saveEditorState = useProjectsStore((s) => s.saveEditorState)
 
-  const selectedCanvasItem = useEditorStore((s) => s.selectedCanvasItem)
-  const textOverlays = useEditorStore((s) => s.textOverlays)
-  const shapes = useEditorStore((s) => s.shapes)
-
-  const selectedText = selectedCanvasItem?.type === 'text' ? textOverlays.find((t) => t.id === selectedCanvasItem.id) : null
-  const selectedShape = selectedCanvasItem?.type === 'shape' ? shapes.find((s) => s.id === selectedCanvasItem.id) : null
-
-  const togglePanel = (panelId: PanelId) => {
-    setActivePanel((prev) => (prev === panelId ? null : panelId))
-  }
+  const handleSelect = useCallback((item: SelectedCanvasItem | null) => {
+    setSelectedCanvasItem(item)
+  }, [setSelectedCanvasItem])
 
   // Load project on mount
   useEffect(() => {
@@ -106,7 +76,6 @@ export default function Editor() {
   // Auto-save every 30 seconds
   const doSave = useCallback(() => {
     if (!projectId || !isDirty) return
-    setSaveIndicator('saving')
     saveEditorState(projectId, {
       name: projectName,
       transcript,
@@ -115,10 +84,17 @@ export default function Editor() {
       mediaBlobUrl: mediaBlobUrl ?? undefined,
     })
     markSaved()
-    setTimeout(() => {
-      setSaveIndicator('saved')
-      setTimeout(() => setSaveIndicator('idle'), 2000)
-    }, 300)
+    setLastSaved(new Date())
+
+    // Also save to localStorage for auto-restore
+    const state = useEditorStore.getState()
+    const saveData = {
+      projectSize: state.projectSize,
+      captionStyle: state.captionStyle,
+      effects: state.editorEffects,
+      timestamp: Date.now(),
+    }
+    localStorage.setItem(`project_${projectId}_autosave`, JSON.stringify(saveData))
   }, [projectId, isDirty, projectName, transcript, editHistory, deletedRegions, mediaBlobUrl, saveEditorState, markSaved])
 
   useEffect(() => {
@@ -127,6 +103,26 @@ export default function Editor() {
       if (autoSaveRef.current) clearInterval(autoSaveRef.current)
     }
   }, [doSave])
+
+  // On load, check for autosave
+  useEffect(() => {
+    if (!projectId) return
+    const saved = localStorage.getItem(`project_${projectId}_autosave`)
+    if (saved) {
+      try {
+        const data = JSON.parse(saved)
+        const age = Date.now() - data.timestamp
+        if (age < 86400000) { // Less than 24 hours
+          // Silently restore settings
+          if (data.projectSize) {
+            useEditorStore.getState().setProjectSize(data.projectSize.width, data.projectSize.height)
+          }
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }, [projectId])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -143,48 +139,57 @@ export default function Editor() {
         useUIStore.getState().openModal('export')
         return
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) {
+          useEditorStore.getState().redoLastEdit()
+        } else {
+          useEditorStore.getState().undoLastEdit()
+        }
+        return
+      }
 
-      // Panel shortcuts (only without modifier keys)
       if (e.metaKey || e.ctrlKey || e.altKey) return
-
-      const panelKeys: Record<string, PanelId> = {
-        '1': 'transcript',
-        '2': 'ai',
-        '3': 'media',
-        '4': 'broll',
-        '5': 'captions',
-      }
-
-      if (e.key === '0') {
-        e.preventDefault()
-        setActivePanel(null)
-        return
-      }
-
-      if (panelKeys[e.key]) {
-        e.preventDefault()
-        togglePanel(panelKeys[e.key])
-        return
-      }
 
       if (e.key === 'Escape') {
         e.preventDefault()
-        useEditorStore.getState().setSelectedCanvasItem(null)
+        setSelectedCanvasItem(null)
         return
       }
 
-      if (e.key === 'Tab') {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const selected = useEditorStore.getState().selectedCanvasItem
+        if (selected) {
+          e.preventDefault()
+          if (selected.type === 'text') useEditorStore.getState().removeTextOverlay(selected.id)
+          if (selected.type === 'shape') useEditorStore.getState().removeShape(selected.id)
+          setSelectedCanvasItem(null)
+          return
+        }
+        // Try deleting timeline selection
+        const timelineSelected = useTimelineStore.getState().selectedClipIds
+        if (timelineSelected.length > 0) {
+          e.preventDefault()
+          useTimelineStore.getState().removeSelectedClips()
+          return
+        }
+      }
+
+      if (e.key === ' ') {
         e.preventDefault()
-        setActivePanel((prev) => {
-          if (!prev) return panelTabs[0].id
-          const idx = panelTabs.findIndex((t) => t.id === prev)
-          return panelTabs[(idx + 1) % panelTabs.length].id
-        })
+        useEditorStore.getState().togglePlay()
+        return
+      }
+
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        useEditorStore.getState().splitAtPlayhead()
+        return
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [doSave])
+  }, [doSave, setSelectedCanvasItem])
 
   // Warn on navigate away with unsaved changes
   useEffect(() => {
@@ -197,190 +202,43 @@ export default function Editor() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [isDirty])
 
-  const handleBack = () => {
-    if (isDirty) {
-      const save = window.confirm('יש שינויים שלא נשמרו. לשמור לפני יציאה?')
-      if (save) {
-        doSave()
-      }
-    }
-    navigate('/')
-  }
-
   return (
-    <div className="h-screen flex flex-col bg-bg-deepest text-text-primary overflow-hidden">
-      {/* Top nav */}
-      <div className="flex items-center gap-3 px-4 py-2 glass gradient-border-bottom shrink-0 relative z-20">
-        <button onClick={handleBack} className="flex items-center gap-1 text-sm text-text-muted hover:text-text-primary transition-colors">
-          <ArrowRight size={16} />
-          חזרה
-        </button>
+    <div className="h-screen flex flex-col bg-[#0A0A0F]" dir="rtl">
+      {/* ZONE 1: TOP BAR */}
+      <TopBar lastSaved={lastSaved} onSave={doSave} />
 
-        {/* Save indicator */}
-        <div className="flex items-center gap-1.5 text-xs">
-          {saveIndicator === 'saving' && (
-            <span className="flex items-center gap-1 text-text-muted animate-pulse">
-              <Save size={12} /> שומר...
-            </span>
-          )}
-          {saveIndicator === 'saved' && (
-            <span className="flex items-center gap-1 text-success">
-              <Check size={12} /> נשמר
-            </span>
-          )}
-        </div>
+      {/* MAIN AREA - 3 columns */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* RIGHT SIDEBAR (RTL = first = right) - Add things */}
+        <LeftPanel activeTab={activeLeftTab} setActiveTab={setActiveLeftTab} />
 
-        <div className="flex-1" />
+        {/* CENTER - Canvas + Timeline */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* ZONE 4: CANVAS */}
+          <Canvas selectedItem={selectedCanvasItem} onSelect={handleSelect} />
 
-        {/* Panel shortcut hints */}
-        <div className="flex items-center gap-1 text-[9px] text-text-muted">
-          <span>0: סגור הכל</span>
-          <span className="text-white/10">|</span>
-          <span>1-5: פאנלים</span>
-          <span className="text-white/10">|</span>
-          <span>Tab: הבא</span>
-        </div>
-      </div>
-
-      <EditorToolbar />
-
-      {/* Secondary editing toolbar */}
-      <div className="flex items-center gap-2 px-4 py-1.5 bg-[#12121A] border-b border-white/[0.06] shrink-0" dir="rtl">
-        <span className="text-[10px] text-text-muted ms-2">כלי עריכה:</span>
-        <SecondaryToolButton
-          label="תיקון צבע"
-          emoji="🎨"
-          active={activePanel === 'colorCorrection'}
-          onClick={() => togglePanel('colorCorrection' as PanelId)}
-        />
-        <SecondaryToolButton
-          label="מהירות"
-          emoji="⚡"
-          active={activePanel === 'speed'}
-          onClick={() => togglePanel('speed' as PanelId)}
-        />
-        <SecondaryToolButton
-          label="חיתוך"
-          emoji="✂️"
-          active={activePanel === 'crop'}
-          onClick={() => togglePanel('crop' as PanelId)}
-        />
-      </div>
-
-      {/* Main editor area */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Main content - video + timeline */}
-        <div className="flex-1 flex flex-col overflow-hidden p-2 gap-2">
-          <div className="flex-1 overflow-hidden">
-            <VideoPanel />
-          </div>
-          {timelineExpanded && (
-            <div className="shrink-0 relative" style={{ height: timelineHeight }}>
+          {/* ZONE 5: TIMELINE */}
+          {timelineExpanded ? (
+            <div className="shrink-0 relative border-t border-white/5" style={{ height: timelineHeight }}>
               <TimelinePanel />
             </div>
-          )}
-          {!timelineExpanded && (
+          ) : (
             <button
               onClick={() => setTimelineExpanded(true)}
-              className="h-8 shrink-0 bg-bg-panel rounded-xl border border-white/[0.06] hover:border-white/[0.12] flex items-center justify-center text-text-muted hover:text-text-secondary text-xs transition-colors"
+              className="h-8 shrink-0 bg-[#111118] border-t border-white/5 hover:bg-white/5 flex items-center justify-center text-gray-500 hover:text-gray-300 text-xs transition-colors"
             >
               הצג ציר זמן
             </button>
           )}
         </div>
 
-        {/* Panel content - slides in/out */}
-        {(activePanel || selectedCanvasItem) && (
-          <div className="w-[350px] shrink-0 p-2 animate-slide-in-right overflow-hidden">
-            {/* Properties panels for selected canvas items take priority */}
-            {selectedText && <TextPropertiesPanel text={selectedText} />}
-            {selectedShape && <ShapePropertiesPanel shape={selectedShape} />}
-            {!selectedCanvasItem && activePanel === 'transcript' && <TranscriptPanel />}
-            {!selectedCanvasItem && activePanel === 'ai' && <AISidebar onClose={() => setActivePanel(null)} />}
-            {!selectedCanvasItem && activePanel === 'media' && id && <MediaSidebar projectId={id} onClose={() => setActivePanel(null)} />}
-            {!selectedCanvasItem && activePanel === 'broll' && <BRollPanel onClose={() => setActivePanel(null)} />}
-            {!selectedCanvasItem && activePanel === 'captions' && <CaptionsPanel onClose={() => setActivePanel(null)} />}
-            {!selectedCanvasItem && activePanel === 'audio' && <AudioPanel onClose={() => setActivePanel(null)} />}
-            {!selectedCanvasItem && activePanel === 'exports' && <ExportsPanel onClose={() => setActivePanel(null)} />}
-            {!selectedCanvasItem && activePanel === 'settings' && <ProjectSettingsPanel onClose={() => setActivePanel(null)} />}
-            {!selectedCanvasItem && activePanel === 'colorCorrection' && (
-              <div className="glass rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div className="flex items-center justify-between p-3 border-b border-white/[0.06]">
-                  <span className="font-bold text-sm text-text-primary">תיקון צבע</span>
-                  <button onClick={() => setActivePanel(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">סגור</button>
-                </div>
-                <ColorCorrectionPanel />
-              </div>
-            )}
-            {!selectedCanvasItem && activePanel === 'speed' && (
-              <div className="glass rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div className="flex items-center justify-between p-3 border-b border-white/[0.06]">
-                  <span className="font-bold text-sm text-text-primary">מהירות</span>
-                  <button onClick={() => setActivePanel(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">סגור</button>
-                </div>
-                <SpeedPanel />
-              </div>
-            )}
-            {!selectedCanvasItem && activePanel === 'crop' && (
-              <div className="glass rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div className="flex items-center justify-between p-3 border-b border-white/[0.06]">
-                  <span className="font-bold text-sm text-text-primary">חיתוך</span>
-                  <button onClick={() => setActivePanel(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">סגור</button>
-                </div>
-                <CropPanel />
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tab bar - always visible on LEFT (RTL: appears on the left visually) */}
-        <div className="w-16 shrink-0 bg-[#12121A] border-s border-white/[0.06] flex flex-col items-center py-2 gap-1">
-          {panelTabs.map((tab, idx) => (
-            <button
-              key={tab.id}
-              onClick={() => togglePanel(tab.id)}
-              className={`w-14 h-14 rounded-lg flex flex-col items-center justify-center gap-1 transition-all group relative ${
-                activePanel === tab.id
-                  ? 'bg-accent-purple/20 text-accent-purple border border-accent-purple/30'
-                  : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
-              }`}
-            >
-              <tab.icon size={18} />
-              <span className="text-[9px] leading-tight">{tab.label}</span>
-              {/* Tooltip on hover - appears to the LEFT in RTL */}
-              <div className="absolute right-full px-2 py-1 bg-[#1a1a2e] border border-white/[0.12] rounded text-[10px] text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg" style={{ marginRight: '8px' }}>
-                {tab.tooltip}
-                {idx < 5 && <span className="text-text-muted me-1"> ({idx + 1})</span>}
-              </div>
-            </button>
-          ))}
-        </div>
+        {/* LEFT SIDEBAR (RTL = last = left) - Inspector */}
+        <InspectorPanel selectedItem={selectedCanvasItem} />
       </div>
 
       <EditorModals />
       <ShortcutsModal />
       <ToastContainer />
     </div>
-  )
-}
-
-function SecondaryToolButton({ label, emoji, active, onClick }: {
-  label: string
-  emoji: string
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs transition-all ${
-        active
-          ? 'bg-accent-purple/20 text-accent-purple border border-accent-purple/30'
-          : 'bg-white/[0.04] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200 border border-transparent'
-      }`}
-    >
-      <span>{emoji}</span>
-      <span>{label}</span>
-    </button>
   )
 }
