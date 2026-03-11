@@ -335,9 +335,28 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
     console.log('[TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers')
 
+    // Calculate duration (gpt-4o-transcribe-diarize may not return top-level duration)
+    let duration = (transcription as any).duration || 0
+    if (duration === 0 && segments.length > 0) {
+      duration = Math.max(...segments.map((s: any) => s.end || 0))
+    }
+    if (duration === 0 && mp3Path && fs.existsSync(mp3Path)) {
+      try {
+        const ffprobePath = getFFmpeg().replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+        const probeResult = execSync(
+          `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${mp3Path}"`,
+          { timeout: 30000 }
+        ).toString().trim()
+        duration = parseFloat(probeResult) || 0
+      } catch {}
+    }
+    if (duration === 0 && segments.length > 0) {
+      duration = segments.length * 3
+    }
+
     res.json({
       text: transcription.text || '',
-      duration: (transcription as any).duration || 0,
+      duration,
       language: 'he',
       segments,
       speakers,
@@ -1911,6 +1930,138 @@ app.post('/api/auto-editor/expand-prompt', async (req, res) => {
   }
 })
 
+// POST /api/auto-editor/enrich-prompt — AI analyzes transcript and enriches user prompt
+app.post('/api/auto-editor/enrich-prompt', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile } = req.body
+
+    const fullText = (transcript.segments || []).map((s: any) => s.text).join(' ')
+    const speakers = [...new Set((transcript.segments || []).map((s: any) => s.speaker))]
+    const duration = transcript.total_duration || transcript.totalDuration || 0
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      messages: [
+        {
+          role: 'system' as const,
+          content: `אתה הבמאי הראשי של סטודיו עריכת וידאו מקצועי. אתה מומחה לכל סוגי הסרטונים בכל תעשייה.
+
+קיבלת תמלול של סרטון גולמי. התפקיד שלך:
+1. להבין מה הנושא, מי קהל היעד, ומה המטרה של הסרטון
+2. לבנות פרומפט עריכה מדויק שמתאים לתוכן בפועל
+3. להציע B-Roll שמתאים ספציפית למה שנאמר
+
+כללים קריטיים:
+- הפרומפט חייב להיות פרקטי ומדויק, לא גנרי
+- B-Roll חייב להתאים למה שהדובר מדבר עליו ברגע ספציפי
+- אל תציע דברים מיותרים. רק מה שישפר את הסרטון בפועל
+- התאם את הסגנון לסוג התוכן:
+
+סרטון שיווק למוצר:
+  - B-Roll: צילומי מוצר, שימוש במוצר, לפני/אחרי, לקוחות מרוצים
+  - סגנון: מהיר, אנרגטי, CTA ברור
+  - Hook: הבעיה שהמוצר פותר
+
+סרטון תדמית לחברה:
+  - B-Roll: משרדים, צוות, תהליכי עבודה, לקוחות
+  - סגנון: מקצועי, חם, אמין
+  - Hook: הערך שהחברה נותנת
+
+פודקאסט / ראיון:
+  - B-Roll: מינימלי, רק בנקודות מפתח
+  - סגנון: נקי, מולטי-קאם, שמות דוברים
+  - Hook: הציטוט הכי חזק
+
+הדרכה / טוטוריאל:
+  - B-Roll: screenshots, הדגמות, תרשימים
+  - סגנון: ברור, מסודר, שלבי
+  - Hook: "מה תלמדו היום"
+
+פרסומת / קמפיין:
+  - B-Roll: lifestyle, אנשים משתמשים, אמוציות
+  - סגנון: קצר, קצבי, כל שנייה חשובה
+  - Hook: בעיה → פתרון תוך 3 שניות
+
+${userProfile || ''}
+
+בהתבסס על התמלול, זהה:
+1. מה סוג הסרטון (שיווק/תדמית/פודקאסט/הדרכה/פרסומת/אחר)
+2. מה הנושא המדויק
+3. מי קהל היעד המשוער
+4. מה הרגעים הכי חזקים (לשמש כ-Hook)
+5. איפה בדיוק צריך B-Roll ומה צריך לראות שם
+6. מה סגנון העריכה המתאים
+
+חשוב:
+- אל תציע יותר מ-5 B-Roll לכל 60 שניות
+- B-Roll prompts חייבים להיות מפורטים (לא "אנשים" אלא "close-up of hands typing on laptop keyboard, soft warm lighting, shallow depth of field")
+- ה-enhanced_prompt לא צריך להיות ארוך. 2-3 משפטים ממוקדים.
+
+החזר JSON:
+{
+  "detected_type": "marketing_product / corporate / podcast / tutorial / ad / vlog / other",
+  "detected_topic": "תיאור קצר של הנושא",
+  "target_audience": "קהל יעד משוער",
+  "enhanced_prompt": "פרומפט מפורט ומדויק לעריכה",
+  "video_summary": "במשפט אחד - על מה הסרטון",
+  "best_hook": {
+    "text": "המשפט הכי חזק",
+    "start": 15.2,
+    "end": 18.5,
+    "why": "למה זה Hook טוב"
+  },
+  "key_topics": ["נושא 1", "נושא 2", "נושא 3"],
+  "broll_suggestions": [
+    {
+      "at_text": "הטקסט שמצדיק B-Roll",
+      "at_time": 12.0,
+      "duration": 4,
+      "prompt_en": "Specific, detailed English prompt for AI generation",
+      "description_he": "מה הצופה יראה",
+      "why": "למה B-Roll כאן חשוב"
+    }
+  ],
+  "editing_notes": [
+    "הערה ספציפית 1",
+    "הערה ספציפית 2"
+  ],
+  "style": {
+    "pacing": "fast/medium/slow",
+    "color": "warm/cold/cinematic/vibrant/clean",
+    "music_mood": "energetic/calm/corporate/dramatic",
+    "music_search": "specific pixabay search term"
+  }
+}`
+        },
+        {
+          role: 'user' as const,
+          content: `פרומפט המשתמש: "${userPrompt}"
+
+תמלול מלא (${duration.toFixed(0)} שניות, ${speakers.length} דוברים):
+${(transcript.segments || []).map((s: any) => `[${(s.start || 0).toFixed(1)}s] ${s.speaker || ''}: ${s.text}`).join('\n')}
+
+אורך יעד לכל סרטון: ${targetDuration} שניות
+מספר סרטונים: ${numberOfVideos}
+
+שפר את הפרומפט, הצע B-Roll ספציפי לתוכן, וזהה את הרגעים הטובים.`
+        }
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.7,
+    })
+
+    const result = JSON.parse(response.choices[0]?.message?.content || '{}')
+    console.log('[ENRICH PROMPT] Done:', result.detected_type, '|', result.broll_suggestions?.length, 'B-Roll suggestions')
+    res.json(result)
+  } catch (error: any) {
+    console.error('[ENRICH PROMPT]', error.message)
+    res.status(500).json({ message: 'שגיאה בשיפור הפרומפט: ' + error.message })
+  }
+})
+
 // POST /api/auto-editor/creative-brief — Step 1: Creative Director analyzes content
 app.post('/api/auto-editor/creative-brief', async (req, res) => {
   try {
@@ -2711,11 +2862,41 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       name, color: speakerColors[i % speakerColors.length],
     }))
 
-    console.log('[AUTO-TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers,', (transcription.duration || 0).toFixed(1), 'sec, model:', usedModel)
+    // Calculate duration from segments (gpt-4o-transcribe-diarize may not return top-level duration)
+    let totalDuration = transcription.duration || 0
+
+    // Method 1: Use the last segment's end time
+    if (totalDuration === 0 && segments.length > 0) {
+      totalDuration = Math.max(...segments.map((s: any) => s.end || 0))
+      if (totalDuration > 0) console.log('[AUTO-TRANSCRIBE] Duration from segments:', totalDuration)
+    }
+
+    // Method 2: Use ffprobe to get exact duration
+    if (totalDuration === 0) {
+      try {
+        const ffprobePath = getFFmpeg().replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+        const probeResult = execSync(
+          `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${filePath}"`,
+          { timeout: 30000 }
+        ).toString().trim()
+        totalDuration = parseFloat(probeResult) || 0
+        if (totalDuration > 0) console.log('[AUTO-TRANSCRIBE] Duration from ffprobe:', totalDuration)
+      } catch (e) {
+        console.warn('[AUTO-TRANSCRIBE] ffprobe failed, estimating from segments')
+      }
+    }
+
+    // Method 3: Fallback - estimate from segment count (~3 seconds per segment)
+    if (totalDuration === 0 && segments.length > 0) {
+      totalDuration = segments.length * 3
+      console.log('[AUTO-TRANSCRIBE] Estimated duration:', totalDuration)
+    }
+
+    console.log('[AUTO-TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers,', totalDuration.toFixed(1), 'sec, model:', usedModel)
 
     res.json({
       segments,
-      duration: transcription.duration || 0,
+      duration: totalDuration,
       text: transcription.text || '',
       speakers,
       model: usedModel,

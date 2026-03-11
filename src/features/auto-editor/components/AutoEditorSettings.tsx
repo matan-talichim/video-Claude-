@@ -45,130 +45,48 @@ const PLATFORM_OPTIONS = [
   { id: 'story', name: 'Story', ratio: '9:16', icon: '📲' },
 ]
 
-const PROMPT_PRESETS: Record<string, Array<{ label: string; text: string }>> = {
-  'ניקוי': [
-    { label: '🧹 הסר גמגומים', text: 'הסר את כל הגמגומים והתיקונים העצמיים' },
-    { label: '✂️ הסר מילות מילוי', text: 'הסר את כל מילות המילוי כמו אממ, כאילו, בעצם, נו' },
-    { label: '🔇 קצר שתיקות', text: 'קצר את כל השתיקות הארוכות לשתיקות קצרות וטבעיות' },
-    { label: '🔄 הסר חזרות', text: 'הסר קטעים שבהם הדובר אומר את אותו דבר פעמיים' },
-  ],
-  'ויזואלי': [
-    { label: '🖼 הוסף B-Roll', text: 'הוסף קטעי B-Roll ויזואליים בזמנים שמתארים משהו' },
-    { label: '🎨 שפר צבע', text: 'הוסף color grading סינמטי ומקצועי' },
-    { label: '🔍 הוסף זומים', text: 'הוסף זומים דינמיים על נקודות חשובות' },
-    { label: '📸 מולטי-קאם', text: 'דמה מצלמות מרובות עם החלפת זוויות כל כמה שניות' },
-    { label: '🌅 מעברים חלקים', text: 'הוסף מעברים חלקים בין הקטעים (לא חיתוך קשה)' },
-  ],
-  'טקסט וכתוביות': [
-    { label: '💬 הוסף כתוביות', text: 'הוסף כתוביות מעוצבות בעברית' },
-    { label: '💬 כתוביות קריוקי', text: 'הוסף כתוביות בסגנון קריוקי (מילה-מילה)' },
-    { label: '📝 הוסף כותרות', text: 'הוסף כותרות וגרפיקות על נקודות מפתח' },
-    { label: '🏷 שם דובר', text: 'הוסף שם הדובר בתחתית המסך' },
-  ],
-  'אודיו': [
-    { label: '🎙 הוסף קריינות', text: 'צור קריינות AI מקצועית לסרטון בעברית' },
-    { label: '🎵 הוסף מוזיקה', text: 'הוסף מוזיקת רקע שמתאימה לאווירה' },
-    { label: '🔊 שפר אודיו', text: 'שפר את איכות האודיו, הסר רעשי רקע ואזן עוצמה' },
-    { label: '🎚 הנמך מוזיקה בדיבור', text: 'הנמך אוטומטית את המוזיקה כשמישהו מדבר' },
-  ],
-  'סגנון': [
-    { label: '⚡ קצב מהיר', text: 'עריכה בקצב מהיר עם חיתוכים תכופים, מתאים לרשתות חברתיות' },
-    { label: '🎬 סינמטי', text: 'סגנון סינמטי, קולנועי, עם תאורה חמה ומעברים חלקים' },
-    { label: '🎯 מקצועי', text: 'סגנון מקצועי ונקי, מתאים לעסקים' },
-    { label: '🎉 אנרגטי', text: 'סגנון אנרגטי ושמח עם קצב מהיר ומוזיקה קצבית' },
-    { label: '🧘 רגוע', text: 'סגנון רגוע ואלגנטי, קצב איטי, צבעים רכים' },
-  ],
-  'מבנה': [
-    { label: '🪝 פתיחה חזקה (Hook)', text: 'התחל עם המשפט הכי חזק כדי לעצור גלילה' },
-    { label: '📢 CTA בסוף', text: 'סיים עם קריאה לפעולה ברורה' },
-    { label: '🎬 Intro מונפש', text: 'הוסף כרטיס כותרת מונפש בפתיחה' },
-    { label: '🔚 Outro מונפש', text: 'הוסף כרטיס סיום עם CTA' },
-  ],
-}
-
-const PROMPT_TEMPLATES = [
+const PRESET_CATEGORIES = [
   {
-    label: '📱 סרטון TikTok מושלם',
-    text: 'צור סרטון TikTok מושלם: פתיחה עם Hook חזק שעוצר גלילה, קצב מהיר עם חיתוכים כל 3 שניות, B-Roll ויזואלי בכל נקודה שמתארים משהו, כתוביות קריוקי מילה-מילה, מוזיקה אנרגטית ברקע שיורדת בזמן דיבור, זומים דינמיים על נקודות חשובות, הסר את כל הגמגומים והשתיקות, סיים עם CTA ברור'
+    title: 'עסקי',
+    presets: [
+      { label: 'סרטון תדמית לחברה', prompt: 'סרטון תדמית מקצועי לחברה' },
+      { label: 'סרטון מכירות למוצר', prompt: 'סרטון מכירות שמציג את המוצר ויתרונותיו' },
+      { label: 'סרטון לקוחות ממליצים', prompt: 'סרטון עדויות לקוחות מרוצים' },
+      { label: 'סרטון הדרכה לעובדים', prompt: 'סרטון הדרכה פנימי ברור ומקצועי' },
+    ]
   },
   {
-    label: '💼 סרטון עסקי מקצועי',
-    text: 'צור סרטון עסקי מקצועי: סגנון נקי ומינימליסטי, color grading חם, כתוביות קלאסיות, מוזיקה תאגידית שקטה, B-Roll של משרד מודרני, הסר גמגומים ושתיקות, הוסף שם הדובר בתחתית, מעברים חלקים, קצב בינוני'
+    title: 'סושיאל',
+    presets: [
+      { label: 'TikTok / Reels', prompt: 'סרטון קצר וקצבי לרשתות חברתיות' },
+      { label: 'YouTube Shorts', prompt: 'קליפ קצר ליוטיוב עם פתיחה חזקה' },
+      { label: 'סטורי', prompt: 'סטורי קצר ומושך לאינסטגרם' },
+      { label: 'פרסומת ממומנת', prompt: 'פרסומת קצרה ואנרגטית לקמפיין' },
+    ]
   },
   {
-    label: '🎓 סרטון הדרכה',
-    text: 'צור סרטון הדרכה ברור: כתוביות גדולות וברורות, הדגשת נקודות מפתח עם גרפיקה, B-Roll כשמתארים תהליכים, קצב בינוני-איטי, מוזיקה רגועה ברקע, חלוקה לפרקים, הסר גמגומים ושתיקות מיותרות'
-  },
-  {
-    label: '🎤 פודקאסט / ראיון',
-    text: 'ערוך פודקאסט/ראיון: הסר את כל הגמגומים, השתיקות הארוכות והחזרות. דמה מולטי-קאם עם החלפת זוויות. הוסף שמות דוברים. כתוביות מודרניות. מוזיקת רקע שקטה. שיפור אודיו מקצועי'
-  },
-  {
-    label: '📸 Instagram Reels',
-    text: 'צור Reels מושלם: פורמט 9:16, פתיחה עם Hook תוך שנייה, B-Roll דינמי כל 4 שניות, כתוביות קריוקי צבעוניות, מוזיקה טרנדית, זומים מהירים, מעברים אנרגטיים, color grading חי וצבעוני, קצב מהיר מאוד'
+    title: 'תוכן',
+    presets: [
+      { label: 'פודקאסט', prompt: 'עריכת פודקאסט נקייה ומקצועית' },
+      { label: 'ראיון', prompt: 'עריכת ראיון עם מעברים חלקים' },
+      { label: 'הרצאה / וובינר', prompt: 'עריכת הרצאה עם הדגשות ויזואליות' },
+      { label: 'הדרכה / טוטוריאל', prompt: 'סרטון הדרכה ברור עם שלבים' },
+    ]
   },
 ]
 
-async function expandPromptWithAI(shortPrompt: string): Promise<string> {
-  const response = await fetch('http://localhost:3001/api/auto-editor/expand-prompt', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: shortPrompt }),
-  })
-  const data = await response.json()
-  return data.expandedPrompt
-}
-
 function PromptBuilder({ prompt, setPrompt }: { prompt: string; setPrompt: (p: string) => void }) {
-  const [expanding, setExpanding] = useState(false)
-  const [showOriginal, setShowOriginal] = useState(false)
-  const [originalPrompt, setOriginalPrompt] = useState('')
-
-  const addToPrompt = (text: string) => {
-    const separator = prompt.trim() ? '. ' : ''
-    setPrompt(prompt + separator + text)
-  }
-
-  const expandWithAI = async () => {
-    if (!prompt.trim()) return
-    setExpanding(true)
-    setOriginalPrompt(prompt)
-
-    try {
-      const expanded = await expandPromptWithAI(prompt)
-      setPrompt(expanded)
-      setShowOriginal(true)
-    } catch (e) {
-      console.error('Expand failed:', e)
-    }
-
-    setExpanding(false)
-  }
-
   return (
     <div dir="rtl" className="space-y-4">
-      {/* Full templates */}
-      <div>
-        <h4 className="text-sm font-medium text-purple-400 mb-2">🎬 תבניות מוכנות:</h4>
-        <div className="flex flex-wrap gap-2">
-          {PROMPT_TEMPLATES.map(t => (
-            <button key={t.label} onClick={() => setPrompt(t.text)}
-              className="bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs px-3 py-1.5 rounded-full hover:bg-purple-500/25 transition">
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Category chips */}
-      {Object.entries(PROMPT_PRESETS).map(([category, chips]) => (
-        <div key={category}>
-          <h4 className="text-sm font-medium text-gray-400 mb-2">{category}:</h4>
+      {/* Practical preset categories */}
+      {PRESET_CATEGORIES.map(cat => (
+        <div key={cat.title}>
+          <h4 className="text-xs text-gray-500 mb-2">{cat.title}</h4>
           <div className="flex flex-wrap gap-2">
-            {chips.map(chip => (
-              <button key={chip.label} onClick={() => addToPrompt(chip.text)}
-                className="bg-white/5 border border-white/10 text-gray-300 text-xs px-3 py-1.5 rounded-full hover:bg-white/10 hover:border-purple-500/30 transition">
-                {chip.label}
+            {cat.presets.map(p => (
+              <button key={p.label} onClick={() => setPrompt(p.prompt)}
+                className="bg-white/5 border border-white/10 text-gray-300 text-xs px-3 py-1.5 rounded-full hover:border-purple-500/30 hover:bg-purple-500/10 transition">
+                {p.label}
               </button>
             ))}
           </div>
@@ -178,33 +96,23 @@ function PromptBuilder({ prompt, setPrompt }: { prompt: string; setPrompt: (p: s
       {/* Prompt textarea */}
       <div>
         <div className="flex justify-between items-center mb-2">
-          <h4 className="text-sm font-medium text-white">✍️ הפרומפט שלך:</h4>
+          <h4 className="text-sm font-medium text-white">הפרומפט שלך:</h4>
           {prompt && (
-            <button onClick={() => { setPrompt(''); setShowOriginal(false) }} className="text-xs text-gray-500 hover:text-red-400">
-              🗑 נקה
+            <button onClick={() => setPrompt('')} className="text-xs text-gray-500 hover:text-red-400">
+              נקה
             </button>
           )}
         </div>
         <textarea
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
-          placeholder="תאר איך אתה רוצה את הסרטון... או לחץ על הצ'יפים למעלה לבניית הפרומפט"
-          className="w-full h-32 bg-black/30 text-white rounded-xl p-4 text-sm resize-none border border-white/10 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition"
+          placeholder="תאר בקצרה מה אתה רוצה. אחרי התמלול ה-AI ישפר אוטומטית..."
+          className="w-full h-20 bg-black/30 text-white rounded-xl p-4 text-sm resize-none border border-white/10 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition"
           dir="rtl"
         />
-        <div className="flex justify-between mt-2">
-          <span className="text-xs text-gray-500">{prompt.length} תווים</span>
-          <button onClick={expandWithAI} disabled={!prompt.trim() || expanding}
-            className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
-            {expanding ? '⏳ מרחיב...' : '✨ הרחב עם AI'}
-          </button>
-        </div>
-        {showOriginal && (
-          <button onClick={() => { setPrompt(originalPrompt); setShowOriginal(false) }}
-            className="text-xs text-gray-500 hover:text-white mt-1">
-            ↩ חזור לפרומפט המקורי
-          </button>
-        )}
+        <p className="text-xs text-gray-600 text-center mt-1">
+          הפרומפט ישתפר אוטומטית אחרי התמלול בהתאם לתוכן הסרטון
+        </p>
       </div>
     </div>
   )

@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom'
 import AutoEditorSettings from './components/AutoEditorSettings'
 import ProcessingProgress from './components/ProcessingProgress'
 import ExportScreen from './components/ExportScreen'
+import EnrichmentReview from './components/EnrichmentReview'
 import { useAutoEditorStore, type AutoEditorInput } from './store/autoEditorStore'
-import { runAutoEditor } from './orchestrator'
+import { runAutoEditor, continueAfterEnrichment } from './orchestrator'
 
 const API_BASE = 'http://localhost:3001/api'
 
@@ -55,6 +56,7 @@ async function uploadFilesToServer(files: LocalFile[]): Promise<string[]> {
 
 export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEntryProps) {
   const step = useAutoEditorStore((s) => s.step)
+  const enrichment = useAutoEditorStore((s) => s.enrichment)
   const reset = useAutoEditorStore((s) => s.reset)
 
   const handleStart = async (settings: Omit<AutoEditorInput, 'videoUrls'>) => {
@@ -74,6 +76,13 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
     }
   }
 
+  const handleEnrichmentApprove = (editedPrompt: string, selectedBRoll: any[]) => {
+    continueAfterEnrichment({
+      userPrompt: editedPrompt,
+      selectedBRoll,
+    })
+  }
+
   const handleReset = () => {
     reset()
     onBack()
@@ -82,9 +91,18 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
   // Render via portal so fixed positioning works (escapes Modal's transform)
   let content: ReactNode
 
-  // Screen 3: Results
+  // Screen 4: Results
   if (step === 'done') {
     content = <ExportScreen onReset={handleReset} />
+  }
+  // Screen 3: Enrichment Review
+  else if (step === 'review_enrichment' && enrichment) {
+    content = (
+      <EnrichmentReview
+        enrichment={enrichment}
+        onApprove={handleEnrichmentApprove}
+      />
+    )
   }
   // Screen 2: Processing
   else if (step !== 'idle') {

@@ -4,6 +4,8 @@ import { useAutoEditorStore, type AutoEditorStep } from '../store/autoEditorStor
 const STEPS_CONFIG: { key: AutoEditorStep; label: string; activeLabel?: string }[] = [
   { key: 'transcribing', label: 'תמלול הושלם', activeLabel: 'מתמלל את הסרטון...' },
   { key: 'validating', label: 'ולידציית חומר', activeLabel: 'מאמת את החומר...' },
+  { key: 'enriching', label: 'AI ניתח תוכן', activeLabel: 'AI מנתח את התוכן ומשפר פרומפט...' },
+  { key: 'review_enrichment', label: 'סקירת הצעות', activeLabel: 'ממתין לאישור...' },
   { key: 'planning', label: 'תכנון דו-שלבי: במאי + עורך טכני', activeLabel: 'הבמאי מנתח → העורך מתכנן...' },
   { key: 'generating_assets', label: 'יצירת נכסים (רקע, B-Roll, מוזיקה)', activeLabel: 'מייצר נכסים...' },
   { key: 'editing', label: 'עריכת סרטונים', activeLabel: 'עורך סרטונים...' },
