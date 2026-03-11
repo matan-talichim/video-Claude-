@@ -44,6 +44,12 @@ interface UserEditingProfile {
   preferredCutSpeed: 'fast' | 'medium' | 'slow'
   preferredZoomFrequency: number
 
+  // === USER-DEFINED (from AI Profile Builder) ===
+  userDislikes: string[]
+  customRules: string[]
+  primaryContentType: string
+  targetAudience: string
+
   // === RAW DATA ===
   editHistory: CompletedEdit[]
   totalEdits: number
@@ -55,6 +61,7 @@ interface UserEditingProfile {
   finalizeEdit: (projectId: string) => void
   getProfileForPrompt: () => string
   getConfidence: () => number
+  resetProfile: () => void
 }
 
 export const useUserProfileStore = create<UserEditingProfile>()(
@@ -84,6 +91,10 @@ export const useUserProfileStore = create<UserEditingProfile>()(
       preferredFormat: '16:9',
       preferredCutSpeed: 'medium',
       preferredZoomFrequency: 6,
+      userDislikes: [],
+      customRules: [],
+      primaryContentType: '',
+      targetAudience: '',
       editHistory: [],
       totalEdits: 0,
       confidenceScore: 0,
@@ -212,23 +223,27 @@ export const useUserProfileStore = create<UserEditingProfile>()(
         const s = get()
         if (s.confidenceScore < 0.1) return ''
 
-        let profile = `\nפרופיל עריכה של המשתמש (רמת ביטחון: ${Math.round(s.confidenceScore * 100)}%):\n`
+        let profile = `\nפרופיל עריכה אישי (ביטחון: ${Math.round(s.confidenceScore * 100)}%):\n`
 
-        if (s.confidenceScore >= 0.2) {
-          profile += `- מילות מילוי: ${s.fillerWordPreference === 'keep' ? 'לא להסיר' : s.fillerWordPreference === 'remove_most' ? 'להסיר רוב, לשמור: ' + s.fillerWordsKept.join(', ') : 'להסיר הכל'}\n`
-          profile += `- שתיקות: ${s.silencePreference === 'keep' ? 'לא לקצר' : s.silencePreference === 'aggressive' ? 'לקצר אגרסיבי' : 'לקצר מתון (סף: ' + s.silenceThreshold + 'שניות)'}\n`
+        profile += `- מילות מילוי: ${s.fillerWordPreference === 'keep' ? 'לא להסיר' : s.fillerWordPreference === 'remove_most' ? 'להסיר רוב (שמור: ' + s.fillerWordsKept.join(', ') + ')' : 'להסיר הכל'}\n`
+        profile += `- שתיקות: ${s.silencePreference} (סף: ${s.silenceThreshold}שנ)\n`
+        profile += `- כתוביות: ${s.captionPreference === 'never' ? 'בלי' : s.preferredCaptionStyle + ', ' + s.preferredCaptionPosition}\n`
+        profile += `- B-Roll: ${s.brollPreference} (כל ${s.brollFrequency}שנ, ${s.preferredBrollDuration}שנ לקטע)\n`
+        profile += `- מוזיקה: ${s.musicPreference === 'never' ? 'בלי' : s.preferredMusicMood + ' ' + s.preferredMusicVolume + '%, ducking=' + s.duckingPreference}\n`
+        profile += `- קצב: ${s.preferredCutSpeed}, זום כל ${s.preferredZoomFrequency} משפטים\n`
+        profile += `- אפקטים: קשר עין=${s.eyeContactPreference}, מרכוז=${s.centerSpeakerPreference}, פורמט=${s.preferredFormat}\n`
+
+        if (s.primaryContentType) profile += `- סוג תוכן: ${s.primaryContentType}\n`
+        if (s.targetAudience) profile += `- קהל יעד: ${s.targetAudience}\n`
+
+        if (s.userDislikes?.length) {
+          profile += `\nדברים שהמשתמש לא אוהב (אל תעשה!):\n`
+          s.userDislikes.forEach((d) => { profile += `  ❌ ${d}\n` })
         }
 
-        if (s.confidenceScore >= 0.3) {
-          profile += `- כתוביות: ${s.captionPreference === 'never' ? 'בלי' : 'סגנון ' + s.preferredCaptionStyle}\n`
-          profile += `- B-Roll: ${s.brollPreference === 'none' ? 'בלי' : s.brollPreference === 'lots' ? 'הרבה' : 'מעט'}\n`
-        }
-
-        if (s.confidenceScore >= 0.5) {
-          profile += `- מוזיקה: ${s.musicPreference === 'never' ? 'בלי' : 'עוצמה ' + s.preferredMusicVolume + '%, מצב רוח: ' + s.preferredMusicMood}\n`
-          profile += `- קשר עין: ${s.eyeContactPreference ? 'כן' : 'לא'}\n`
-          profile += `- פורמט מועדף: ${s.preferredFormat}\n`
-          profile += `- קצב חיתוך: ${s.preferredCutSpeed}\n`
+        if (s.customRules?.length) {
+          profile += `\nכללים מיוחדים (תמיד קיים!):\n`
+          s.customRules.forEach((r) => { profile += `  ✅ ${r}\n` })
         }
 
         // High-satisfaction edits
@@ -256,6 +271,42 @@ export const useUserProfileStore = create<UserEditingProfile>()(
       },
 
       getConfidence: () => get().confidenceScore,
+
+      resetProfile: () => {
+        set({
+          fillerWordPreference: 'remove_all',
+          fillerWordsKept: [],
+          silencePreference: 'moderate',
+          silenceThreshold: 1.0,
+          captionPreference: 'always',
+          preferredCaptionStyle: 'modern',
+          preferredCaptionSize: 24,
+          preferredCaptionPosition: 'bottom',
+          preferredCaptionLanguages: ['he'],
+          brollPreference: 'some',
+          brollFrequency: 15,
+          preferredBrollDuration: 4,
+          preferredBrollProvider: 'seedance',
+          audioEnhancePreference: 'always',
+          preferredMusicVolume: 20,
+          musicPreference: 'sometimes',
+          preferredMusicMood: 'corporate',
+          duckingPreference: true,
+          eyeContactPreference: false,
+          centerSpeakerPreference: false,
+          preferredDesignStyle: 'minimalist',
+          preferredFormat: '16:9',
+          preferredCutSpeed: 'medium',
+          preferredZoomFrequency: 6,
+          userDislikes: [],
+          customRules: [],
+          primaryContentType: '',
+          targetAudience: '',
+          editHistory: [],
+          totalEdits: 0,
+          confidenceScore: 0,
+        })
+      },
     }),
     {
       name: 'user-editing-profile',
