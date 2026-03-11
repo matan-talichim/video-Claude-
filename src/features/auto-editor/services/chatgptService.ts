@@ -97,7 +97,10 @@ export interface CreativeBrief {
 // Step 1: Creative Director - analyzes content and creates creative brief
 async function getCreativeBrief(
   transcript: FullTranscript,
-  input: AutoEditorInput
+  input: AutoEditorInput,
+  detectedType?: string,
+  visualAnalysis?: any,
+  energyAnalysis?: any
 ): Promise<CreativeBrief> {
   const log = useAutoEditorStore.getState().addLog
   const userProfile = useUserProfileStore.getState().getProfileForPrompt()
@@ -121,6 +124,9 @@ async function getCreativeBrief(
       numberOfVideos: input.numberOfVideos,
       platforms: input.platforms,
       userProfile: userProfile || '',
+      detectedType: detectedType || '',
+      visualAnalysis: visualAnalysis || null,
+      energyAnalysis: energyAnalysis || null,
     }),
   })
 
@@ -325,14 +331,17 @@ function normalizeTechnicalPlan(
 
 export async function planWithChatGPT(
   transcript: FullTranscript,
-  input: AutoEditorInput
+  input: AutoEditorInput,
+  detectedType?: string,
+  visualAnalysis?: any,
+  energyAnalysis?: any
 ): Promise<EditingPlan> {
   const log = useAutoEditorStore.getState().addLog
 
   log('מתחיל תכנון דו-שלבי: במאי + עורך טכני...')
 
   // Step 1: Creative Director
-  const creativeBrief = await getCreativeBrief(transcript, input)
+  const creativeBrief = await getCreativeBrief(transcript, input, detectedType, visualAnalysis, energyAnalysis)
 
   // Step 2: Technical Editor
   const technicalPlan = await getTechnicalPlan(creativeBrief, transcript, input)

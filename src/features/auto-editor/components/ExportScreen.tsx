@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { Download, Play, PartyPopper, X } from 'lucide-react'
 import { useAutoEditorStore, type VideoResult, type PlatformFile } from '../store/autoEditorStore'
 import { useProjectsStore } from '../../../stores/projectsStore'
+import { QualityReportDisplay } from './CompareVersions'
 
 interface ExportScreenProps {
   onReset: () => void
@@ -152,6 +153,8 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
   const processedVideos = useAutoEditorStore((s) => s.processedVideos)
   const results = useAutoEditorStore((s) => s.results)
   const input = useAutoEditorStore((s) => s.input)
+  const qualityReport = useAutoEditorStore((s) => s.qualityReport)
+  const selectedVersion = useAutoEditorStore((s) => s.selectedVersion)
 
   const [previewFile, setPreviewFile] = useState<{ file: PlatformFile; videoIndex: number } | null>(null)
   const [selectedVideoIdx, setSelectedVideoIdx] = useState(0)
@@ -287,6 +290,22 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Selected version info */}
+        {selectedVersion && (
+          <div className="w-full bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+            <p className="text-green-300 text-sm font-medium">
+              נבחרה גרסה {selectedVersion}
+            </p>
+          </div>
+        )}
+
+        {/* Quality Report */}
+        {qualityReport && (
+          <div className="w-full">
+            <QualityReportDisplay report={qualityReport} />
           </div>
         )}
 

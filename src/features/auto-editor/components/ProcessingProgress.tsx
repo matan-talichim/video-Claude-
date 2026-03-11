@@ -1,14 +1,16 @@
 import { Loader2, CheckCircle, Circle, XCircle } from 'lucide-react'
 import { useAutoEditorStore, type AutoEditorStep } from '../store/autoEditorStore'
 
-const STEPS_CONFIG: { key: AutoEditorStep; label: string; activeLabel?: string }[] = [
-  { key: 'transcribing', label: 'תמלול הושלם', activeLabel: 'מתמלל את הסרטון...' },
+const STEPS_CONFIG: { key: AutoEditorStep; label: string; activeLabel?: string; icon?: string }[] = [
+  { key: 'transcribing', label: 'תמלול הושלם', activeLabel: 'מתמלל את הסרטון...', icon: '🎤' },
   { key: 'validating', label: 'ולידציית חומר', activeLabel: 'מאמת את החומר...' },
-  { key: 'enriching', label: 'AI ניתח תוכן', activeLabel: 'AI מנתח את התוכן ומשפר פרומפט...' },
-  { key: 'review_enrichment', label: 'סקירת הצעות', activeLabel: 'ממתין לאישור...' },
-  { key: 'planning', label: 'תכנון דו-שלבי: במאי + עורך טכני', activeLabel: 'הבמאי מנתח → העורך מתכנן...' },
-  { key: 'generating_assets', label: 'יצירת נכסים (רקע, B-Roll, מוזיקה)', activeLabel: 'מייצר נכסים...' },
-  { key: 'editing', label: 'עריכת סרטונים', activeLabel: 'עורך סרטונים...' },
+  { key: 'analyzing_visuals', label: 'ניתוח תמונה הושלם', activeLabel: 'AI מנתח את התמונה בסרטון...', icon: '👁' },
+  { key: 'enriching', label: 'AI ניתח תוכן', activeLabel: 'AI מנתח את התוכן ומשפר פרומפט...', icon: '🧠' },
+  { key: 'review_enrichment', label: 'סקירת הצעות', activeLabel: 'ממתין לאישור...', icon: '📋' },
+  { key: 'planning', label: 'תכנון דו-שלבי: במאי + עורך טכני', activeLabel: 'מתכנן 2 גרסאות עריכה...', icon: '🎬' },
+  { key: 'generating_assets', label: 'יצירת נכסים (רקע, B-Roll, מוזיקה)', activeLabel: 'מייצר נכסים...', icon: '🎨' },
+  { key: 'editing', label: 'עריכת סרטונים (2 גרסאות)', activeLabel: 'עורך 2 גרסאות...', icon: '✂️' },
+  { key: 'comparing', label: 'השוואת גרסאות', activeLabel: 'ממתין לבחירה...', icon: '⚖️' },
   { key: 'exporting', label: 'ייצוא לפלטפורמות', activeLabel: 'מייצא...' },
 ]
 
@@ -101,8 +103,7 @@ export default function ProcessingProgress() {
                       : 'text-text-muted'
                   }`}
                 >
-                  {status === 'done' ? '✅' : status === 'active' ? '⏳' : '○'}{' '}
-                  {status === 'active' && s.activeLabel ? s.activeLabel : s.label}
+                  {s.icon ? `${s.icon} ` : ''}{status === 'active' && s.activeLabel ? s.activeLabel : s.label}
                   {s.key === 'planning' && status === 'active' && progress.label && (
                     <span className="text-text-muted text-xs mr-2 block">
                       {progress.label}

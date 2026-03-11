@@ -4,11 +4,13 @@ export type AutoEditorStep =
   | 'idle'
   | 'transcribing'
   | 'validating'
+  | 'analyzing_visuals'
   | 'enriching'
   | 'review_enrichment'
   | 'planning'
   | 'generating_assets'
   | 'editing'
+  | 'comparing'
   | 'exporting'
   | 'done'
   | 'error'
@@ -59,6 +61,21 @@ export interface EditedFile {
   appliedEdits: string[]
 }
 
+export interface QualityReport {
+  score: number
+  issues: Array<{ severity: 'error' | 'warning' | 'info'; message: string }>
+  passed: string[]
+}
+
+export interface ABVersionResult {
+  approach: string
+  files: PlatformFile[]
+  videoIndex: number
+  optimalDuration?: number
+  durationReasoning?: string
+  recommendedPlatform?: string
+}
+
 interface AutoEditorStore {
   // State
   step: AutoEditorStep
@@ -72,6 +89,20 @@ interface AutoEditorStore {
   // Enrichment data
   enrichment: any | null
   transcript: any | null
+
+  // Visual & Energy analysis
+  visualAnalysis: any | null
+  energyAnalysis: any | null
+
+  // A/B version comparison
+  versionA: ABVersionResult[] | null
+  versionB: ABVersionResult[] | null
+  versionAApproach: string
+  versionBApproach: string
+  selectedVersion: 'A' | 'B' | null
+
+  // Quality report
+  qualityReport: QualityReport | null
 
   // Input saved for reference
   input: AutoEditorInput | null
@@ -94,6 +125,12 @@ interface AutoEditorStore {
   setInput: (input: AutoEditorInput) => void
   setEnrichment: (data: any) => void
   setTranscript: (data: any) => void
+  setVisualAnalysis: (data: any) => void
+  setEnergyAnalysis: (data: any) => void
+  setVersionA: (data: ABVersionResult[], approach: string) => void
+  setVersionB: (data: ABVersionResult[], approach: string) => void
+  setSelectedVersion: (v: 'A' | 'B') => void
+  setQualityReport: (report: QualityReport) => void
   setCachedTranscript: (t: any) => void
   setCachedEditingPlan: (p: any) => void
   setCachedAssets: (a: { backgroundImage: string; brollClips: string[]; music: string }) => void
@@ -112,6 +149,14 @@ const initialState = {
   editedFiles: [] as EditedFile[],
   enrichment: null as any | null,
   transcript: null as any | null,
+  visualAnalysis: null as any | null,
+  energyAnalysis: null as any | null,
+  versionA: null as ABVersionResult[] | null,
+  versionB: null as ABVersionResult[] | null,
+  versionAApproach: '',
+  versionBApproach: '',
+  selectedVersion: null as 'A' | 'B' | null,
+  qualityReport: null as QualityReport | null,
   input: null as AutoEditorInput | null,
   cachedTranscript: null as any | null,
   cachedEditingPlan: null as any | null,
@@ -149,6 +194,12 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
   setInput: (input) => set({ input }),
   setEnrichment: (enrichment) => set({ enrichment }),
   setTranscript: (transcript) => set({ transcript }),
+  setVisualAnalysis: (visualAnalysis) => set({ visualAnalysis }),
+  setEnergyAnalysis: (energyAnalysis) => set({ energyAnalysis }),
+  setVersionA: (data, approach) => set({ versionA: data, versionAApproach: approach }),
+  setVersionB: (data, approach) => set({ versionB: data, versionBApproach: approach }),
+  setSelectedVersion: (selectedVersion) => set({ selectedVersion }),
+  setQualityReport: (qualityReport) => set({ qualityReport }),
 
   setCachedTranscript: (cachedTranscript) => set({ cachedTranscript }),
   setCachedEditingPlan: (cachedEditingPlan) => set({ cachedEditingPlan }),

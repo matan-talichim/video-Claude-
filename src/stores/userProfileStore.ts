@@ -55,10 +55,20 @@ interface UserEditingProfile {
   totalEdits: number
   confidenceScore: number
 
+  // === A/B TESTING ===
+  abChoices: Array<{
+    contentType: string
+    chosenVersion: 'A' | 'B'
+    versionAApproach: string
+    versionBApproach: string
+    timestamp: number
+  }>
+
   // === METHODS ===
   recordAutoEditResult: (projectId: string, aiActions: string[], aiSettings: Record<string, any>) => void
   recordUserChange: (projectId: string, action: EditAction) => void
   finalizeEdit: (projectId: string) => void
+  recordABChoice: (choice: { contentType: string; chosenVersion: 'A' | 'B'; versionAApproach: string; versionBApproach: string; timestamp: number }) => void
   getProfileForPrompt: () => string
   getConfidence: () => number
   resetProfile: () => void
@@ -98,6 +108,7 @@ export const useUserProfileStore = create<UserEditingProfile>()(
       editHistory: [],
       totalEdits: 0,
       confidenceScore: 0,
+      abChoices: [],
 
       recordAutoEditResult: (projectId, aiActions, aiSettings) => {
         const edit: CompletedEdit = {
@@ -219,6 +230,12 @@ export const useUserProfileStore = create<UserEditingProfile>()(
         })
       },
 
+      recordABChoice: (choice) => {
+        set((state) => ({
+          abChoices: [...(state.abChoices || []).slice(-20), choice],
+        }))
+      },
+
       getProfileForPrompt: () => {
         const s = get()
         if (s.confidenceScore < 0.1) return ''
@@ -253,6 +270,16 @@ export const useUserProfileStore = create<UserEditingProfile>()(
           goodEdits.forEach((e) => {
             profile += `- פעולות: ${e.aiActions.join(', ')} | שביעות רצון: ${Math.round(e.satisfaction * 100)}%\n`
           })
+        }
+
+        // A/B choices learning
+        const abChoices = s.abChoices || []
+        if (abChoices.length > 0) {
+          profile += `\nבחירות A/B קודמות:\n`
+          abChoices.slice(-5).forEach((c) => {
+            profile += `- ${c.contentType}: בחר "${c.chosenVersion === 'A' ? c.versionAApproach : c.versionBApproach}"\n`
+          })
+          profile += `\nהתאם את סגנון העריכה לפי ההעדפות שנלמדו.\n`
         }
 
         // Anti-patterns
@@ -305,6 +332,7 @@ export const useUserProfileStore = create<UserEditingProfile>()(
           editHistory: [],
           totalEdits: 0,
           confidenceScore: 0,
+          abChoices: [],
         })
       },
     }),
