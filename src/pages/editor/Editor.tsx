@@ -26,7 +26,7 @@ import { useUIStore } from '../../stores/uiStore'
 import { useTimelineStore } from '../../stores/timelineStore'
 import { useUserProfileStore } from '../../stores/userProfileStore'
 
-type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'exports' | 'settings'
+type PanelId = 'transcript' | 'ai' | 'media' | 'broll' | 'captions' | 'audio' | 'exports' | 'settings' | 'colorCorrection' | 'speed' | 'crop'
 
 const panelTabs: { id: PanelId; icon: typeof FileText; label: string; tooltip: string }[] = [
   { id: 'transcript', icon: FileText, label: 'תמלול', tooltip: 'תמלול - עריכת טקסט' },
@@ -244,6 +244,29 @@ export default function Editor() {
 
       <EditorToolbar />
 
+      {/* Secondary editing toolbar */}
+      <div className="flex items-center gap-2 px-4 py-1.5 bg-[#12121A] border-b border-white/[0.06] shrink-0" dir="rtl">
+        <span className="text-[10px] text-text-muted ms-2">כלי עריכה:</span>
+        <SecondaryToolButton
+          label="תיקון צבע"
+          emoji="🎨"
+          active={activePanel === 'colorCorrection'}
+          onClick={() => togglePanel('colorCorrection' as PanelId)}
+        />
+        <SecondaryToolButton
+          label="מהירות"
+          emoji="⚡"
+          active={activePanel === 'speed'}
+          onClick={() => togglePanel('speed' as PanelId)}
+        />
+        <SecondaryToolButton
+          label="חיתוך"
+          emoji="✂️"
+          active={activePanel === 'crop'}
+          onClick={() => togglePanel('crop' as PanelId)}
+        />
+      </div>
+
       {/* Main editor area */}
       <div className="flex flex-1 overflow-hidden">
         {/* Main content - video + timeline */}
@@ -280,28 +303,38 @@ export default function Editor() {
             {!selectedCanvasItem && activePanel === 'audio' && <AudioPanel onClose={() => setActivePanel(null)} />}
             {!selectedCanvasItem && activePanel === 'exports' && <ExportsPanel onClose={() => setActivePanel(null)} />}
             {!selectedCanvasItem && activePanel === 'settings' && <ProjectSettingsPanel onClose={() => setActivePanel(null)} />}
-            {/* Color correction, speed, crop panels below main panel */}
-            {!selectedCanvasItem && activePanel && (
-              <div className="mt-2 space-y-2">
-                <details className="bg-bg-card rounded-xl border border-white/[0.06] overflow-hidden">
-                  <summary className="px-4 py-2 text-sm text-gray-300 cursor-pointer hover:bg-white/5">תיקון צבע</summary>
-                  <ColorCorrectionPanel />
-                </details>
-                <details className="bg-bg-card rounded-xl border border-white/[0.06] overflow-hidden">
-                  <summary className="px-4 py-2 text-sm text-gray-300 cursor-pointer hover:bg-white/5">מהירות</summary>
-                  <SpeedPanel />
-                </details>
-                <details className="bg-bg-card rounded-xl border border-white/[0.06] overflow-hidden">
-                  <summary className="px-4 py-2 text-sm text-gray-300 cursor-pointer hover:bg-white/5">חיתוך</summary>
-                  <CropPanel />
-                </details>
+            {!selectedCanvasItem && activePanel === 'colorCorrection' && (
+              <div className="glass rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex items-center justify-between p-3 border-b border-white/[0.06]">
+                  <span className="font-bold text-sm text-text-primary">תיקון צבע</span>
+                  <button onClick={() => setActivePanel(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">סגור</button>
+                </div>
+                <ColorCorrectionPanel />
+              </div>
+            )}
+            {!selectedCanvasItem && activePanel === 'speed' && (
+              <div className="glass rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex items-center justify-between p-3 border-b border-white/[0.06]">
+                  <span className="font-bold text-sm text-text-primary">מהירות</span>
+                  <button onClick={() => setActivePanel(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">סגור</button>
+                </div>
+                <SpeedPanel />
+              </div>
+            )}
+            {!selectedCanvasItem && activePanel === 'crop' && (
+              <div className="glass rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex items-center justify-between p-3 border-b border-white/[0.06]">
+                  <span className="font-bold text-sm text-text-primary">חיתוך</span>
+                  <button onClick={() => setActivePanel(null)} className="text-xs text-text-muted hover:text-text-primary transition-colors">סגור</button>
+                </div>
+                <CropPanel />
               </div>
             )}
           </div>
         )}
 
         {/* Tab bar - always visible on LEFT (RTL: appears on the left visually) */}
-        <div className="w-16 shrink-0 bg-[#12121A] border-r border-white/[0.06] flex flex-col items-center py-2 gap-1">
+        <div className="w-16 shrink-0 bg-[#12121A] border-s border-white/[0.06] flex flex-col items-center py-2 gap-1">
           {panelTabs.map((tab, idx) => (
             <button
               key={tab.id}
@@ -315,9 +348,9 @@ export default function Editor() {
               <tab.icon size={18} />
               <span className="text-[9px] leading-tight">{tab.label}</span>
               {/* Tooltip on hover - appears to the LEFT in RTL */}
-              <div className="absolute left-full px-2 py-1 bg-[#1a1a2e] border border-white/[0.12] rounded text-[10px] text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg" style={{ marginLeft: '8px' }}>
+              <div className="absolute right-full px-2 py-1 bg-[#1a1a2e] border border-white/[0.12] rounded text-[10px] text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg" style={{ marginRight: '8px' }}>
                 {tab.tooltip}
-                {idx < 5 && <span className="text-text-muted mr-1"> ({idx + 1})</span>}
+                {idx < 5 && <span className="text-text-muted me-1"> ({idx + 1})</span>}
               </div>
             </button>
           ))}
@@ -328,5 +361,26 @@ export default function Editor() {
       <ShortcutsModal />
       <ToastContainer />
     </div>
+  )
+}
+
+function SecondaryToolButton({ label, emoji, active, onClick }: {
+  label: string
+  emoji: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs transition-all ${
+        active
+          ? 'bg-accent-purple/20 text-accent-purple border border-accent-purple/30'
+          : 'bg-white/[0.04] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200 border border-transparent'
+      }`}
+    >
+      <span>{emoji}</span>
+      <span>{label}</span>
+    </button>
   )
 }

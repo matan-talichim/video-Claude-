@@ -230,7 +230,7 @@ export default function AudioPanel({ onClose }: { onClose?: () => void }) {
           <div className="flex items-center gap-2">
             <Volume2 size={14} className="text-text-secondary" />
             <span className="text-xs font-medium text-text-primary">עוצמת קול ראשית</span>
-            <span className="text-[10px] text-text-muted mr-auto font-mono">{displayVolume}%</span>
+            <span className="text-[10px] text-text-muted ms-auto font-mono">{displayVolume}%</span>
           </div>
           <input
             type="range" min="0" max="200" value={displayVolume}
@@ -335,7 +335,7 @@ export default function AudioPanel({ onClose }: { onClose?: () => void }) {
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-text-primary">מהירות ניגון</span>
-            <span className="text-[10px] text-accent-purple font-mono mr-auto">{playbackSpeed}x</span>
+            <span className="text-[10px] text-accent-purple font-mono ms-auto">{playbackSpeed}x</span>
           </div>
           <div className="flex items-center gap-2">
             <button

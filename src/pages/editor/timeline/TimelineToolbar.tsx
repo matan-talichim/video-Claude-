@@ -15,6 +15,9 @@ export default function TimelineToolbar() {
   } = useTimelineStore()
 
   const { currentTime, duration, splitAtPlayhead } = useEditorStore()
+  const undoLastEdit = useEditorStore((s) => s.undoLastEdit)
+  const redoLastEdit = useEditorStore((s) => s.redoLastEdit)
+  const redoHistory = useEditorStore((s) => s.redoHistory)
   const pasteAtTime = useTimelineStore((s) => s.pasteAtTime)
   const editHistory = useEditorStore((s) => s.editHistory)
 
@@ -46,8 +49,8 @@ export default function TimelineToolbar() {
         <ToolButton icon={<Copy size={14} />} label="העתק" shortcut="⌘C" onClick={copySelected} disabled={selectedClipIds.length === 0} />
         <ToolButton icon={<ClipboardPaste size={14} />} label="הדבק" shortcut="⌘V" onClick={handlePaste} disabled={clipboard.length === 0} />
         <div className="w-px h-5 bg-white/[0.08] mx-1" />
-        <ToolButton icon={<Undo2 size={14} />} label="בטל" shortcut="⌘Z" onClick={() => {}} disabled={editHistory.length === 0} />
-        <ToolButton icon={<Redo2 size={14} />} label="שחזר" shortcut="⌘⇧Z" onClick={() => {}} />
+        <ToolButton icon={<Undo2 size={14} />} label="בטל" shortcut="⌘Z" onClick={() => undoLastEdit()} disabled={editHistory.length === 0} />
+        <ToolButton icon={<Redo2 size={14} />} label="שחזר" shortcut="⌘⇧Z" onClick={() => redoLastEdit()} disabled={redoHistory.length === 0} />
       </div>
 
       {/* Spacer */}

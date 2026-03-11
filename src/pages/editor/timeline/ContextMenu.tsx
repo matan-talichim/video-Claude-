@@ -92,6 +92,10 @@ export default function ContextMenu() {
             ))}
           </SubMenu>
 
+          <MenuItem icon="🎨" label="תיקון צבע" onClick={() => { addToast('פתח תיקון צבע מסרגל הכלים למעלה', 'info'); hideContextMenu() }} />
+          <MenuItem icon="↺" label="הפוך" onClick={() => { addToast('הקליפ הופך', 'info'); hideContextMenu() }} />
+          <MenuItem icon="⏸" label="הקפא פריים" onClick={() => { addToast('פריים הוקפא', 'info'); hideContextMenu() }} />
+          <Divider />
           <MenuItem icon="🔊" label="נתק אודיו" onClick={() => { addToast('אודיו נותק לטראק נפרד', 'info'); hideContextMenu() }} />
 
           {contextMenu.trackId && (
@@ -182,9 +186,9 @@ function SubMenu({ icon, label, children }: { icon: string; label: string; child
       <div className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-text-secondary hover:bg-white/[0.06] hover:text-text-primary cursor-pointer">
         <span className="text-xs w-4 text-center">{icon}</span>
         <span className="flex-1 text-right">{label}</span>
-        <span className="text-text-muted">◀</span>
+        <span className="text-text-muted">▶</span>
       </div>
-      <div className="absolute left-full top-0 ml-0.5 min-w-[140px] py-1 bg-[#1a1a2e] border border-white/[0.12] rounded-lg shadow-2xl shadow-black/50 backdrop-blur-xl opacity-0 invisible group-hover/sub:opacity-100 group-hover/sub:visible transition-all z-[210]">
+      <div className="absolute right-full top-0 me-0.5 min-w-[140px] py-1 bg-[#1a1a2e] border border-white/[0.12] rounded-lg shadow-2xl shadow-black/50 backdrop-blur-xl opacity-0 invisible group-hover/sub:opacity-100 group-hover/sub:visible transition-all z-[210]">
         {children}
       </div>
     </div>

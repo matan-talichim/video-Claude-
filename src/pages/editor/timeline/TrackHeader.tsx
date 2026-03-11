@@ -23,7 +23,7 @@ export default function TrackHeader({ track }: TrackHeaderProps) {
 
   return (
     <div
-      className={`flex items-center gap-1 px-2 border-l border-white/[0.06] bg-bg-panel shrink-0 transition-opacity ${
+      className={`flex items-center gap-1 px-2 border-s border-white/[0.06] bg-bg-panel shrink-0 transition-opacity ${
         track.muted ? 'opacity-50' : ''
       } ${track.collapsed ? 'h-6' : 'h-10'}`}
       style={{ width: 140 }}
@@ -55,7 +55,7 @@ export default function TrackHeader({ track }: TrackHeaderProps) {
       )}
 
       {/* Controls */}
-      <div className="flex items-center gap-0 mr-auto">
+      <div className="flex items-center gap-0 ms-auto">
         <HeaderButton
           active={track.muted}
           activeColor="text-red-400"

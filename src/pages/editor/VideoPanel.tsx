@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Minimize, Music, Film, ChevronsRight, ChevronsLeft } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import type { CaptionStyle, BRollItem } from '../../stores/editorStore'
+import { useTimelineStore } from '../../stores/timelineStore'
 import { getDeletedRegionEnd } from '../../services/videoEditor'
 
 const allSpeeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4]
@@ -14,7 +15,14 @@ export default function VideoPanel() {
     setDuration, setIsPlaying, setShowCaptions,
   } = useEditorStore()
 
-  const trackStates = useEditorStore((s) => s.trackStates)
+  // Read track visibility/mute/lock from timelineStore (synced with TrackHeader buttons)
+  const timelineTracks = useTimelineStore((s) => s.tracks)
+  const trackStates = {
+    video: timelineTracks.find(t => t.type === 'video') || { muted: false, locked: false, visible: true },
+    audio: timelineTracks.find(t => t.type === 'audio') || { muted: false, locked: false, visible: true },
+    captions: timelineTracks.find(t => t.type === 'captions') || { muted: false, locked: false, visible: true },
+    broll: timelineTracks.find(t => t.type === 'broll') || { muted: false, locked: false, visible: true },
+  }
   const effects = useEditorStore((s) => s.editorEffects)
   const videoRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
