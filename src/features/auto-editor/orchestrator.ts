@@ -1,11 +1,13 @@
 import { useAutoEditorStore, type AutoEditorInput, type VideoResult, type QualityReport, type ABVersionResult } from './store/autoEditorStore'
 import { useUserProfileStore } from '../../stores/userProfileStore'
+import { usePromptEvolutionStore } from '../../stores/promptEvolutionStore'
 import { transcribeVideos } from './services/whisperService'
 import { planWithChatGPT } from './services/chatgptService'
 import { generateBackground } from './services/nanoBananaService'
 import { generateBrollSeedance } from './services/seedanceService'
 import { generateBrollVeo } from './services/veoService'
 import { findMusic } from './services/pixabayService'
+import { BASE_VISUAL_PROMPT, BASE_ENRICH_PROMPT } from './constants/basePrompts'
 
 const API_BASE = 'http://localhost:3001/api'
 
@@ -460,16 +462,27 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
 
     let visualAnalysis = null
     try {
+      // Get evolved prompt for visual analysis
+      const evolvedVisualPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('visual_analysis', BASE_VISUAL_PROMPT)
+
       const visualRes = await fetch(`${API_BASE}/auto-editor/analyze-visuals`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           videoUrl: enrichedInput.videoUrls[0],
           duration: transcript.totalDuration,
+          promptEvolution: evolvedVisualPrompt !== BASE_VISUAL_PROMPT ? evolvedVisualPrompt : undefined,
         }),
       })
       if (visualRes.ok) {
         visualAnalysis = await visualRes.json()
+
+        // Collect prompt improvements from visual analysis
+        if (visualAnalysis._promptImprovements?.length > 0) {
+          usePromptEvolutionStore.getState().recordEvolution('visual_analysis', visualAnalysis._promptImprovements)
+          addLog(`[למידה] ניתוח ויזואלי למד ${visualAnalysis._promptImprovements.length} תובנות חדשות`)
+        }
+
         setVisualAnalysis(visualAnalysis)
         addLog(`ניתוח ויזואלי: ${visualAnalysis.scene_analysis?.length || 0} סצנות, מיקום: ${visualAnalysis.overall?.location || 'לא ידוע'}`)
       }
@@ -487,6 +500,9 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     setStep('enriching')
     setProgress({ current: 0, total: 1, label: 'AI מנתח את התוכן ומשפר את הפרומפט...' })
 
+    // Get evolved prompt for enrichment
+    const evolvedEnrichPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('enrichment', BASE_ENRICH_PROMPT)
+
     const enrichRes = await fetch(`${API_BASE}/auto-editor/enrich-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -502,6 +518,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         visualAnalysis,
         energyAnalysis,
         userProfile: profile.getProfileForPrompt(),
+        promptEvolution: evolvedEnrichPrompt !== BASE_ENRICH_PROMPT ? evolvedEnrichPrompt : undefined,
       }),
     })
 
@@ -511,6 +528,13 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     }
 
     const enrichment = await enrichRes.json()
+
+    // Collect prompt improvements from enrichment
+    if (enrichment._promptImprovements?.length > 0) {
+      usePromptEvolutionStore.getState().recordEvolution('enrichment', enrichment._promptImprovements)
+      addLog(`[למידה] שיפור פרומפט למד ${enrichment._promptImprovements.length} תובנות חדשות`)
+    }
+
     console.log('[AUTO-EDIT] Enhanced prompt:', enrichment.enhanced_prompt?.substring(0, 100))
     console.log('[AUTO-EDIT] B-Roll suggestions:', enrichment.broll_suggestions?.length)
     addLog(`AI שיפר את הפרומפט: ${enrichment.broll_suggestions?.length || 0} הצעות B-Roll`)
@@ -664,6 +688,26 @@ export async function continueAfterEnrichment(
     const qualityReport = evaluateEditQuality(videoPlanA, cutsDurA, videoTargetDur)
     setQualityReport(qualityReport)
     addLog(`דוח איכות: ${qualityReport.score}/100 (${qualityReport.passed.length} עברו, ${qualityReport.issues.length} בעיות)`)
+
+    // Record quality for prompt evolution and check for degradation
+    const evolutionModels = ['visual_analysis', 'enrichment', 'creative_brief', 'technical_plan']
+    const evoStore = usePromptEvolutionStore.getState()
+    evolutionModels.forEach(modelId => {
+      const evo = evoStore.evolutions[modelId]
+      if (evo && evo.successRate > 0 && qualityReport.score < evo.successRate * 100 * 0.6) {
+        // Quality dropped by more than 40% - remove last addition
+        console.warn(`[EVOLUTION] ${modelId}: quality dropped! Rolling back last addition.`)
+        addLog(`[למידה] ${modelId}: איכות ירדה, מבטל שיפור אחרון`)
+        const trimmed = evo.additions.slice(0, -1)
+        usePromptEvolutionStore.setState(state => ({
+          evolutions: {
+            ...state.evolutions,
+            [modelId]: { ...evo, additions: trimmed, version: evo.version + 1 },
+          },
+        }))
+      }
+      evoStore.recordSuccess(modelId, qualityReport.score)
+    })
 
     // If we have both versions, show comparison screen
     if (processedB && processedB.length > 0) {
