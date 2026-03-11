@@ -164,16 +164,18 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       addLog('משתמש בתמלול קיים מהמטמון')
     }
 
-    // Step 2 — Validation
+    // Step 2 — Validation (skip duration validation when AI chooses)
     setStep('validating')
-    const validation = validateAvailableContent(
-      transcript.totalDuration,
-      enrichedInput.targetDuration,
-      enrichedInput.numberOfVideos
-    )
-    if (!validation.valid) {
-      setError(validation.message!)
-      return
+    if (enrichedInput.targetDuration !== -1) {
+      const validation = validateAvailableContent(
+        transcript.totalDuration,
+        enrichedInput.targetDuration,
+        enrichedInput.numberOfVideos
+      )
+      if (!validation.valid) {
+        setError(validation.message!)
+        return
+      }
     }
     addLog('ולידציה עברה בהצלחה')
 
@@ -181,7 +183,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     let editingPlan = useAutoEditorStore.getState().cachedEditingPlan
     if (!editingPlan) {
       setStep('planning')
-      setProgress({ current: 0, total: 2, label: 'הבמאי מנתח את הסרטון...' })
+      setProgress({ current: 0, total: 2, label: enrichedInput.targetDuration === -1 ? 'הבמאי מנתח ובוחר אורך אופטימלי...' : 'הבמאי מנתח את הסרטון...' })
       editingPlan = await planWithChatGPT(transcript, enrichedInput)
       setProgress({ current: 2, total: 2, label: 'תכנון הושלם!' })
       setCachedEditingPlan(editingPlan)
@@ -189,10 +191,20 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       addLog('משתמש בתכנון קיים מהמטמון')
     }
 
+    // If AI chooses duration, show what was decided and log it
+    if (enrichedInput.targetDuration === -1 && editingPlan.videos) {
+      const durationSummary = editingPlan.videos
+        .map((v: any) => `סרטון ${v.videoIndex} = ${v.optimalDuration || '?'}שנ`)
+        .join(', ')
+      setProgress({ current: 2, total: 2, label: `ה-AI בחר: ${durationSummary}` })
+      addLog(`AI בחר אורך: ${durationSummary}`)
+    }
+
     // Verify plan quality
     for (const video of editingPlan.videos) {
       const cutsDuration = video.cuts.reduce((sum: number, c: any) => sum + (c.keepEnd - c.keepStart), 0)
-      addLog(`[אימות] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${enrichedInput.targetDuration}s), ${video.brollMoments?.length || 0} B-Roll, ${video.subtitles?.length || 0} כתוביות`)
+      const videoTarget = enrichedInput.targetDuration === -1 ? (video.optimalDuration || '?') : enrichedInput.targetDuration
+      addLog(`[אימות] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${videoTarget}s), ${video.brollMoments?.length || 0} B-Roll, ${video.subtitles?.length || 0} כתוביות`)
     }
 
     // Step 4 — Generate assets with graceful fallbacks
@@ -268,7 +280,9 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         body: JSON.stringify({
           videoUrl: sourceUrl,
           videoPlan: fullPlan,
-          targetDuration: enrichedInput.targetDuration,
+          targetDuration: enrichedInput.targetDuration === -1
+            ? (videoPlan.optimalDuration || 60)
+            : enrichedInput.targetDuration,
           platforms: enrichedInput.platforms,
           musicUrl: musicUrl || null,
           backgroundImage: backgroundImage || null,
@@ -287,6 +301,9 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       processedVideos.push({
         videoIndex: i + 1,
         files: result.files || [],
+        optimalDuration: videoPlan.optimalDuration,
+        durationReasoning: videoPlan.durationReasoning,
+        recommendedPlatform: videoPlan.recommendedPlatform,
       })
     }
 

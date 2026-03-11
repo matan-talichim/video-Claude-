@@ -24,6 +24,9 @@ export interface VideoPlan {
   musicMoments: Array<{ atTime: number; volume: string }>
   musicStyle: string
   overallVibe: string
+  optimalDuration?: number
+  durationReasoning?: string
+  recommendedPlatform?: string
 }
 
 export interface EditingPlan {
@@ -84,6 +87,10 @@ export interface CreativeBrief {
       reason: string
     }>
     estimated_duration: number
+    optimal_duration?: number
+    duration_reasoning?: string
+    recommended_platform?: string
+    targetDuration?: number
   }>
 }
 
@@ -112,6 +119,7 @@ async function getCreativeBrief(
       userPrompt: input.userPrompt,
       targetDuration: input.targetDuration,
       numberOfVideos: input.numberOfVideos,
+      platforms: input.platforms,
       userProfile: userProfile || '',
     }),
   })
@@ -235,6 +243,9 @@ function normalizeTechnicalPlan(
         })),
         musicStyle: brief.creative_brief?.music_mood ?? '',
         overallVibe: brief.creative_brief?.overall_vibe ?? '',
+        optimalDuration: v.optimal_duration ?? v.optimalDuration,
+        durationReasoning: v.duration_reasoning ?? v.durationReasoning,
+        recommendedPlatform: v.recommended_platform ?? v.recommendedPlatform,
       }
 
       // Normalize transitions from object array to string array
@@ -293,13 +304,14 @@ function normalizeTechnicalPlan(
 
   // Validate cuts sum to approximately target duration
   for (const video of plan.videos) {
+    const videoTarget = input.targetDuration === -1 ? (video.optimalDuration || 60) : input.targetDuration
     const totalCutDuration = video.cuts.reduce((sum, c) => sum + (c.keepEnd - c.keepStart), 0)
-    log(`סרטון ${video.videoIndex}: סך חיתוכים = ${totalCutDuration.toFixed(1)}s (יעד: ${input.targetDuration}s), ${video.brollMoments.length} B-Roll, ${video.subtitles.length} כתוביות`)
+    log(`סרטון ${video.videoIndex}: סך חיתוכים = ${totalCutDuration.toFixed(1)}s (יעד: ${videoTarget}s), ${video.brollMoments.length} B-Roll, ${video.subtitles.length} כתוביות`)
 
     if (video.cuts.length === 0) {
       video.cuts.push({
         keepStart: 0,
-        keepEnd: Math.min(input.targetDuration, transcript.totalDuration),
+        keepEnd: Math.min(videoTarget, transcript.totalDuration),
       })
       log(`סרטון ${video.videoIndex}: נוצר חיתוך ברירת מחדל`)
     }
