@@ -7,6 +7,8 @@ export interface TranscriptSegment {
   end: number
   text: string
   sourceFile: number
+  speaker?: string
+  isPresenter?: boolean
 }
 
 export interface Silence {
@@ -19,6 +21,8 @@ export interface FullTranscript {
   totalDuration: number
   segments: TranscriptSegment[]
   silences: Silence[]
+  mainSpeaker?: string
+  speakerTimes?: Record<string, number>
 }
 
 function detectSilences(segments: TranscriptSegment[]): Silence[] {
@@ -90,6 +94,8 @@ export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscr
         end: seg.end,
         text: seg.text,
         sourceFile: index,
+        speaker: seg.speaker,
+        isPresenter: seg.isPresenter,
       }))
 
       // Calculate duration from segments if API returned 0
@@ -103,12 +109,19 @@ export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscr
         log(`קובץ ${index + 1}: משך משוער: ${duration.toFixed(1)} שניות`)
       }
 
-      return { segments: segs, duration }
+      return { segments: segs, duration, mainSpeaker: data.mainSpeaker, speakerTimes: data.speakerTimes }
     })
   )
 
   const merged = mergeTranscripts(transcripts)
-  log(`תמלול הושלם: ${merged.totalDuration.toFixed(1)} שניות, ${merged.segments.length} קטעים`)
+
+  // Preserve mainSpeaker and speakerTimes from transcription results
+  if (transcripts.length > 0 && transcripts[0].mainSpeaker) {
+    merged.mainSpeaker = transcripts[0].mainSpeaker
+    merged.speakerTimes = transcripts[0].speakerTimes
+  }
+
+  log(`תמלול הושלם: ${merged.totalDuration.toFixed(1)} שניות, ${merged.segments.length} קטעים${merged.mainSpeaker ? `, פרזנטור: ${merged.mainSpeaker}` : ''}`)
 
   return merged
 }

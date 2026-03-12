@@ -2648,8 +2648,34 @@ ${aiChoosesDuration ? '- optimal_duration: חובה! קבע אורך אופטי�
         },
         {
           role: 'user' as const,
-          content: `תמלול הסרטון:
-${JSON.stringify(transcript.segments.map((s: any) => ({ start: s.start, end: s.end, text: s.text })))}
+          content: (() => {
+            // Separate presenter segments from non-presenter
+            const presenterSegments = transcript.segments.filter((s: any) => s.isPresenter !== false)
+            const nonPresenterSegments = transcript.segments.filter((s: any) => s.isPresenter === false)
+            const mainSpeakerName = transcript.mainSpeaker || 'unknown'
+            const speakerTimesData = transcript.speakerTimes || {}
+
+            let presenterInfo = ''
+            if (nonPresenterSegments.length > 0) {
+              presenterInfo = `
+הדובר הראשי (פרזנטור): ${mainSpeakerName}
+זמן דיבור פרזנטור: ${(speakerTimesData[mainSpeakerName] || 0).toFixed?.(1) || '?'} שניות
+דוברים אחרים (עוזרי הפקה/רקע): ${Object.keys(speakerTimesData).filter((s: string) => s !== mainSpeakerName).join(', ')}
+
+חוקים קריטיים:
+- השתמש רק בקטעים של הפרזנטור (isPresenter=true)
+- התעלם לחלוטין מדיבורים של עוזרי הפקה
+- אם עוזר הפקה מדבר - חתוך את הקטע הזה
+- ה-hook חייב להיות מהפרזנטור, לא מאף אחד אחר
+
+קטעים להתעלם מהם (לא הפרזנטור):
+${nonPresenterSegments.map((s: any) => `[${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s] ${s.speaker}: ${s.text}`).join('\n')}
+`
+            }
+
+            return `${presenterInfo}
+תמלול הסרטון (פרזנטור בלבד):
+${JSON.stringify(presenterSegments.map((s: any) => ({ start: s.start, end: s.end, text: s.text, speaker: s.speaker })))}
 
 משך כולל: ${transcript.total_duration || transcript.totalDuration} שניות
 בקשת המשתמש: ${userPrompt}
@@ -2658,6 +2684,7 @@ ${aiChoosesDuration ? 'אורך יעד: AI בוחר - קבע אורך אופטי
 פלטפורמות: ${(platforms || ['tiktok', 'reels', 'shorts']).join(', ')}
 
 נתח את התמלול וצור brief יצירתי מפורט.${aiChoosesDuration ? ' חובה לכלול optimal_duration ו-duration_reasoning לכל סרטון!' : ''}`
+          })()
         }
       ],
       response_format: { type: 'json_object' as const },
@@ -3030,38 +3057,49 @@ Create precise technical edit plan.`
 })
 
 // POST /api/generate-background — Nano Banana (Gemini) image generation
+let imagenFailCount = 0
+
 app.post('/api/generate-background', async (req, res) => {
   try {
     const ai = getGemini()
-    if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
 
     const { prompt, aspectRatio = '9:16' } = req.body
     if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
-    console.log('[NANO BANANA] Generating image with Gemini...')
+    console.log('[NANO BANANA] Generating image...')
 
     let imageData: any = null
 
-    // Try multiple Imagen model names (API may use different versions)
-    const modelNames = ['imagen-3.0-generate-002', 'imagen-3.0-generate-001', 'imagen-3.0']
-    for (const modelName of modelNames) {
-      try {
-        const response = await ai.models.generateImages({
-          model: modelName,
-          prompt,
-          config: { numberOfImages: 1, aspectRatio },
-        })
-        imageData = response.generatedImages?.[0]?.image
-        if (imageData) {
-          console.log('[NANO BANANA] Success with model:', modelName)
-          break
+    // Only try Gemini Imagen if it hasn't failed too many times and API is configured
+    if (ai && imagenFailCount < 3) {
+      // Try multiple Imagen model names (API may use different versions)
+      const modelNames = ['imagen-3.0-generate-002', 'imagen-3.0-generate-001', 'imagen-3.0']
+      for (const modelName of modelNames) {
+        try {
+          const response = await ai.models.generateImages({
+            model: modelName,
+            prompt,
+            config: { numberOfImages: 1, aspectRatio },
+          })
+          imageData = response.generatedImages?.[0]?.image
+          if (imageData) {
+            console.log('[NANO BANANA] Success with model:', modelName)
+            imagenFailCount = 0 // Reset on success
+            break
+          }
+        } catch (modelErr: any) {
+          console.warn(`[NANO BANANA] Model ${modelName} failed:`, modelErr.message?.slice(0, 100))
         }
-      } catch (modelErr: any) {
-        console.warn(`[NANO BANANA] Model ${modelName} failed:`, modelErr.message?.slice(0, 100))
       }
+      if (!imageData) {
+        imagenFailCount++
+        console.log(`[NANO BANANA] Imagen failed (count: ${imagenFailCount}/3), trying DALL-E fallback`)
+      }
+    } else if (imagenFailCount >= 3) {
+      console.log('[NANO BANANA] Skipping Imagen (failed 3+ times), going directly to DALL-E')
     }
 
-    // Fallback to DALL-E 3 if Gemini Imagen fails
+    // Fallback to DALL-E 3 if Gemini Imagen fails or not configured
     if (!imageData) {
       console.log('[NANO BANANA] Gemini Imagen failed, trying DALL-E 3 fallback...')
       const dalleAi = await getOpenAI()
@@ -3153,7 +3191,7 @@ app.post('/api/generate-broll', async (req, res) => {
 
       const taskData = await createRes.json()
       console.log('[SEEDANCE] Full response:', JSON.stringify(taskData))
-      const taskId = taskData.data?.task_id || taskData.task_id || taskData.id || taskData.data?.id
+      const taskId = taskData.data?.taskId || taskData.data?.task_id || taskData.data?.recordId || taskData.data?.id || taskData.taskId || taskData.task_id || taskData.id
       console.log('[SEEDANCE] Task created:', taskId)
 
       if (!taskId) {
@@ -3463,6 +3501,25 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       console.log('[AUTO-TRANSCRIBE] Estimated duration:', totalDuration)
     }
 
+    // Identify main speaker (presenter) by total speaking time
+    const speakerTimes: Record<string, number> = {}
+    segments.forEach((seg: any) => {
+      const speaker = seg.speaker || 'unknown'
+      if (!speakerTimes[speaker]) speakerTimes[speaker] = 0
+      speakerTimes[speaker] += ((seg.end || 0) - (seg.start || 0))
+    })
+
+    const mainSpeaker = Object.entries(speakerTimes)
+      .sort(([, a], [, b]) => (b as number) - (a as number))[0]?.[0] || segments[0]?.speaker || 'unknown'
+
+    console.log('[AUTO-TRANSCRIBE] Speaker times:', speakerTimes)
+    console.log('[AUTO-TRANSCRIBE] Main presenter:', mainSpeaker)
+
+    // Mark each segment with isPresenter flag
+    segments.forEach((seg: any) => {
+      seg.isPresenter = (seg.speaker === mainSpeaker)
+    })
+
     console.log('[AUTO-TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers,', totalDuration.toFixed(1), 'sec, model:', usedModel)
 
     res.json({
@@ -3470,6 +3527,8 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       duration: totalDuration,
       text: transcription.text || '',
       speakers,
+      mainSpeaker,
+      speakerTimes,
       model: usedModel,
     })
   } catch (err: any) {
@@ -3890,54 +3949,56 @@ function buildMultiCamFilter(cameraAngles: any[], videoWidth: number, videoHeigh
   const w = videoWidth % 2 === 0 ? videoWidth : videoWidth - 1
   const h = videoHeight % 2 === 0 ? videoHeight : videoHeight - 1
 
-  // Build per-segment crop filters using enable= time ranges (no trim+concat needed)
-  const cropParts: string[] = []
-  for (const seg of cameraAngles) {
-    const camType = seg.camera || 'wide'
-    if (camType === 'wide') continue // wide = no crop needed
+  // Build a single dynamic crop expression that changes based on time
+  // This is more reliable than chaining multiple crop+scale with enable=
+  const nonWideAngles = cameraAngles.filter((seg: any) => (seg.camera || 'wide') !== 'wide')
+  if (nonWideAngles.length === 0) return ''
 
-    let cropFactor = 1.0
-    let xOff = 0
-    let yOff = 0
+  // Build crop expressions that dynamically compute crop params based on time
+  const getCropParams = (camType: string) => {
     switch (camType) {
-      case 'closeup':
-        cropFactor = 0.6
-        break
-      case 'medium':
-        cropFactor = 0.8
-        break
-      case 'left':
-        cropFactor = 0.8
-        xOff = 0 // left-aligned
-        yOff = Math.round(h * 0.1)
-        break
-      case 'right':
-        cropFactor = 0.8
-        xOff = Math.round(w * 0.2)
-        yOff = Math.round(h * 0.1)
-        break
-    }
-
-    if (cropFactor < 1.0 && camType !== 'left' && camType !== 'right') {
-      const cw = Math.round(w * cropFactor)
-      const ch = Math.round(h * cropFactor)
-      xOff = Math.round((w - cw) / 2)
-      yOff = Math.round((h - ch) / 2)
-    }
-
-    if (cropFactor < 1.0) {
-      const cw = Math.round(w * cropFactor)
-      const ch = Math.round(h * cropFactor)
-      // Use zoompan to smoothly zoom in during the segment's time range
-      // zoompan is applied as overlay so we use crop+scale with enable= instead
-      cropParts.push(`crop=${cw}:${ch}:${xOff}:${yOff}:enable='between(t,${seg.start},${seg.end})',scale=${w}:${h}:enable='between(t,${seg.start},${seg.end})'`)
+      case 'closeup': return { factor: 0.6 }
+      case 'medium': return { factor: 0.8 }
+      case 'left': return { factor: 0.75, xAlign: 'left' }
+      case 'right': return { factor: 0.75, xAlign: 'right' }
+      default: return { factor: 1.0 }
     }
   }
 
-  if (cropParts.length === 0) return ''
+  // Build a single crop width/height/x/y expression using if(between(t,...),...)
+  // Default to full frame (factor=1.0), override during angle time ranges
+  let cwExpr = `${w}`
+  let chExpr = `${h}`
+  let cxExpr = '0'
+  let cyExpr = '0'
 
-  // Chain all crop filters (each only active during its time range)
-  return cropParts.join(',')
+  // Apply each angle as a conditional override (last matching wins)
+  for (const seg of nonWideAngles) {
+    const params = getCropParams(seg.camera || 'wide')
+    if (params.factor >= 1.0) continue
+
+    const cw = Math.round(w * params.factor)
+    const ch = Math.round(h * params.factor)
+    let cx: number, cy: number
+    if (params.xAlign === 'left') {
+      cx = 0
+      cy = Math.round((h - ch) / 2)
+    } else if (params.xAlign === 'right') {
+      cx = w - cw
+      cy = Math.round((h - ch) / 2)
+    } else {
+      cx = Math.round((w - cw) / 2)
+      cy = Math.round((h - ch) / 2)
+    }
+
+    const cond = `between(t,${seg.start},${seg.end})`
+    cwExpr = `if(${cond},${cw},${cwExpr})`
+    chExpr = `if(${cond},${ch},${chExpr})`
+    cxExpr = `if(${cond},${cx},${cxExpr})`
+    cyExpr = `if(${cond},${cy},${cyExpr})`
+  }
+
+  return `crop='${cwExpr}':'${chExpr}':'${cxExpr}':'${cyExpr}',scale=${w}:${h}`
 }
 
 // Build smart framing filter for platform export
@@ -4015,6 +4076,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       includeBackground = true,
       animatedSubtitles = false,
       animationStyle = 'karaoke',
+      skipPlatformExport = false,
     } = req.body
 
     const ffmpegPath = getFFmpeg()
@@ -4255,7 +4317,26 @@ app.post('/api/auto-editor/process', async (req, res) => {
         currentFile = zoomFile
         console.log('[PROCESS] Step 3.5 done: Zoom effects applied')
       } catch (e: any) {
-        console.log('[PROCESS] Zoom effects failed, continuing without:', e.message?.slice(0, 150))
+        console.log('[PROCESS] Zoom filter_complex failed, trying simple crop fallback:', e.message?.slice(0, 100))
+        // Simpler fallback: apply just the first zoom as a static crop+scale
+        try {
+          const firstZoom = remappedZooms[0]
+          if (firstZoom) {
+            const intensity = Math.min(firstZoom.scale || 1.15, 1.3)
+            const cropW = Math.round(zoomW / intensity)
+            const cropH = Math.round(zoomH / intensity)
+            const cropX = Math.round((zoomW - cropW) / 2)
+            const cropY = Math.round((zoomH - cropH) / 2)
+            execSync(
+              `"${ffmpegPath}" -i "${currentFile}" -vf "crop=${cropW}:${cropH}:${cropX}:${cropY}:enable='between(t,${firstZoom.start},${firstZoom.start + firstZoom.duration})',scale=${zoomW}:${zoomH}" -c:a copy "${zoomFile}" -y`,
+              { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+            )
+            currentFile = zoomFile
+            console.log('[PROCESS] Step 3.5 done: Simple zoom fallback applied')
+          }
+        } catch {
+          console.log('[PROCESS] Zoom effects failed completely, continuing without')
+        }
       }
     } else {
       console.log('[PROCESS] Step 3.5 skipped: No zooms in plan')
@@ -4354,7 +4435,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           const assContent = generateStyledSubtitles(segments, cuts, subStyle)
           assFilePath = path.join(uploadsDir, `subs_${timestamp}.ass`)
           filesToCleanup.push(assFilePath)
-          fs.writeFileSync(assFilePath, assContent, 'utf8')
+          fs.writeFileSync(assFilePath, '\ufeff' + assContent, 'utf-8')
           const subFile = path.join(uploadsDir, `subbed_${timestamp}.mp4`)
           filesToCleanup.push(subFile)
           const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
@@ -4372,7 +4453,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       const assContent = generateStyledSubtitles(segments, cuts, subStyle)
       assFilePath = path.join(uploadsDir, `subs_${timestamp}.ass`)
       filesToCleanup.push(assFilePath)
-      fs.writeFileSync(assFilePath, assContent, 'utf8')
+      fs.writeFileSync(assFilePath, '\ufeff' + assContent, 'utf-8')
 
       const subFile = path.join(uploadsDir, `subbed_${timestamp}.mp4`)
       filesToCleanup.push(subFile)
@@ -4408,10 +4489,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
             currentOffset += cutDuration
           }
           if (srtContent.trim()) {
-            fs.writeFileSync(srtFile, srtContent, 'utf8')
+            fs.writeFileSync(srtFile, '\ufeff' + srtContent, 'utf-8')
             const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
             execSync(
-              `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontName=Arial,FontSize=22,Bold=1,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=40'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+              `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontName=Arial,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
               { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
             )
             currentFile = subFile
@@ -4452,13 +4533,13 @@ app.post('/api/auto-editor/process', async (req, res) => {
             cutOffset += cutDuration
           }
 
-          // Write Hebrew text to temp file to avoid FFmpeg encoding issues
+          // Write Hebrew text to temp file (no BOM for drawtext compatibility)
           const tmpTextFile = path.join(uploadsDir, `speaker_${timestamp}_${idx}.txt`)
           fs.writeFileSync(tmpTextFile, name, 'utf-8')
           filesToCleanup.push(tmpTextFile)
 
           const escapedTextFile = tmpTextFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
-          return `drawtext=textfile='${escapedTextFile}':fontsize=28:fontcolor=white:x=w-text_w-40:y=h-80:enable='between(t,${relativeStart},${relativeStart + displayDur})':box=1:boxcolor=0x7C5CFF@0.7:boxborderw=10`
+          return `drawtext=textfile='${escapedTextFile}':fontsize=28:fontcolor=white:borderw=2:bordercolor=black:x=w-text_w-40:y=h-80:enable='between(t,${relativeStart},${relativeStart + displayDur})':box=1:boxcolor=0x7C5CFF@0.7:boxborderw=10`
         })
 
         const lowerThirdFilter = lowerThirdParts.join(',')
@@ -4506,14 +4587,14 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
           const end = relativeStart + duration
 
-          // Write Hebrew text to temp file to avoid FFmpeg encoding issues
+          // Write Hebrew text to temp file (no BOM for drawtext compatibility)
           const tmpTextFile = path.join(uploadsDir, `gfx_${timestamp}_${idx}.txt`)
           fs.writeFileSync(tmpTextFile, text, 'utf-8')
           filesToCleanup.push(tmpTextFile)
 
           const escapedTextFile = tmpTextFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
           // Slide in from right (RTL friendly)
-          return `drawtext=textfile='${escapedTextFile}':fontsize=36:fontcolor=white:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
+          return `drawtext=textfile='${escapedTextFile}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
         })
 
         const gfxFilter = gfxParts.join(',')
@@ -4533,6 +4614,25 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // ============================================
     // STEP 8: EXPORT FOR EACH PLATFORM (SMART FRAMING)
     // ============================================
+
+    // If skipPlatformExport, return the single edited file without platform variants (for A/B preview)
+    if (skipPlatformExport) {
+      console.log('[PROCESS] Skipping platform export (A/B preview mode)')
+      const fileSize = fs.statSync(currentFile).size / (1024 * 1024)
+      return res.json({
+        success: true,
+        files: [{
+          url: `http://localhost:${PORT}/uploads/${path.basename(currentFile)}`,
+          platform: 'original',
+          ratio: '16:9',
+          resolution: '1920x1080',
+          filename: path.basename(currentFile),
+          sizeMB: parseFloat(fileSize.toFixed(1)),
+        }],
+        plan: req.body,
+        message: 'עריכה הושלמה (ללא ייצוא לפלטפורמות)',
+      })
+    }
 
     const platformSpecs: Record<string, { w: number; h: number; ratio: string }> = {
       tiktok: { w: 1080, h: 1920, ratio: '9:16' },

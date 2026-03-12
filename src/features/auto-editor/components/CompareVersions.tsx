@@ -16,13 +16,27 @@ export default function CompareVersions() {
   const versionBApproach = useAutoEditorStore((s) => s.versionBApproach)
   const qualityReport = useAutoEditorStore((s) => s.qualityReport)
 
-  const [selected, setSelected] = useState<'A' | 'B' | null>(null)
+  const [selected, setSelected] = useState<Set<'A' | 'B'>>(new Set())
+  const [preferredForDesign, setPreferredForDesign] = useState<'A' | 'B' | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   if (!versionA || !versionB) return null
 
-  const handleConfirm = () => {
-    if (!selected) return
-    selectABVersion(selected)
+  const toggleVersion = (v: 'A' | 'B') => {
+    const next = new Set(selected)
+    if (next.has(v)) next.delete(v)
+    else next.add(v)
+    setSelected(next)
+    if (next.size === 1) setPreferredForDesign([...next][0])
+    if (next.size === 0) setPreferredForDesign(null)
+  }
+
+  const handleConfirm = async () => {
+    if (selected.size === 0) return
+    if (selected.size === 2 && !preferredForDesign) return
+    setExporting(true)
+    await selectABVersion([...selected], preferredForDesign)
+    setExporting(false)
   }
 
   const versionAUrl = versionA[0]?.files[0]?.url ? ensureFullUrl(versionA[0].files[0].url) : ''
@@ -31,13 +45,15 @@ export default function CompareVersions() {
   console.log('[COMPARE] Version A URL:', versionAUrl)
   console.log('[COMPARE] Version B URL:', versionBUrl)
 
+  const isDisabled = selected.size === 0 || (selected.size === 2 && !preferredForDesign) || exporting
+
   return (
     <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto">
       <div className="min-h-screen flex flex-col items-center py-8 px-4 max-w-5xl mx-auto space-y-6 animate-fade-in" dir="rtl">
         <div className="text-center space-y-2">
-          <h2 className="text-xl font-bold text-white">איזו גרסה עדיפה?</h2>
+          <h2 className="text-xl font-bold text-white">בחר גרסה</h2>
           <p className="text-gray-400 text-sm">
-            צפה בשתי הגרסאות ובחר את המועדפת. הבחירה שלך עוזרת ל-AI להשתפר.
+            צפה בשתי הגרסאות. אפשר לבחור אחת או שתיהן.
           </p>
         </div>
 
@@ -45,11 +61,14 @@ export default function CompareVersions() {
           {/* Version A */}
           <div
             className={`rounded-xl border-2 p-4 transition cursor-pointer ${
-              selected === 'A' ? 'border-purple-500 bg-purple-500/10' : 'border-white/10 bg-white/5 hover:border-white/20'
+              selected.has('A') ? 'border-purple-500 bg-purple-500/10' : 'border-white/10 bg-white/5 hover:border-white/20'
             }`}
-            onClick={() => setSelected('A')}
+            onClick={() => toggleVersion('A')}
           >
-            <h3 className="text-white font-medium mb-2">גרסה A</h3>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-white font-medium">גרסה A</h3>
+              {selected.has('A') && <span className="text-purple-400">נבחרה</span>}
+            </div>
             <p className="text-gray-400 text-xs mb-3">{versionAApproach}</p>
             {versionAUrl && (
               <video
@@ -62,24 +81,19 @@ export default function CompareVersions() {
                 onError={(e) => console.error('[COMPARE] Version A video error:', versionAUrl, e)}
               />
             )}
-            <button
-              onClick={(e) => { e.stopPropagation(); setSelected('A') }}
-              className={`w-full py-2 rounded-lg font-medium transition ${
-                selected === 'A' ? 'bg-purple-600 text-white' : 'bg-white/10 text-gray-300 hover:bg-white/15'
-              }`}
-            >
-              {selected === 'A' ? 'נבחרה' : 'בחר גרסה A'}
-            </button>
           </div>
 
           {/* Version B */}
           <div
             className={`rounded-xl border-2 p-4 transition cursor-pointer ${
-              selected === 'B' ? 'border-purple-500 bg-purple-500/10' : 'border-white/10 bg-white/5 hover:border-white/20'
+              selected.has('B') ? 'border-purple-500 bg-purple-500/10' : 'border-white/10 bg-white/5 hover:border-white/20'
             }`}
-            onClick={() => setSelected('B')}
+            onClick={() => toggleVersion('B')}
           >
-            <h3 className="text-white font-medium mb-2">גרסה B</h3>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-white font-medium">גרסה B</h3>
+              {selected.has('B') && <span className="text-purple-400">נבחרה</span>}
+            </div>
             <p className="text-gray-400 text-xs mb-3">{versionBApproach}</p>
             {versionBUrl && (
               <video
@@ -92,28 +106,48 @@ export default function CompareVersions() {
                 onError={(e) => console.error('[COMPARE] Version B video error:', versionBUrl, e)}
               />
             )}
-            <button
-              onClick={(e) => { e.stopPropagation(); setSelected('B') }}
-              className={`w-full py-2 rounded-lg font-medium transition ${
-                selected === 'B' ? 'bg-purple-600 text-white' : 'bg-white/10 text-gray-300 hover:bg-white/15'
-              }`}
-            >
-              {selected === 'B' ? 'נבחרה' : 'בחר גרסה B'}
-            </button>
           </div>
         </div>
+
+        {/* If BOTH selected - ask preference */}
+        {selected.size === 2 && (
+          <div className="w-full bg-purple-500/10 border border-purple-500/20 rounded-xl p-4">
+            <h4 className="text-purple-300 text-sm mb-3">בחרת שתי גרסאות. איזו מתאימה יותר לצורך העיצוב שלך?</h4>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setPreferredForDesign('A')}
+                className={`flex-1 py-2 rounded-lg text-sm transition ${preferredForDesign === 'A' ? 'bg-purple-600 text-white' : 'bg-white/10 text-gray-300 hover:bg-white/15'}`}
+              >
+                גרסה A
+              </button>
+              <button
+                onClick={() => setPreferredForDesign('B')}
+                className={`flex-1 py-2 rounded-lg text-sm transition ${preferredForDesign === 'B' ? 'bg-purple-600 text-white' : 'bg-white/10 text-gray-300 hover:bg-white/15'}`}
+              >
+                גרסה B
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Quality Report */}
         {qualityReport && (
           <QualityReportDisplay report={qualityReport} />
         )}
 
+        {/* Continue button */}
         <button
           onClick={handleConfirm}
-          disabled={!selected}
+          disabled={isDisabled}
           className="w-full max-w-md bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold transition"
         >
-          המשך עם הגרסה הנבחרת
+          {exporting
+            ? 'מייצא לפלטפורמות...'
+            : selected.size === 2
+              ? 'ייצא שתי הגרסאות'
+              : selected.size === 1
+                ? `ייצא גרסה ${[...selected][0]}`
+                : 'בחר גרסה'}
         </button>
       </div>
     </div>
@@ -146,7 +180,7 @@ export function QualityReportDisplay({ report }: { report: QualityReport }) {
           issue.severity === 'warning' ? 'text-yellow-400' :
           'text-gray-400'
         }`}>
-          {issue.severity === 'error' ? '✗' : issue.severity === 'warning' ? '!' : 'i'} {issue.message}
+          {issue.severity === 'error' ? 'x' : issue.severity === 'warning' ? '!' : 'i'} {issue.message}
         </div>
       ))}
     </div>

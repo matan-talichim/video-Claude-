@@ -292,7 +292,8 @@ async function processVideosWithPlan(
   finalInput: AutoEditorInput,
   musicUrl: string,
   backgroundImage: string,
-  versionLabel: string
+  versionLabel: string,
+  skipPlatformExport: boolean = false
 ): Promise<VideoResult[]> {
   const addLog = useAutoEditorStore.getState().addLog
   const processedVideos: VideoResult[] = []
@@ -347,6 +348,7 @@ async function processVideosWithPlan(
         includeBackground: finalInput.includeBackground ?? true,
         animatedSubtitles: finalInput.animatedSubtitles ?? false,
         animationStyle: finalInput.animationStyle || 'karaoke',
+        skipPlatformExport,
       }),
     })
 
@@ -708,16 +710,17 @@ export async function continueAfterEnrichment(
     // Step 6 — Process videos with FFmpeg (2 versions if B plan exists)
     setStep('editing')
 
-    // Process Version A
+    // Process Version A - FULL quality, skip platform export for A/B comparison
+    const hasVersionB = !!editingPlanB
     setProgress({ current: 0, total: 2, label: 'עורך גרסה A...' })
-    const processedA = await processVideosWithPlan(editingPlanA, enrichment, finalInput, musicUrl, backgroundImage, 'A')
+    const processedA = await processVideosWithPlan(editingPlanA, enrichment, finalInput, musicUrl, backgroundImage, 'A', hasVersionB)
 
-    // Process Version B (if available)
+    // Process Version B (if available) - FULL quality, skip platform export
     let processedB: VideoResult[] | null = null
     if (editingPlanB) {
       setProgress({ current: 1, total: 2, label: 'עורך גרסה B...' })
       try {
-        processedB = await processVideosWithPlan(editingPlanB, enrichment, finalInput, musicUrl, backgroundImage, 'B')
+        processedB = await processVideosWithPlan(editingPlanB, enrichment, finalInput, musicUrl, backgroundImage, 'B', true)
       } catch (err: any) {
         addLog(`גרסה B נכשלה: ${err.message}. ממשיך עם גרסה A בלבד.`)
       }
@@ -792,21 +795,24 @@ export async function continueAfterEnrichment(
 }
 
 /**
- * Phase 3: Called after user selects A or B version
+ * Phase 3: Called after user selects version(s) - A, B, or both
+ * Now exports to platforms ONLY after selection
  */
-export function selectABVersion(choice: 'A' | 'B'): void {
+export async function selectABVersion(
+  choices: Array<'A' | 'B'>,
+  preferredForDesign?: 'A' | 'B' | null
+): Promise<void> {
   const store = useAutoEditorStore.getState()
-  const { setStep, setProcessedVideos, setResults, setSelectedVersion, addLog } = store
-
-  const chosen = choice === 'A' ? store.versionA : store.versionB
-  const approach = choice === 'A' ? store.versionAApproach : store.versionBApproach
+  const { setStep, setProcessedVideos, setResults, setSelectedVersion, addLog, setProgress } = store
   const enrichment = store.enrichment
+  const finalInput = store.input
 
-  if (!chosen || chosen.length === 0) {
-    addLog('שגיאה: הגרסה שנבחרה ריקה')
+  if (!finalInput) {
+    addLog('שגיאה: חסר קלט')
     return
   }
 
+  const choice = choices.length === 1 ? choices[0] : (preferredForDesign || choices[0])
   setSelectedVersion(choice)
 
   // Record the A/B choice for learning
@@ -819,29 +825,88 @@ export function selectABVersion(choice: 'A' | 'B'): void {
     timestamp: Date.now(),
   })
 
-  // Convert to VideoResult format
-  const processedVideos: VideoResult[] = chosen.map(v => ({
-    videoIndex: v.videoIndex,
-    files: v.files,
-    optimalDuration: v.optimalDuration,
-    durationReasoning: v.durationReasoning,
-    recommendedPlatform: v.recommendedPlatform,
-  }))
+  // Now export selected version(s) to platforms
+  setStep('exporting')
+  const allResults: VideoResult[] = []
 
-  setProcessedVideos(processedVideos)
+  for (const ver of choices) {
+    const chosen = ver === 'A' ? store.versionA : store.versionB
+    const approach = ver === 'A' ? store.versionAApproach : store.versionBApproach
 
-  const legacyResults = processedVideos.flatMap(v =>
+    if (!chosen || chosen.length === 0) {
+      addLog(`שגיאה: גרסה ${ver} ריקה`)
+      continue
+    }
+
+    addLog(`מייצא גרסה ${ver} לפלטפורמות: ${approach}`)
+    setProgress({ current: choices.indexOf(ver), total: choices.length, label: `מייצא גרסה ${ver} לפלטפורמות...` })
+
+    // Re-process with platform export enabled
+    for (const v of chosen) {
+      const mainFile = v.files[0]
+      if (!mainFile) continue
+
+      try {
+        // Use the already-edited file URL as source, and just do platform export
+        const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videoUrl: mainFile.url,
+            videoPlan: {
+              cuts: [{ keepStart: 0, keepEnd: 9999 }], // Keep entire edited file
+              transitions: [],
+              zooms: [],
+              camera_angles: [],
+              color_grade: 'clean', // Already graded
+              framing_strategy: 'blur_background',
+              subtitles: [],
+              graphics: [],
+              speakers: [],
+              segments_intensity: [],
+            },
+            targetDuration: v.optimalDuration || finalInput.targetDuration || 60,
+            platforms: finalInput.platforms,
+            skipPlatformExport: false, // NOW do platform export
+          }),
+        })
+
+        if (processRes.ok) {
+          const result = await processRes.json()
+          allResults.push({
+            videoIndex: v.videoIndex,
+            files: result.files || [],
+            optimalDuration: v.optimalDuration,
+            durationReasoning: v.durationReasoning,
+            recommendedPlatform: v.recommendedPlatform,
+          })
+          addLog(`גרסה ${ver} סרטון ${v.videoIndex}: ${result.files?.length || 0} קבצי פלטפורמה`)
+        } else {
+          // Fallback: use the original files as-is
+          addLog(`ייצוא גרסה ${ver} נכשל, משתמש בקובץ המקורי`)
+          allResults.push(v)
+        }
+      } catch (err: any) {
+        addLog(`שגיאה בייצוא גרסה ${ver}: ${err.message}`)
+        allResults.push(v)
+      }
+    }
+  }
+
+  setProcessedVideos(allResults)
+
+  const legacyResults = allResults.flatMap(v =>
     v.files.map(f => ({
       videoIndex: v.videoIndex,
       platform: f.platform,
       url: f.url,
       fileName: f.filename,
-      width: parseInt(f.resolution.split('x')[0]) || 1080,
-      height: parseInt(f.resolution.split('x')[1]) || 1920,
+      width: parseInt(f.resolution?.split('x')[0]) || 1080,
+      height: parseInt(f.resolution?.split('x')[1]) || 1920,
     }))
   )
   setResults(legacyResults)
 
-  addLog(`נבחרה גרסה ${choice}: ${approach}`)
+  addLog(`ייצוא הושלם: ${allResults.length} סרטונים`)
   setStep('done')
 }
