@@ -131,12 +131,16 @@ async function getCreativeBrief(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       transcript: {
-        segments: transcript.segments.map((s) => ({
+        segments: transcript.segments.map((s: any) => ({
           start: s.start,
           end: s.end,
           text: s.text,
+          speaker: s.speaker,
+          isPresenter: s.isPresenter,
         })),
         total_duration: transcript.totalDuration,
+        mainSpeaker: transcript.mainSpeaker,
+        speakerTimes: transcript.speakerTimes,
       },
       userPrompt: input.userPrompt + (featureNotes.length > 0 ? `\n\nהערות: ${featureNotes.join('. ')}` : ''),
       targetDuration: input.targetDuration,
@@ -202,14 +206,18 @@ async function getTechnicalPlan(
     body: JSON.stringify({
       creativeBrief,
       transcript: {
-        segments: transcript.segments.map((s) => ({
+        segments: transcript.segments.map((s: any) => ({
           start: s.start,
           end: s.end,
           text: s.text,
           source_file: s.sourceFile,
+          speaker: s.speaker,
+          isPresenter: s.isPresenter,
         })),
         total_duration: transcript.totalDuration,
         silences: transcript.silences,
+        mainSpeaker: transcript.mainSpeaker,
+        speakerTimes: transcript.speakerTimes,
       },
       targetDuration: input.targetDuration,
       platforms: input.platforms,
@@ -352,6 +360,27 @@ function normalizeTechnicalPlan(
         })
       }
     })
+  }
+
+  // Filter out non-presenter cuts if presenter info is available
+  const presenterSegments = transcript.segments.filter((s: any) => s.isPresenter !== false)
+  if (transcript.mainSpeaker && presenterSegments.length < transcript.segments.length) {
+    for (const video of plan.videos) {
+      const beforeCount = video.cuts.length
+      video.cuts = video.cuts.filter(cut => {
+        // Check if this cut timerange overlaps with presenter segments
+        const isPresenterCut = presenterSegments.some(seg =>
+          seg.start < cut.keepEnd && seg.end > cut.keepStart
+        )
+        if (!isPresenterCut) {
+          log(`[תכנון] הסרת חיתוך לא-פרזנטור: ${cut.keepStart.toFixed(1)}-${cut.keepEnd.toFixed(1)}`)
+        }
+        return isPresenterCut
+      })
+      if (video.cuts.length < beforeCount) {
+        log(`[תכנון] סרטון ${video.videoIndex}: ${beforeCount - video.cuts.length} חיתוכים של לא-פרזנטור הוסרו`)
+      }
+    }
   }
 
   // Validate cuts sum to approximately target duration

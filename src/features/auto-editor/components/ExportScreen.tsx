@@ -226,6 +226,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
     setOpeningEditor(true)
 
     try {
+      console.log('[TRANSFER] Starting transfer to editor...')
       const projectName = `עריכה אוטומטית - ${new Date().toLocaleDateString('he-IL')}`
       const videoFiles: Array<{ file: File; blobUrl: string; mediaType: 'video' | 'audio' }> = []
 
@@ -234,30 +235,49 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
         if (!mainFile) continue
 
         const videoUrl = ensureFullUrl(mainFile.url)
-        console.log('[TRANSFER] Video URL:', videoUrl)
+        console.log('[TRANSFER] Fetching video from:', videoUrl)
 
-        // Test if URL is accessible before fetching
         try {
-          const testRes = await fetch(videoUrl, { method: 'HEAD' })
-          if (!testRes.ok) {
-            console.error('[TRANSFER] Video URL not accessible:', videoUrl, testRes.status)
+          const response = await fetch(videoUrl)
+          if (!response.ok) {
+            console.error('[TRANSFER] Video fetch failed:', videoUrl, response.status)
             continue
           }
+
+          const blob = await response.blob()
+          console.log('[TRANSFER] Blob size:', blob.size, 'type:', blob.type)
+
+          if (blob.size === 0) {
+            console.error('[TRANSFER] Empty blob for:', videoUrl)
+            continue
+          }
+
+          const file = new File([blob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
+          const blobUrl = URL.createObjectURL(blob)
+          console.log('[TRANSFER] Created blob URL:', blobUrl)
+
+          videoFiles.push({
+            file,
+            blobUrl,
+            mediaType: 'video',
+          })
         } catch (e) {
-          console.error('[TRANSFER] Cannot reach video:', videoUrl, e)
-          continue
+          console.error('[TRANSFER] Cannot fetch video:', videoUrl, e)
+          // Fallback: use server URL directly as blobUrl
+          const emptyBlob = new Blob([], { type: 'video/mp4' })
+          const file = new File([emptyBlob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
+          videoFiles.push({
+            file,
+            blobUrl: videoUrl, // Use server URL directly
+            mediaType: 'video',
+          })
         }
+      }
 
-        const response = await fetch(videoUrl)
-        const blob = await response.blob()
-        const file = new File([blob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
-        const blobUrl = URL.createObjectURL(blob)
-
-        videoFiles.push({
-          file,
-          blobUrl,
-          mediaType: 'video',
-        })
+      if (videoFiles.length === 0) {
+        console.error('[TRANSFER] No video files to transfer!')
+        setOpeningEditor(false)
+        return
       }
 
       const projectsStore = useProjectsStore.getState()
@@ -266,6 +286,8 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
         source: 'upload',
         videos: videoFiles,
       })
+
+      console.log('[TRANSFER] Project created:', projectId)
 
       // Store all platform versions as edited files
       const editedFiles = videos.flatMap(video =>
@@ -282,12 +304,12 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
       const editorStore = useAutoEditorStore.getState()
       editorStore.setEditedFiles(editedFiles)
 
+      console.log('[TRANSFER] Navigating to editor:', `/editor/${projectId}`)
       window.location.href = `/editor/${projectId}`
     } catch (error) {
-      console.error('Failed to open in editor:', error)
+      console.error('[TRANSFER] Failed to open in editor:', error)
+      setOpeningEditor(false)
     }
-
-    setOpeningEditor(false)
   }
 
   return (
