@@ -8,15 +8,15 @@ const ALL_CATEGORIES = [
   'broll', 'marketing', 'transitions', 'color_grading',
 ]
 
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
 const STARTUP_DELAY_MS = 10_000
 
-function getWeeklyCategories(): string[] {
-  const weekNumber = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000))
-  const offset = (weekNumber * 3) % ALL_CATEGORIES.length
+function getDailyCategories(): string[] {
+  const dayNumber = Math.floor(Date.now() / ONE_DAY_MS)
+  const startIndex = (dayNumber * 3) % ALL_CATEGORIES.length
   const result: string[] = []
   for (let i = 0; i < 3; i++) {
-    result.push(ALL_CATEGORIES[(offset + i) % ALL_CATEGORIES.length])
+    result.push(ALL_CATEGORIES[(startIndex + i) % ALL_CATEGORIES.length])
   }
   return result
 }
@@ -31,9 +31,9 @@ export function useSilentLearning() {
     const timer = setTimeout(async () => {
       try {
         const lastFetch = useSocialLearningStore.getState().lastFetchDate
-        const timeSinceLastFetch = Date.now() - lastFetch
+        const daysSinceLastLearn = (Date.now() - lastFetch) / ONE_DAY_MS
 
-        if (lastFetch > 0 && timeSinceLastFetch < SEVEN_DAYS_MS) {
+        if (lastFetch > 0 && daysSinceLastLearn < 1) {
           return
         }
 
@@ -42,10 +42,10 @@ export function useSilentLearning() {
           return
         }
 
-        const categories = getWeeklyCategories()
+        const categories = getDailyCategories()
         await runLearningSession(categories)
       } catch {
-        // Silent failure - no UI to show errors
+        // Silent failure
       }
     }, STARTUP_DELAY_MS)
 
