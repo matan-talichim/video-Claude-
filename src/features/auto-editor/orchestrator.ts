@@ -503,6 +503,15 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     // Get evolved prompt for enrichment
     const evolvedEnrichPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('enrichment', BASE_ENRICH_PROMPT)
 
+    let socialRules = ''
+    try {
+      const rulesRes = await fetch('http://localhost:3001/api/learning/rules')
+      if (rulesRes.ok) {
+        const data = await rulesRes.json()
+        socialRules = data.rules || ''
+      }
+    } catch {}
+
     const enrichRes = await fetch(`${API_BASE}/auto-editor/enrich-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -519,6 +528,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         energyAnalysis,
         userProfile: profile.getProfileForPrompt(),
         promptEvolution: evolvedEnrichPrompt !== BASE_ENRICH_PROMPT ? evolvedEnrichPrompt : undefined,
+        socialLearningRules: socialRules,
       }),
     })
 

@@ -112,6 +112,15 @@ async function getCreativeBrief(
   // Get evolved prompt for creative brief
   const evolvedBriefPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('creative_brief', BASE_CREATIVE_BRIEF_PROMPT)
 
+  let socialRules = ''
+  try {
+    const rulesRes = await fetch('http://localhost:3001/api/learning/rules')
+    if (rulesRes.ok) {
+      const data = await rulesRes.json()
+      socialRules = data.rules || ''
+    }
+  } catch {}
+
   const response = await fetch(`${API_BASE}/auto-editor/creative-brief`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -133,6 +142,7 @@ async function getCreativeBrief(
       visualAnalysis: visualAnalysis || null,
       energyAnalysis: energyAnalysis || null,
       promptEvolution: evolvedBriefPrompt !== BASE_CREATIVE_BRIEF_PROMPT ? evolvedBriefPrompt : undefined,
+      socialLearningRules: socialRules,
     }),
   })
 
@@ -172,6 +182,15 @@ async function getTechnicalPlan(
   // Get evolved prompt for technical plan
   const evolvedPlanPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('technical_plan', BASE_TECHNICAL_PLAN_PROMPT)
 
+  let techSocialRules = ''
+  try {
+    const rulesRes = await fetch('http://localhost:3001/api/learning/rules')
+    if (rulesRes.ok) {
+      const data = await rulesRes.json()
+      techSocialRules = data.rules || ''
+    }
+  } catch {}
+
   const response = await fetch(`${API_BASE}/auto-editor/technical-plan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -190,6 +209,7 @@ async function getTechnicalPlan(
       targetDuration: input.targetDuration,
       platforms: input.platforms,
       promptEvolution: evolvedPlanPrompt !== BASE_TECHNICAL_PLAN_PROMPT ? evolvedPlanPrompt : undefined,
+      socialLearningRules: techSocialRules,
     }),
   })
 
