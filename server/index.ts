@@ -4654,12 +4654,16 @@ app.post('/api/auto-editor/process', async (req, res) => {
       return res.status(400).json({ message: 'קובץ המקור לא נמצא: ' + sourceFile })
     }
 
-    console.log('[PROCESS] === RECEIVED BODY ===')
+    console.log('[PROCESS] === SERVER RECEIVED ===')
     console.log('[PROCESS] Source file:', sourceFile)
     console.log('[PROCESS] Top-level keys:', Object.keys(req.body))
+    console.log('[PROCESS] body.transcript:', transcript?.segments?.length || 'MISSING', 'segments')
+    console.log('[PROCESS] body.mainPresenter:', req.body.mainPresenter || 'MISSING')
+    console.log('[PROCESS] body.brollAssets:', brollAssets.length)
+    console.log('[PROCESS] body size:', JSON.stringify(req.body).length, 'bytes')
     console.log('[PROCESS] Options:', { includeSubtitles, includeBackground, animatedSubtitles, animationStyle })
     console.log('[PROCESS] Plan keys:', Object.keys(videoPlan || {}))
-    console.log('[PROCESS] B-Roll assets:', brollAssets.length)
+    console.log('[PROCESS] skipPlatformExport:', skipPlatformExport)
 
     // Extract features from videoPlan with multiple field name fallbacks
     const planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects ||

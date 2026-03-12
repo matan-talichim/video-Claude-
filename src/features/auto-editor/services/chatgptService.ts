@@ -27,6 +27,7 @@ export interface VideoPlan {
   musicStyle: string
   overallVibe: string
   optimalDuration?: number
+  estimatedDuration?: number
   durationReasoning?: string
   recommendedPlatform?: string
 }
@@ -298,6 +299,10 @@ function normalizeTechnicalPlan(
           displayDuration: s.display_duration || s.displayDuration || 4,
         })),
         segmentsIntensity: [],
+        optimalDuration: v.optimal_duration || v.optimalDuration || undefined,
+        estimatedDuration: v.estimated_duration || v.estimatedDuration || undefined,
+        durationReasoning: v.duration_reasoning || v.durationReasoning || undefined,
+        recommendedPlatform: v.recommended_platform || v.recommendedPlatform || undefined,
         intro: v.intro ? { title: v.intro.title || '', duration: v.intro.duration || 3 } : null,
         outro: v.outro ? { cta: v.outro.text || v.outro.cta || '', duration: v.outro.duration || 3 } : null,
         musicMoments: (v.music_dynamics || v.music_moments || v.musicMoments || []).map((mm: any) => ({
