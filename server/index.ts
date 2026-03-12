@@ -3194,19 +3194,18 @@ app.post('/api/generate-broll', async (req, res) => {
         return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai' })
       }
 
-      // Step 2: Poll for result using correct KIE.ai endpoint
+      // Step 2: Poll for result
       const pollUrl = `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`
-      console.log('[SEEDANCE] Using poll endpoint:', pollUrl)
+      let videoUrl: string | null = null
+      const maxAttempts = 60
+      const pollInterval = 5000 // 5 seconds
 
-      let videoUrl = null
-      const maxAttempts = 30
+      console.log('[SEEDANCE] Polling:', pollUrl)
 
       for (let i = 0; i < maxAttempts; i++) {
-        await new Promise(r => setTimeout(r, 10000)) // 10 sec between polls
+        await new Promise(r => setTimeout(r, pollInterval))
 
         try {
-          console.log(`[SEEDANCE] Poll ${i + 1}/${maxAttempts}: ${pollUrl}`)
-
           const statusRes = await fetch(pollUrl, {
             headers: {
               'Authorization': `Bearer ${kieKey}`,
@@ -3215,43 +3214,60 @@ app.post('/api/generate-broll', async (req, res) => {
           })
 
           const statusData = await statusRes.json()
-          console.log(`[SEEDANCE] Poll ${i + 1} response:`, JSON.stringify(statusData).substring(0, 300))
 
-          const status = statusData.data?.status || statusData.status || ''
-          const foundUrl = statusData.data?.resultUrl || statusData.data?.url || statusData.data?.output?.url || statusData.data?.videoUrl || ''
+          // FIXED: Use "state" not "status"
+          const state = statusData.data?.state || statusData.data?.status || ''
 
-          if (foundUrl) {
-            console.log('[SEEDANCE] Video ready:', foundUrl)
-            videoUrl = foundUrl
+          console.log(`[SEEDANCE] Poll ${i + 1}/${maxAttempts}: state=${state}`)
+
+          if (state === 'success') {
+            // FIXED: Parse resultJson to get video URL
+            if (statusData.data?.resultJson) {
+              try {
+                const result = typeof statusData.data.resultJson === 'string'
+                  ? JSON.parse(statusData.data.resultJson)
+                  : statusData.data.resultJson
+                videoUrl = result?.resultUrls?.[0] || result?.url || null
+                console.log('[SEEDANCE] Video URL from resultJson:', videoUrl)
+              } catch (parseErr) {
+                console.error('[SEEDANCE] Failed to parse resultJson:', statusData.data.resultJson)
+              }
+            }
+
+            // Fallback: check other possible fields
+            if (!videoUrl) {
+              videoUrl = statusData.data?.resultUrl || statusData.data?.url || statusData.data?.videoUrl || null
+            }
+
+            if (videoUrl) {
+              console.log('[SEEDANCE] Success! Video:', videoUrl)
+            } else {
+              console.error('[SEEDANCE] State is success but no URL found in:', JSON.stringify(statusData.data).substring(0, 500))
+            }
             break
           }
 
-          if (status === 'completed' || status === 'success' || status === 'done') {
-            // Status says done but no URL from primary fields - check other fields
-            console.log('[SEEDANCE] Status complete, looking for URL in:', JSON.stringify(statusData.data || statusData))
-            const possibleUrl = statusData.data?.resultUrl || statusData.data?.url || statusData.data?.output || statusData.data?.video
-            if (possibleUrl) {
-              videoUrl = possibleUrl
-              break
-            }
+          // FIXED: "fail" not "failed"
+          if (state === 'fail' || state === 'failed' || state === 'error') {
+            const errorMsg = statusData.data?.failMsg || statusData.data?.failCode || 'Unknown error'
+            console.error('[SEEDANCE] Task failed:', errorMsg)
+            videoUrl = null
+            break
           }
 
-          if (status === 'failed' || status === 'error') {
-            const errorMsg = statusData.data?.error || statusData.error || 'Generation failed'
-            console.error('[SEEDANCE] Task failed:', JSON.stringify(statusData))
-            return res.status(500).json({ message: 'Seedance נכשל: ' + errorMsg })
+          // Still processing (waiting/queuing/generating)
+          if (i % 5 === 0) {
+            console.log(`[SEEDANCE] Still ${state || 'processing'}... (${i * 5}s elapsed)`)
           }
 
-          // Still processing...
-          console.log(`[SEEDANCE] Status: ${status || 'processing'}`)
-
-        } catch (e: any) {
-          console.warn(`[SEEDANCE] Poll error:`, e.message)
+        } catch (pollErr: any) {
+          console.warn(`[SEEDANCE] Poll ${i + 1} error:`, pollErr.message)
         }
       }
 
       if (!videoUrl) {
-        console.log('[SEEDANCE] Gave up after', attempts, 'polls - skipping B-Roll for this clip')
+        // FIXED: was "attempts" (undefined), now "maxAttempts"
+        console.log(`[SEEDANCE] No video after ${maxAttempts} polls - skipping`)
         return res.status(408).json({ message: 'יצירת הסרטון לקחה יותר מדי זמן. נסה שוב.' })
       }
 
