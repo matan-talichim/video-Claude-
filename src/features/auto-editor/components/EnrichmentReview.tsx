@@ -1,22 +1,26 @@
 import { useState } from 'react'
-import { Sparkles, CheckCircle } from 'lucide-react'
+import { Sparkles, CheckCircle, Users } from 'lucide-react'
+import { useAutoEditorStore } from '../store/autoEditorStore'
 
 interface EnrichmentReviewProps {
   enrichment: any
-  onApprove: (editedPrompt: string, selectedBRoll: any[]) => void
+  onApprove: (editedPrompt: string, selectedBRoll: any[], mainPresenter?: string) => void
 }
 
 export default function EnrichmentReview({ enrichment, onApprove }: EnrichmentReviewProps) {
+  const transcript = useAutoEditorStore((s) => s.transcript)
   const [editedPrompt, setEditedPrompt] = useState(enrichment.enhanced_prompt || '')
   const [selectedBRoll, setSelectedBRoll] = useState<Set<number>>(
     new Set((enrichment.broll_suggestions || []).map((_: any, i: number) => i))
   )
+  const [mainPresenter, setMainPresenter] = useState<string>(transcript?.mainSpeaker || '')
 
   const brollSuggestions = enrichment.broll_suggestions || []
+  const sortedSpeakers = transcript?.sortedSpeakers || []
 
   const handleApprove = () => {
     const selected = [...selectedBRoll].map(i => brollSuggestions[i]).filter(Boolean)
-    onApprove(editedPrompt, selected)
+    onApprove(editedPrompt, selected, mainPresenter || undefined)
   }
 
   return (
@@ -182,6 +186,37 @@ export default function EnrichmentReview({ enrichment, onApprove }: EnrichmentRe
             {enrichment.warnings.map((w: string, i: number) => (
               <p key={i} className="text-gray-300 text-xs">{w}</p>
             ))}
+          </div>
+        )}
+
+        {/* Speaker Selection (when multiple speakers detected) */}
+        {sortedSpeakers.length > 1 && (
+          <div className="w-full bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2 mb-2">
+              <Users size={16} className="text-purple-400" />
+              <h4 className="text-white text-sm font-medium">בחר פרזנטור ראשי</h4>
+            </div>
+            <p className="text-gray-400 text-xs">
+              זוהו {sortedSpeakers.length} דוברים. בחר מי הפרזנטור הראשי (רק הסגמנטים שלו ישמשו לעריכה):
+            </p>
+            <div className="space-y-1.5 mt-2">
+              {sortedSpeakers.map((s: { speaker: string; time: number }, i: number) => (
+                <button
+                  key={i}
+                  onClick={() => setMainPresenter(s.speaker)}
+                  className={`w-full text-right p-2.5 rounded-lg text-sm transition ${
+                    mainPresenter === s.speaker
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-white/10 text-gray-300 hover:bg-white/20'
+                  }`}
+                >
+                  {s.speaker} ({s.time} שניות דיבור)
+                  {mainPresenter === s.speaker && transcript?.autoDetected && i === 0 && (
+                    <span className="text-purple-200 text-xs mr-2">(זוהה אוטומטית)</span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

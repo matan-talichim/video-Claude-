@@ -17,12 +17,19 @@ export interface Silence {
   duration: number
 }
 
+export interface SpeakerInfo {
+  speaker: string
+  time: number
+}
+
 export interface FullTranscript {
   totalDuration: number
   segments: TranscriptSegment[]
   silences: Silence[]
   mainSpeaker?: string
   speakerTimes?: Record<string, number>
+  sortedSpeakers?: SpeakerInfo[]
+  autoDetected?: boolean
 }
 
 function detectSilences(segments: TranscriptSegment[]): Silence[] {
@@ -109,16 +116,18 @@ export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscr
         log(`קובץ ${index + 1}: משך משוער: ${duration.toFixed(1)} שניות`)
       }
 
-      return { segments: segs, duration, mainSpeaker: data.mainSpeaker, speakerTimes: data.speakerTimes }
+      return { segments: segs, duration, mainSpeaker: data.mainSpeaker, speakerTimes: data.speakerTimes, sortedSpeakers: data.sortedSpeakers, autoDetected: data.autoDetected }
     })
   )
 
   const merged = mergeTranscripts(transcripts)
 
-  // Preserve mainSpeaker and speakerTimes from transcription results
+  // Preserve mainSpeaker, speakerTimes, and sortedSpeakers from transcription results
   if (transcripts.length > 0 && transcripts[0].mainSpeaker) {
     merged.mainSpeaker = transcripts[0].mainSpeaker
     merged.speakerTimes = transcripts[0].speakerTimes
+    merged.sortedSpeakers = transcripts[0].sortedSpeakers
+    merged.autoDetected = transcripts[0].autoDetected
   }
 
   log(`תמלול הושלם: ${merged.totalDuration.toFixed(1)} שניות, ${merged.segments.length} קטעים${merged.mainSpeaker ? `, פרזנטור: ${merged.mainSpeaker}` : ''}`)
