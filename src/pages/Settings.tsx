@@ -23,8 +23,9 @@ const MODEL_NAMES: Record<string, string> = {
 }
 
 function AIEvolutionSettings() {
-  const stats = usePromptEvolutionStore(s => s.getStats())
   const evolutions = usePromptEvolutionStore(s => s.evolutions)
+  const getStats = usePromptEvolutionStore(s => s.getStats)
+  const stats = getStats()
   const resetModel = usePromptEvolutionStore(s => s.resetModel)
   const resetAll = usePromptEvolutionStore(s => s.resetAll)
 

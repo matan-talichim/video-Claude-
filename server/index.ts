@@ -4403,9 +4403,48 @@ async function runServerLearning() {
       if (videos.length === 0) continue
 
       // --- STEP 3: Analyze top 2 videos with Vision ---
-      const ytdlpPath = fs.existsSync('/opt/homebrew/bin/yt-dlp') ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp'
+      const ytdlpPath = fs.existsSync('/opt/homebrew/bin/yt-dlp')
+        ? '/opt/homebrew/bin/yt-dlp'
+        : fs.existsSync('/usr/local/bin/yt-dlp')
+          ? '/usr/local/bin/yt-dlp'
+          : 'yt-dlp'
       const ffmpegPath = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'
       const analyses: any[] = []
+
+      // Check if yt-dlp is available before attempting video analysis
+      let ytdlpAvailable = true
+      try {
+        execSync(`which yt-dlp || "${ytdlpPath}" --version`, { timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] })
+      } catch {
+        console.warn('[LEARN] yt-dlp not installed. Skipping visual analysis. Install with: brew install yt-dlp')
+        ytdlpAvailable = false
+      }
+
+      if (!ytdlpAvailable) {
+        // Skip video analysis, go straight to synthesis with metadata only
+        if (state.dailyGptCalls < 15) {
+          const synthRes = await ai.chat.completions.create({
+            model: 'gpt-5.4',
+            messages: [
+              { role: 'system', content: 'נתח patterns מסרטונים ויראליים על בסיס מטא-דאטה בלבד (ללא ניתוח ויזואלי). החזר JSON: {"editing_rules":[{"rule":"כלל בעברית","applies_to":"all/social/marketing","confidence":0.7}],"sop_update":"SOP מעודכן","patterns":{"hook":{"avg_seconds":2,"rule":"כלל"},"pacing":{"avg_cuts":12,"rule":"כלל"},"subtitles":{"style":"classic","rule":"כלל"}}}' },
+              { role: 'user', content: `קטגוריה: ${category}\nסרטונים (מטא-דאטה בלבד):\n${videos.slice(0, 5).map((v: any) => `- "${v.title}" (${v.views} צפיות, ${v.likes} לייקים, תגיות: ${v.tags?.join(', ')})`).join('\n')}` }
+            ],
+            response_format: { type: 'json_object' },
+            max_tokens: 1000,
+          })
+          state.dailyGptCalls++
+          state.monthlyGptCost += 0.01
+          results.totalCost += 0.01
+          try {
+            const synthesis = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
+            if (synthesis.editing_rules) {
+              results.rulesLearned += synthesis.editing_rules.length
+              results.categories.push(category)
+            }
+          } catch {}
+        }
+        continue
+      }
 
       for (const video of videos.slice(0, 2)) {
         if (state.dailyGptCalls >= 15) break
