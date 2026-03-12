@@ -172,6 +172,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
   )
   const [includeSubtitles, setIncludeSubtitles] = useState(true)
   const [includeBackground, setIncludeBackground] = useState(true)
+  const [animatedSubtitles, setAnimatedSubtitles] = useState(false)
+  const [animationStyle, setAnimationStyle] = useState('auto')
 
   const closeHandler = onClose || onBack
 
@@ -208,6 +210,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       platforms: Array.from(selectedPlatforms),
       includeSubtitles,
       includeBackground,
+      animatedSubtitles,
+      animationStyle,
     })
   }
 
@@ -412,7 +416,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
 
             <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition">
               <div>
-                <span className="text-white text-sm">כתוביות</span>
+                <span className="text-white text-sm">&#x1F4AC; כתוביות</span>
                 <span className="text-gray-500 text-xs block">הוסף כתוביות אוטומטיות לסרטון</span>
               </div>
               <input
@@ -422,6 +426,49 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
                 className="accent-purple-500 w-5 h-5"
               />
             </label>
+
+            {includeSubtitles && (
+              <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition mr-6 border-r-2 border-purple-500">
+                <div>
+                  <span className="text-white text-sm">&#x2728; כתוביות מונפשות</span>
+                  <span className="text-gray-500 text-xs block">מילה-מילה עם אנימציה (סגנון TikTok/Reels)</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={animatedSubtitles}
+                  onChange={e => setAnimatedSubtitles(e.target.checked)}
+                  className="accent-purple-500 w-5 h-5"
+                />
+              </label>
+            )}
+
+            {includeSubtitles && animatedSubtitles && (
+              <div className="mr-6 border-r-2 border-purple-500 pr-3 space-y-2">
+                <span className="text-xs text-gray-400">סגנון אנימציה:</span>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: 'auto', label: '\uD83E\uDD16 אוטומטי', desc: 'לפי מה שעובד ברשתות' },
+                    { id: 'karaoke', label: '\uD83C\uDFA4 קריוקי', desc: 'מילה מודגשת בזמן אמת' },
+                    { id: 'pop', label: '\uD83D\uDCA5 פופ', desc: 'מילים קופצות אחת-אחת' },
+                    { id: 'typewriter', label: '\u2328\uFE0F מכונת כתיבה', desc: 'אות-אות' },
+                    { id: 'glow', label: '\u2728 זוהר', desc: 'מילה זוהרת בזמן אמת' },
+                    { id: 'bounce', label: '\uD83C\uDFC0 קפיצה', desc: 'מילים קופצות מלמטה' },
+                    { id: 'slide', label: '\u27A1\uFE0F החלקה', desc: 'מילים נכנסות מהצד' },
+                  ].map(style => (
+                    <button key={style.id}
+                      onClick={() => setAnimationStyle(style.id)}
+                      className={`text-xs px-3 py-2 rounded-lg transition ${
+                        animationStyle === style.id
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                      }`}
+                      title={style.desc}>
+                      {style.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition">
               <div>

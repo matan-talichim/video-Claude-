@@ -10,7 +10,173 @@ interface CanvasProps {
   onSelect: (item: SelectedCanvasItem | null) => void
 }
 
+import type { CaptionStyle, Caption } from '../../stores/editorStore'
+
 const allSpeeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4]
+
+// Animated caption overlay - supports karaoke, pop, typewriter, glow, bounce, wordByWord
+function AnimatedCaptionOverlay({ caption, style, currentTime }: {
+  caption: Caption
+  style: CaptionStyle
+  currentTime: number
+}) {
+  const animation = style.animation || 'none'
+  const positionClass = style.position === 'top' ? 'top-[10%]' : style.position === 'center' ? 'top-1/2 -translate-y-1/2' : 'bottom-[10%]'
+  const isWordAnimation = ['karaoke', 'pop', 'typewriter', 'glow', 'bounce', 'wordByWord'].includes(animation)
+
+  // For word-level animations, split text and compute which word is active
+  const words = caption.text.split(' ').filter(w => w.trim())
+  const captionDuration = caption.endTime - caption.startTime
+  const elapsed = currentTime - caption.startTime
+
+  // If word-level timing exists on the caption, use it; otherwise distribute evenly
+  const wordTimings = caption.words && caption.words.length > 0
+    ? caption.words
+    : words.map((w, i) => ({
+        text: w,
+        start: caption.startTime + (i * captionDuration / words.length),
+        end: caption.startTime + ((i + 1) * captionDuration / words.length),
+      }))
+
+  const activeWordIndex = wordTimings.findIndex(
+    w => currentTime >= w.start && currentTime < w.end
+  )
+  const effectiveActiveIdx = activeWordIndex >= 0 ? activeWordIndex : Math.floor(elapsed / (captionDuration / Math.max(words.length, 1)))
+
+  const baseFontStyle: React.CSSProperties = {
+    fontFamily: style.fontFamily || 'Heebo',
+    fontWeight: style.bold ? 'bold' : 'normal',
+    fontStyle: style.italic ? 'italic' : 'normal',
+    direction: 'rtl',
+  }
+
+  // Static animations (non-word-level)
+  if (!isWordAnimation) {
+    let animClass = ''
+    if (animation === 'fade') animClass = 'animate-caption-fade'
+    else if (animation === 'slideUp') animClass = 'animate-caption-slide-up'
+    else if (animation === 'zoom') animClass = 'animate-caption-zoom'
+
+    return (
+      <div className={`absolute ${positionClass} left-4 right-4 text-center pointer-events-none z-30 ${animClass}`}>
+        <span
+          style={{
+            ...baseFontStyle,
+            fontSize: `${style.fontSize}px`,
+            color: style.textColor,
+            backgroundColor: `${style.bgColor}${Math.round(style.bgOpacity * 255).toString(16).padStart(2, '0')}`,
+            padding: '4px 12px',
+            borderRadius: '4px',
+          }}
+        >
+          {caption.text}
+        </span>
+      </div>
+    )
+  }
+
+  // Word-level animated rendering
+  return (
+    <div className={`absolute ${positionClass} left-4 right-4 text-center pointer-events-none z-30 flex flex-wrap justify-center gap-1`} dir="rtl">
+      {words.map((word, i) => {
+        const isActive = i === effectiveActiveIdx
+        const isPast = i < effectiveActiveIdx
+        const isFuture = i > effectiveActiveIdx
+
+        let wordClasses = 'inline-block transition-all duration-200 px-0.5 '
+        const wordStyle: React.CSSProperties = {
+          ...baseFontStyle,
+          fontSize: `${style.fontSize}px`,
+        }
+
+        switch (animation) {
+          case 'karaoke':
+            if (isActive) {
+              wordClasses += 'scale-110'
+              wordStyle.color = '#FFFF00'
+              wordStyle.filter = 'drop-shadow(0 0 10px rgba(255,255,0,0.8))'
+            } else if (isPast) {
+              wordStyle.color = style.textColor
+              wordStyle.opacity = 0.9
+            } else {
+              wordStyle.color = style.textColor
+              wordStyle.opacity = 0.5
+            }
+            break
+
+          case 'pop':
+            if (isFuture) {
+              wordStyle.transform = 'scale(0)'
+              wordStyle.opacity = 0
+            } else if (isActive) {
+              wordClasses += 'animate-caption-word-pop'
+              wordStyle.color = style.textColor
+            } else {
+              wordStyle.color = style.textColor
+            }
+            break
+
+          case 'typewriter':
+            if (isFuture) {
+              wordStyle.opacity = 0
+            } else {
+              wordStyle.color = '#4ADE80'
+              wordStyle.fontFamily = 'monospace'
+              if (isActive) wordClasses += 'border-r-2 border-green-400 animate-pulse'
+            }
+            break
+
+          case 'glow':
+            if (isActive) {
+              wordClasses += 'scale-105'
+              wordStyle.color = '#C084FC'
+              wordStyle.filter = 'drop-shadow(0 0 15px rgba(168,85,247,1))'
+            } else {
+              wordStyle.color = style.textColor
+            }
+            break
+
+          case 'wordByWord':
+            if (isFuture) {
+              wordStyle.opacity = 0
+            } else if (isActive) {
+              wordClasses += 'animate-caption-minimal-slide'
+              wordStyle.color = style.textColor
+            } else {
+              wordStyle.color = style.textColor
+            }
+            break
+
+          case 'bounce':
+            if (isFuture) {
+              wordStyle.transform = 'translateY(50px)'
+              wordStyle.opacity = 0
+            } else if (isActive) {
+              wordClasses += 'animate-caption-word-bounce'
+              wordStyle.color = style.textColor
+            } else {
+              wordStyle.color = style.textColor
+            }
+            break
+        }
+
+        return (
+          <span key={i} className={wordClasses} style={wordStyle}>
+            <span
+              style={{
+                backgroundColor: style.bgOpacity > 0 ? `${style.bgColor}${Math.round(style.bgOpacity * 255).toString(16).padStart(2, '0')}` : 'transparent',
+                padding: '2px 4px',
+                borderRadius: '3px',
+              }}
+            >
+              {word}
+            </span>
+          </span>
+        )
+      })}
+    </div>
+  )
+}
 
 function formatTime(s: number): string {
   if (!isFinite(s) || s < 0) s = 0
@@ -261,25 +427,13 @@ export default function Canvas({ selectedItem, onSelect }: CanvasProps) {
             </CanvasItem>
           ))}
 
-          {/* Captions */}
+          {/* Captions - with animated word-by-word support */}
           {currentCaption && (
-            <div className="absolute bottom-[10%] left-4 right-4 text-center pointer-events-none z-30">
-              <span
-                style={{
-                  fontFamily: captionStyle.fontFamily || 'Heebo',
-                  fontSize: `${captionStyle.fontSize}px`,
-                  color: captionStyle.textColor,
-                  backgroundColor: `${captionStyle.bgColor}${Math.round(captionStyle.bgOpacity * 255).toString(16).padStart(2, '0')}`,
-                  fontWeight: captionStyle.bold ? 'bold' : 'normal',
-                  fontStyle: captionStyle.italic ? 'italic' : 'normal',
-                  padding: '4px 12px',
-                  borderRadius: '4px',
-                  direction: 'rtl',
-                }}
-              >
-                {currentCaption.text}
-              </span>
-            </div>
+            <AnimatedCaptionOverlay
+              caption={currentCaption}
+              style={captionStyle}
+              currentTime={currentTime}
+            />
           )}
 
           {/* אזור בטוח overlay */}

@@ -5,7 +5,7 @@ import { useUIStore } from '../../stores/uiStore'
 import { useEditorStore } from '../../stores/editorStore'
 import { useApiStatusStore } from '../../stores/apiStatusStore'
 import { api } from '../../services/api'
-import { exportVideo, exportAudio, exportSubtitles, exportTranscript, triggerDownload as triggerExportDownload } from '../../services/exportService'
+import { exportVideo, exportVideoWithAnimatedSubtitles, exportAudio, exportSubtitles, exportTranscript, triggerDownload as triggerExportDownload } from '../../services/exportService'
 
 export function AIActionButton({ label, message }: { label: string; message: string }) {
   const [isProcessing, setIsProcessing] = useState(false)
@@ -826,7 +826,7 @@ function ShareContent() {
 
 function ExportContent() {
   const { addToast, closeModal } = useUIStore()
-  const { mediaBlobUrl, projectName, transcript, deletedRegions, duration, appliedEdits, captions, showCaptions } = useEditorStore()
+  const { mediaBlobUrl, projectName, transcript, deletedRegions, duration, appliedEdits, captions, showCaptions, captionStyle } = useEditorStore()
   const captionTracks = useEditorStore((s) => s.captionTracks)
   const addEditedFile = useEditorStore((s) => s.addEditedFile)
   const [selectedFormats, setSelectedFormats] = useState<Set<string>>(new Set())
@@ -901,6 +901,20 @@ function ExportContent() {
     else if (formatId === 'mp4-1080' || formatId === 'mp4-916' || formatId === 'mp4-11') baseFormat = 'mp4-1080'
     else if (formatId === 'mp4-4k') baseFormat = 'mp4-4k'
     else if (formatId === 'webm') baseFormat = 'webm'
+
+    // If animated captions are active, use server-side burn for video export
+    const captionAnim = captionStyle.animation
+    const hasAnimatedCaptions = captions.length > 0 && showCaptions && captionAnim && !['none', 'fade', 'slideUp', 'zoom'].includes(captionAnim)
+    if (hasAnimatedCaptions && baseFormat !== 'webm') {
+      try {
+        return await exportVideoWithAnimatedSubtitles(
+          mediaBlobUrl, captions, captionAnim, baseFormat, () => {}
+        )
+      } catch (err) {
+        console.warn('[EXPORT] Server-side animated subtitle burn failed, falling back to standard:', err)
+      }
+    }
+
     return exportVideo(mediaBlobUrl, baseFormat, () => {}, deletedRegions.length > 0 ? deletedRegions : undefined, duration > 0 ? duration : undefined)
   }
 

@@ -213,6 +213,42 @@ function formatTime(seconds: number, format: 'srt' | 'vtt' | 'simple'): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
 }
 
+// Server-side export with animated subtitles burned in
+export async function exportVideoWithAnimatedSubtitles(
+  videoUrl: string,
+  captions: Array<{ text: string; startTime: number; endTime: number }>,
+  animationStyle: string,
+  format: string,
+  onProgress: (progress: number) => void,
+): Promise<Blob> {
+  onProgress(10)
+  const res = await fetch('http://localhost:3001/api/export/burn-subtitles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      videoUrl,
+      captions,
+      animationStyle,
+      format,
+    }),
+  })
+  onProgress(80)
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.message || 'Export with animated subtitles failed')
+  }
+
+  const data = await res.json()
+  onProgress(90)
+
+  // Download the exported file
+  const fileRes = await fetch(data.url)
+  const blob = await fileRes.blob()
+  onProgress(100)
+  return blob
+}
+
 export function exportCaptionTrackSubtitles(
   captions: Array<{ text: string; startTime: number; endTime: number }>,
   format: 'srt' | 'vtt'

@@ -12,14 +12,17 @@ const presets: Array<{ id: CaptionStyle['preset']; label: string; desc: string }
   { id: 'minimal', label: 'מינימלי', desc: 'טקסט לבן בלבד' },
 ]
 
-const animations: Array<{ id: CaptionStyle['animation']; label: string }> = [
-  { id: 'none', label: 'ללא' },
-  { id: 'fade', label: 'דהייה' },
-  { id: 'slideUp', label: 'החלקה למעלה' },
-  { id: 'typewriter', label: 'מכונת כתיבה' },
-  { id: 'wordByWord', label: 'מילה-מילה' },
-  { id: 'bounce', label: 'קפיצה' },
-  { id: 'zoom', label: 'זום' },
+const animations: Array<{ id: CaptionStyle['animation']; label: string; icon: string; desc: string }> = [
+  { id: 'none', label: 'ללא', icon: '💬', desc: 'כתוביות רגילות' },
+  { id: 'fade', label: 'דהייה', icon: '🌫️', desc: 'נכנסות ויוצאות בהדרגה' },
+  { id: 'karaoke', label: 'קריוקי', icon: '🎤', desc: 'מילה מודגשת בזמן אמת' },
+  { id: 'pop', label: 'פופ', icon: '💥', desc: 'מילים קופצות אחת-אחת' },
+  { id: 'typewriter', label: 'מכונת כתיבה', icon: '⌨️', desc: 'אות-אות' },
+  { id: 'glow', label: 'זוהר', icon: '✨', desc: 'מילה זוהרת בזמן אמת' },
+  { id: 'wordByWord', label: 'מילה-מילה', icon: '📝', desc: 'מילים מופיעות בזו אחר זו' },
+  { id: 'bounce', label: 'קפיצה', icon: '🏀', desc: 'מילים קופצות מלמטה' },
+  { id: 'slideUp', label: 'החלקה', icon: '⬆️', desc: 'החלקה למעלה' },
+  { id: 'zoom', label: 'זום', icon: '🔍', desc: 'מתקרבות מרחוק' },
 ]
 
 const positions: Array<{ id: CaptionStyle['position']; label: string }> = [
@@ -413,16 +416,21 @@ export default function CaptionsPanel({ onClose }: { onClose: () => void }) {
             )}
 
             {section === 'animation' && (
-              <div className="space-y-2">
-                {animations.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => setCaptionStyle({ animation: a.id })}
-                    className={`w-full p-2.5 rounded-xl text-right text-sm transition-all border ${captionStyle.animation === a.id ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple' : 'bg-white/[0.04] border-white/[0.06] text-text-secondary hover:border-white/[0.12]'}`}
-                  >
-                    {a.label}
-                  </button>
-                ))}
+              <div className="space-y-3">
+                <div className="text-xs text-text-muted">סגנון אנימציה:</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {animations.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => setCaptionStyle({ animation: a.id })}
+                      className={`p-2 rounded-xl text-center transition-all border ${captionStyle.animation === a.id ? 'bg-accent-purple/15 border-accent-purple/40 ring-2 ring-accent-purple/30' : 'bg-white/[0.04] border-white/[0.06] hover:border-white/[0.12]'}`}
+                      title={a.desc}
+                    >
+                      <span className="text-lg block">{a.icon}</span>
+                      <span className={`text-xs block ${captionStyle.animation === a.id ? 'text-accent-purple' : 'text-text-secondary'}`}>{a.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 

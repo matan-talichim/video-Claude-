@@ -345,6 +345,8 @@ async function processVideosWithPlan(
         captionStyle: 'modern',
         includeSubtitles: finalInput.includeSubtitles ?? true,
         includeBackground: finalInput.includeBackground ?? true,
+        animatedSubtitles: finalInput.animatedSubtitles ?? false,
+        animationStyle: finalInput.animationStyle || 'karaoke',
       }),
     })
 
@@ -595,6 +597,26 @@ export async function continueAfterEnrichment(
   const finalInput: AutoEditorInput = {
     ...enrichedInput,
     userPrompt: overrides?.userPrompt || enrichment?.enhanced_prompt || enrichedInput.userPrompt,
+  }
+
+  // If animated subtitles enabled with 'auto' style, use learned recommendation
+  if (finalInput.animatedSubtitles && finalInput.animationStyle === 'auto') {
+    try {
+      const rulesRes = await fetch('http://localhost:3001/api/learning/rules')
+      if (rulesRes.ok) {
+        const data = await rulesRes.json()
+        if (data.subtitleRecommendation?.style) {
+          finalInput.animationStyle = data.subtitleRecommendation.style
+          addLog(`[למידה] סגנון כתוביות מונפשות נלמד: ${finalInput.animationStyle}`)
+        } else {
+          finalInput.animationStyle = 'karaoke'
+        }
+      } else {
+        finalInput.animationStyle = 'karaoke'
+      }
+    } catch {
+      finalInput.animationStyle = 'karaoke'
+    }
   }
 
   try {
