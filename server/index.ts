@@ -3194,73 +3194,59 @@ app.post('/api/generate-broll', async (req, res) => {
         return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai' })
       }
 
-      // Step 2: Find working polling endpoint
-      const pollEndpoints = [
-        `https://api.kie.ai/api/v1/jobs/getTaskDetails?taskId=${taskId}`,
-        `https://api.kie.ai/api/v1/jobs/${taskId}`,
-        `https://api.kie.ai/api/v1/tasks/${taskId}`,
-        `https://api.kie.ai/api/v1/jobs/query?taskId=${taskId}`,
-        `https://api.kie.ai/api/v1/jobs/status?taskId=${taskId}`,
-      ]
+      // Step 2: Poll for result using correct KIE.ai endpoint
+      const pollUrl = `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`
+      console.log('[SEEDANCE] Using poll endpoint:', pollUrl)
 
-      let workingPollUrl = ''
-      for (const ep of pollEndpoints) {
+      let videoUrl = null
+      const maxAttempts = 30
+
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(r => setTimeout(r, 10000)) // 10 sec between polls
+
         try {
-          console.log('[SEEDANCE] Trying poll endpoint:', ep)
-          const testRes = await fetch(ep, {
-            headers: { 'Authorization': `Bearer ${kieKey}`, 'Content-Type': 'application/json' },
+          console.log(`[SEEDANCE] Poll ${i + 1}/${maxAttempts}: ${pollUrl}`)
+
+          const statusRes = await fetch(pollUrl, {
+            headers: {
+              'Authorization': `Bearer ${kieKey}`,
+              'Content-Type': 'application/json',
+            },
           })
-          console.log('[SEEDANCE] Endpoint status:', testRes.status)
-          if (testRes.status !== 404) {
-            const testData = await testRes.json()
-            console.log('[SEEDANCE] Endpoint response:', JSON.stringify(testData).substring(0, 300))
-            workingPollUrl = ep
+
+          const statusData = await statusRes.json()
+          console.log(`[SEEDANCE] Poll ${i + 1} response:`, JSON.stringify(statusData).substring(0, 300))
+
+          const status = statusData.data?.status || statusData.status || ''
+          const foundUrl = statusData.data?.resultUrl || statusData.data?.url || statusData.data?.output?.url || statusData.data?.videoUrl || ''
+
+          if (foundUrl) {
+            console.log('[SEEDANCE] Video ready:', foundUrl)
+            videoUrl = foundUrl
             break
           }
-        } catch {}
-      }
 
-      if (!workingPollUrl) {
-        console.warn('[SEEDANCE] No working polling endpoint found')
-        return res.status(500).json({ message: 'Seedance: לא נמצא endpoint לבדיקת סטטוס' })
-      }
+          if (status === 'completed' || status === 'success' || status === 'done') {
+            // Status says done but no URL from primary fields - check other fields
+            console.log('[SEEDANCE] Status complete, looking for URL in:', JSON.stringify(statusData.data || statusData))
+            const possibleUrl = statusData.data?.resultUrl || statusData.data?.url || statusData.data?.output || statusData.data?.video
+            if (possibleUrl) {
+              videoUrl = possibleUrl
+              break
+            }
+          }
 
-      console.log('[SEEDANCE] Using poll endpoint:', workingPollUrl)
+          if (status === 'failed' || status === 'error') {
+            const errorMsg = statusData.data?.error || statusData.error || 'Generation failed'
+            console.error('[SEEDANCE] Task failed:', JSON.stringify(statusData))
+            return res.status(500).json({ message: 'Seedance נכשל: ' + errorMsg })
+          }
 
-      // Step 3: Poll for result
-      let videoUrl = null
-      let attempts = 0
-      const maxAttempts = 10
+          // Still processing...
+          console.log(`[SEEDANCE] Status: ${status || 'processing'}`)
 
-      while (!videoUrl && attempts < maxAttempts) {
-        await new Promise(r => setTimeout(r, 10000))
-        attempts++
-
-        const statusRes = await fetch(workingPollUrl, {
-          headers: { 'Authorization': `Bearer ${kieKey}`, 'Content-Type': 'application/json' },
-        })
-
-        console.log('[SEEDANCE] Poll status:', statusRes.status)
-
-        const statusData = await statusRes.json()
-        console.log('[SEEDANCE] Poll response:', JSON.stringify(statusData).substring(0, 500))
-
-        const status = statusData.data?.status || statusData.status || statusData.state
-
-        console.log(`[SEEDANCE] Poll ${attempts}/${maxAttempts}: status=${status}`)
-
-        if (status === 'completed' || status === 'success') {
-          videoUrl = statusData.data?.output?.video_url ||
-                     statusData.data?.result?.video_url ||
-                     statusData.data?.video_url ||
-                     statusData.url || statusData.data?.url ||
-                     statusData.data?.resultUrl || statusData.data?.videoUrl
-          break
-        }
-
-        if (status === 'failed' || status === 'error') {
-          const errorMsg = statusData.data?.error || statusData.error || 'Generation failed'
-          return res.status(500).json({ message: 'Seedance נכשל: ' + errorMsg })
+        } catch (e: any) {
+          console.warn(`[SEEDANCE] Poll error:`, e.message)
         }
       }
 
