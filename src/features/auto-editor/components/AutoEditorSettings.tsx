@@ -159,9 +159,9 @@ function estimateMaxVideos(files: LocalFile[], targetDuration: number): number {
 export default function AutoEditorSettings({ files, onStart, onBack, onClose }: AutoEditorSettingsProps) {
   const profile = useUserProfileStore()
   const [userPrompt, setUserPrompt] = useState('')
-  const [targetDuration, setTargetDuration] = useState(60)
+  const [targetDuration, setTargetDuration] = useState(-1)
   const [customDuration, setCustomDuration] = useState('')
-  const [numberOfVideos, setNumberOfVideos] = useState(3)
+  const [numberOfVideos, setNumberOfVideos] = useState(1)
   const [brollGenerator, setBrollGenerator] = useState<'seedance' | 'veo'>(
     (profile.preferredBrollProvider === 'seedance' || profile.preferredBrollProvider === 'veo')
       ? profile.preferredBrollProvider
