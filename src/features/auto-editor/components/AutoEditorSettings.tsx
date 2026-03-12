@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Video, Music, Sparkles, Film, ArrowRight, X } from 'lucide-react'
 import type { AutoEditorInput } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
@@ -77,13 +77,19 @@ const PRESET_CATEGORIES = [
 ]
 
 function EvolutionBadge() {
+  // Select the raw evolutions object (stable reference from Zustand)
   const evolutions = usePromptEvolutionStore(s => s.evolutions)
-  const entries = Object.values(evolutions)
-  const totalLearnings = entries.reduce((sum, e) => sum + (e.additions?.length || 0), 0)
+
+  // Derive values with useMemo to avoid creating new references each render
+  const { totalLearnings, totalVersions } = useMemo(() => {
+    const entries = Object.values(evolutions)
+    return {
+      totalLearnings: entries.reduce((sum, e) => sum + (e.additions?.length || 0), 0),
+      totalVersions: entries.reduce((sum, e) => sum + (e.version || 0), 0),
+    }
+  }, [evolutions])
 
   if (totalLearnings === 0) return null
-
-  const totalVersions = entries.reduce((sum, e) => sum + (e.version || 0), 0)
 
   return (
     <div className="flex items-center gap-2 bg-purple-500/10 rounded-full px-3 py-1 mb-4" dir="rtl">
@@ -164,6 +170,10 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(
     new Set(['tiktok', 'reels', 'shorts'])
   )
+  const [includeSubtitles, setIncludeSubtitles] = useState(true)
+  const [includeBackground, setIncludeBackground] = useState(true)
+  const [animatedSubtitles, setAnimatedSubtitles] = useState(false)
+  const [animationStyle, setAnimationStyle] = useState('auto')
 
   const closeHandler = onClose || onBack
 
@@ -198,6 +208,10 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       numberOfVideos,
       brollGenerator,
       platforms: Array.from(selectedPlatforms),
+      includeSubtitles,
+      includeBackground,
+      animatedSubtitles,
+      animationStyle,
     })
   }
 
@@ -394,6 +408,80 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Additional options */}
+          <div className="space-y-3">
+            <h4 className="text-sm font-medium text-text-primary">אפשרויות נוספות:</h4>
+
+            <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition">
+              <div>
+                <span className="text-white text-sm">&#x1F4AC; כתוביות</span>
+                <span className="text-gray-500 text-xs block">הוסף כתוביות אוטומטיות לסרטון</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={includeSubtitles}
+                onChange={e => setIncludeSubtitles(e.target.checked)}
+                className="accent-purple-500 w-5 h-5"
+              />
+            </label>
+
+            {includeSubtitles && (
+              <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition mr-6 border-r-2 border-purple-500">
+                <div>
+                  <span className="text-white text-sm">&#x2728; כתוביות מונפשות</span>
+                  <span className="text-gray-500 text-xs block">מילה-מילה עם אנימציה (סגנון TikTok/Reels)</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={animatedSubtitles}
+                  onChange={e => setAnimatedSubtitles(e.target.checked)}
+                  className="accent-purple-500 w-5 h-5"
+                />
+              </label>
+            )}
+
+            {includeSubtitles && animatedSubtitles && (
+              <div className="mr-6 border-r-2 border-purple-500 pr-3 space-y-2">
+                <span className="text-xs text-gray-400">סגנון אנימציה:</span>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: 'auto', label: '\uD83E\uDD16 אוטומטי', desc: 'לפי מה שעובד ברשתות' },
+                    { id: 'karaoke', label: '\uD83C\uDFA4 קריוקי', desc: 'מילה מודגשת בזמן אמת' },
+                    { id: 'pop', label: '\uD83D\uDCA5 פופ', desc: 'מילים קופצות אחת-אחת' },
+                    { id: 'typewriter', label: '\u2328\uFE0F מכונת כתיבה', desc: 'אות-אות' },
+                    { id: 'glow', label: '\u2728 זוהר', desc: 'מילה זוהרת בזמן אמת' },
+                    { id: 'bounce', label: '\uD83C\uDFC0 קפיצה', desc: 'מילים קופצות מלמטה' },
+                    { id: 'slide', label: '\u27A1\uFE0F החלקה', desc: 'מילים נכנסות מהצד' },
+                  ].map(style => (
+                    <button key={style.id}
+                      onClick={() => setAnimationStyle(style.id)}
+                      className={`text-xs px-3 py-2 rounded-lg transition ${
+                        animationStyle === style.id
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                      }`}
+                      title={style.desc}>
+                      {style.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition">
+              <div>
+                <span className="text-white text-sm">תמונת רקע</span>
+                <span className="text-gray-500 text-xs block">צור תמונת רקע ב-AI לסרטון (ל-9:16 ו-1:1)</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={includeBackground}
+                onChange={e => setIncludeBackground(e.target.checked)}
+                className="accent-purple-500 w-5 h-5"
+              />
+            </label>
           </div>
 
           {/* Personalization indicator */}

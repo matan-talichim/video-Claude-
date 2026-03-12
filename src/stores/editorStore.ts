@@ -43,7 +43,7 @@ export interface CaptionStyle {
   italic: boolean
   outline: boolean
   outlineColor: string
-  animation: 'none' | 'fade' | 'slideUp' | 'typewriter' | 'wordByWord' | 'bounce' | 'zoom'
+  animation: 'none' | 'fade' | 'slideUp' | 'typewriter' | 'wordByWord' | 'bounce' | 'zoom' | 'karaoke' | 'pop' | 'glow'
 }
 
 export interface BRollItem {

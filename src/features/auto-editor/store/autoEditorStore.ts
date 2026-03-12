@@ -49,6 +49,10 @@ export interface AutoEditorInput {
   numberOfVideos: number
   brollGenerator: 'seedance' | 'veo'
   platforms: string[]
+  includeSubtitles: boolean
+  includeBackground: boolean
+  animatedSubtitles: boolean
+  animationStyle: string
 }
 
 export interface EditedFile {

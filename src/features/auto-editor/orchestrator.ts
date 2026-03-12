@@ -343,6 +343,10 @@ async function processVideosWithPlan(
         musicUrl: musicUrl || null,
         backgroundImage: backgroundImage || null,
         captionStyle: 'modern',
+        includeSubtitles: finalInput.includeSubtitles ?? true,
+        includeBackground: finalInput.includeBackground ?? true,
+        animatedSubtitles: finalInput.animatedSubtitles ?? false,
+        animationStyle: finalInput.animationStyle || 'karaoke',
       }),
     })
 
@@ -595,6 +599,26 @@ export async function continueAfterEnrichment(
     userPrompt: overrides?.userPrompt || enrichment?.enhanced_prompt || enrichedInput.userPrompt,
   }
 
+  // If animated subtitles enabled with 'auto' style, use learned recommendation
+  if (finalInput.animatedSubtitles && finalInput.animationStyle === 'auto') {
+    try {
+      const rulesRes = await fetch('http://localhost:3001/api/learning/rules')
+      if (rulesRes.ok) {
+        const data = await rulesRes.json()
+        if (data.subtitleRecommendation?.style) {
+          finalInput.animationStyle = data.subtitleRecommendation.style
+          addLog(`[למידה] סגנון כתוביות מונפשות נלמד: ${finalInput.animationStyle}`)
+        } else {
+          finalInput.animationStyle = 'karaoke'
+        }
+      } else {
+        finalInput.animationStyle = 'karaoke'
+      }
+    } catch {
+      finalInput.animationStyle = 'karaoke'
+    }
+  }
+
   try {
     const apis = await checkApiAvailability()
 
@@ -659,8 +683,16 @@ export async function continueAfterEnrichment(
       musicUrl = cachedAssets.music
     } else {
       setStep('generating_assets')
+
+      const shouldGenerateBackground = finalInput.includeBackground !== false
+      if (!shouldGenerateBackground) {
+        addLog('מדלג על תמונת רקע (כובה בהגדרות)')
+      }
+
       const assetResults = await Promise.allSettled([
-        generateBackgroundSafe(editingPlanA.prompts.backgroundImage, apis.gemini),
+        shouldGenerateBackground
+          ? generateBackgroundSafe(editingPlanA.prompts.backgroundImage, apis.gemini)
+          : Promise.resolve(''),
         generateAllBroll(editingPlanA.prompts.broll, finalInput.brollGenerator, apis),
         findMusicSafe(
           enrichment?.style?.music_search || editingPlanA.prompts.musicSearch,

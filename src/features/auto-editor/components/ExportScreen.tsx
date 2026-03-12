@@ -4,6 +4,13 @@ import { useAutoEditorStore, type VideoResult, type PlatformFile } from '../stor
 import { useProjectsStore } from '../../../stores/projectsStore'
 import { QualityReportDisplay } from './CompareVersions'
 
+function ensureFullUrl(url: string): string {
+  if (!url) return ''
+  if (url.startsWith('http')) return url
+  if (url.startsWith('/')) return `http://localhost:3001${url}`
+  return `http://localhost:3001/uploads/${url}`
+}
+
 interface ExportScreenProps {
   onReset: () => void
 }
@@ -68,14 +75,17 @@ function VideoPreviewModal({ file, videoIndex, onClose }: VideoPreviewModalProps
         </div>
         <video
           ref={videoRef}
-          src={file.url}
+          src={ensureFullUrl(file.url)}
           className="w-full rounded-xl"
           controls
           autoPlay
+          playsInline
+          crossOrigin="anonymous"
+          onError={(e) => console.error('[EXPORT] Video preview error:', file.url, e)}
         />
         <div className="flex gap-3 mt-4" dir="rtl">
           <button
-            onClick={() => forceDownload(file.url, `סרטון_${videoIndex}_${file.platform}.mp4`)}
+            onClick={() => forceDownload(ensureFullUrl(file.url), `סרטון_${videoIndex}_${file.platform}.mp4`)}
             className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 rounded-lg flex items-center justify-center gap-2 transition-colors"
           >
             <Download size={16} />
@@ -122,13 +132,16 @@ function VideoCard({ video, file, onPreview }: VideoCardProps) {
         onClick={onPreview}
       >
         <video
-          src={file.url}
+          src={ensureFullUrl(file.url)}
           className="w-full h-full object-contain"
           preload="metadata"
+          playsInline
+          crossOrigin="anonymous"
           muted
           onLoadedMetadata={(e) => {
             (e.target as HTMLVideoElement).currentTime = 1
           }}
+          onError={(e) => console.error('[EXPORT] Thumbnail error:', file.url, e)}
         />
         <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition">
           <div className="w-12 h-12 bg-purple-600/80 group-hover:bg-purple-600 rounded-full flex items-center justify-center transition">
@@ -139,7 +152,7 @@ function VideoCard({ video, file, onPreview }: VideoCardProps) {
 
       {/* Download button */}
       <button
-        onClick={() => forceDownload(file.url, `סרטון_${video.videoIndex}_${file.platform}.mp4`)}
+        onClick={() => forceDownload(ensureFullUrl(file.url), `סרטון_${video.videoIndex}_${file.platform}.mp4`)}
         className="w-full bg-purple-600 hover:bg-purple-500 text-white py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors"
       >
         <Download size={14} />
@@ -192,7 +205,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
     if (!selectedVideo) return
     selectedVideo.files.forEach((file, i) => {
       setTimeout(() => {
-        forceDownload(file.url, `סרטון_${selectedVideo.videoIndex}_${file.platform}.mp4`)
+        forceDownload(ensureFullUrl(file.url), `סרטון_${selectedVideo.videoIndex}_${file.platform}.mp4`)
       }, i * 500)
     })
   }
@@ -202,7 +215,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
     videos.forEach(video => {
       video.files.forEach(file => {
         setTimeout(() => {
-          forceDownload(file.url, `סרטון_${video.videoIndex}_${file.platform}.mp4`)
+          forceDownload(ensureFullUrl(file.url), `סרטון_${video.videoIndex}_${file.platform}.mp4`)
         }, delay)
         delay += 500
       })
@@ -220,7 +233,22 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
         const mainFile = videoResult.files[0]
         if (!mainFile) continue
 
-        const response = await fetch(mainFile.url)
+        const videoUrl = ensureFullUrl(mainFile.url)
+        console.log('[TRANSFER] Video URL:', videoUrl)
+
+        // Test if URL is accessible before fetching
+        try {
+          const testRes = await fetch(videoUrl, { method: 'HEAD' })
+          if (!testRes.ok) {
+            console.error('[TRANSFER] Video URL not accessible:', videoUrl, testRes.status)
+            continue
+          }
+        } catch (e) {
+          console.error('[TRANSFER] Cannot reach video:', videoUrl, e)
+          continue
+        }
+
+        const response = await fetch(videoUrl)
         const blob = await response.blob()
         const file = new File([blob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
         const blobUrl = URL.createObjectURL(blob)
@@ -246,7 +274,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
           name: `סרטון ${video.videoIndex} - ${PLATFORM_LABELS[file.platform] || file.platform}`,
           format: file.ratio,
           platform: file.platform,
-          blobUrl: file.url,
+          blobUrl: ensureFullUrl(file.url),
           createdAt: new Date(),
           appliedEdits: ['עריכה אוטומטית'],
         }))

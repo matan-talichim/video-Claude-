@@ -121,6 +121,11 @@ async function getCreativeBrief(
     }
   } catch {}
 
+  // Build feature notes based on user settings
+  const featureNotes: string[] = []
+  if (input.includeSubtitles === false) featureNotes.push('בלי כתוביות - המשתמש ביקש ללא כתוביות')
+  if (input.includeBackground === false) featureNotes.push('בלי תמונת רקע AI - השתמש בטשטוש רקע במקום')
+
   const response = await fetch(`${API_BASE}/auto-editor/creative-brief`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -133,7 +138,7 @@ async function getCreativeBrief(
         })),
         total_duration: transcript.totalDuration,
       },
-      userPrompt: input.userPrompt,
+      userPrompt: input.userPrompt + (featureNotes.length > 0 ? `\n\nהערות: ${featureNotes.join('. ')}` : ''),
       targetDuration: input.targetDuration,
       numberOfVideos: input.numberOfVideos,
       platforms: input.platforms,

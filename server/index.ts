@@ -64,7 +64,18 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 * 1024 } })
 app.use('/api/audio', express.static(uploadsDir))
 
 // Serve uploaded files statically (for auto-editor local mode)
-app.use('/uploads', express.static(uploadsDir))
+app.use('/uploads', express.static(uploadsDir, {
+  setHeaders: (res, filePath) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (filePath.endsWith('.mp4')) {
+      res.setHeader('Content-Type', 'video/mp4');
+    } else if (filePath.endsWith('.webm')) {
+      res.setHeader('Content-Type', 'video/webm');
+    } else if (filePath.endsWith('.mov') || filePath.endsWith('.MOV')) {
+      res.setHeader('Content-Type', 'video/quicktime');
+    }
+  }
+}))
 
 // ==================== API STATUS ====================
 
@@ -2200,7 +2211,7 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
       model: 'gpt-5.4',
       messages,
       response_format: { type: 'json_object' },
-      max_tokens: 4000,
+      max_completion_tokens: 4000,
     })
 
     const analysis = JSON.parse(response.choices[0]?.message?.content || '{}')
@@ -2251,7 +2262,7 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
           }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 500,
+        max_completion_tokens: 500,
       })
       const reflection = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}')
       promptImprovements = reflection.improvements || []
@@ -2472,7 +2483,7 @@ ${(transcript.segments || []).map((s: any) => `[${(s.start || 0).toFixed(1)}s] $
           }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 500,
+        max_completion_tokens: 500,
       })
       promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
       if (promptImprovements.length > 0) {
@@ -2693,7 +2704,7 @@ ${aiChoosesDuration ? 'אורך יעד: AI בוחר - קבע אורך אופטי
           }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 500,
+        max_completion_tokens: 500,
       })
       promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
       if (promptImprovements.length > 0) {
@@ -3001,7 +3012,7 @@ Create precise technical edit plan.`
           }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 500,
+        max_completion_tokens: 500,
       })
       promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
       if (promptImprovements.length > 0) {
@@ -3029,15 +3040,49 @@ app.post('/api/generate-background', async (req, res) => {
 
     console.log('[NANO BANANA] Generating image with Gemini...')
 
-    const response = await ai.models.generateImages({
-      model: 'imagen-3.0-generate-002',
-      prompt,
-      config: { numberOfImages: 1, aspectRatio },
-    })
+    let imageData: any = null
 
-    const imageData = response.generatedImages?.[0]?.image
+    // Try multiple Imagen model names (API may use different versions)
+    const modelNames = ['imagen-3.0-generate-002', 'imagen-3.0-generate-001', 'imagen-3.0']
+    for (const modelName of modelNames) {
+      try {
+        const response = await ai.models.generateImages({
+          model: modelName,
+          prompt,
+          config: { numberOfImages: 1, aspectRatio },
+        })
+        imageData = response.generatedImages?.[0]?.image
+        if (imageData) {
+          console.log('[NANO BANANA] Success with model:', modelName)
+          break
+        }
+      } catch (modelErr: any) {
+        console.warn(`[NANO BANANA] Model ${modelName} failed:`, modelErr.message?.slice(0, 100))
+      }
+    }
+
+    // Fallback to DALL-E 3 if Gemini Imagen fails
     if (!imageData) {
-      return res.status(500).json({ message: 'Nano Banana לא החזיר תמונה' })
+      console.log('[NANO BANANA] Gemini Imagen failed, trying DALL-E 3 fallback...')
+      const dalleAi = await getOpenAI()
+      if (dalleAi) {
+        try {
+          const dalleRes = await dalleAi.images.generate({
+            model: 'dall-e-3',
+            prompt,
+            n: 1,
+            size: aspectRatio === '9:16' ? '1024x1792' : aspectRatio === '1:1' ? '1024x1024' : '1792x1024',
+          })
+          const dalleUrl = dalleRes.data?.[0]?.url
+          if (dalleUrl) {
+            console.log('[NANO BANANA] DALL-E 3 fallback succeeded')
+            return res.json({ url: dalleUrl, imageUrl: dalleUrl })
+          }
+        } catch (dalleErr: any) {
+          console.warn('[NANO BANANA] DALL-E 3 fallback also failed:', dalleErr.message?.slice(0, 100))
+        }
+      }
+      return res.status(500).json({ message: 'Nano Banana לא החזיר תמונה (כל המודלים נכשלו)' })
     }
 
     // Save image to uploads and return URL
@@ -3107,10 +3152,12 @@ app.post('/api/generate-broll', async (req, res) => {
       }
 
       const taskData = await createRes.json()
-      const taskId = taskData.data?.task_id || taskData.task_id
+      console.log('[SEEDANCE] Full response:', JSON.stringify(taskData))
+      const taskId = taskData.data?.task_id || taskData.task_id || taskData.id || taskData.data?.id
       console.log('[SEEDANCE] Task created:', taskId)
 
       if (!taskId) {
+        console.error('[SEEDANCE] No task ID in response:', JSON.stringify(taskData))
         return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai' })
       }
 
@@ -3462,12 +3509,13 @@ const colorGrades: Record<string, string> = {
 }
 
 // Subtitle style presets (ASS format)
+// Use "Sans" as font name for maximum cross-platform compatibility (maps to system sans-serif)
 const subtitleStyles: Record<string, string> = {
-  modern: 'Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,1',
-  karaoke: 'Style: Default,Arial,22,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,50,1',
-  bold_white: 'Style: Default,Impact,24,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,1',
-  minimal: 'Style: Default,Helvetica,18,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,30,1',
-  colorful: 'Style: Default,Arial,22,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,45,1',
+  modern: 'Style: Default,Sans,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,1',
+  karaoke: 'Style: Default,Sans,22,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,50,1',
+  bold_white: 'Style: Default,Sans,24,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,1',
+  minimal: 'Style: Default,Sans,18,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,30,1',
+  colorful: 'Style: Default,Sans,22,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,45,1',
 }
 
 // Generate styled ASS subtitles
@@ -3512,6 +3560,288 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   return ass
 }
 
+// Generate animated ASS subtitles (word-by-word karaoke/pop/typewriter/glow/bounce/slide)
+function buildAnimatedASS(subtitles: any[], style: string, cuts: any[]): string {
+  let ass = `[Script Info]
+Title: Animated Subtitles
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+`
+  switch (style) {
+    case 'karaoke':
+      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\n`
+      break
+    case 'pop':
+      ass += `Style: Default,Sans,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\nStyle: Pop,Sans,70,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,20,20,60,1\n`
+      break
+    case 'typewriter':
+      ass += `Style: Default,Sans,50,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,60,1\n`
+      break
+    case 'glow':
+      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,20,20,60,1\n`
+      break
+    case 'bounce':
+      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,200,1\n`
+      break
+    case 'slide':
+      ass += `Style: Default,Sans,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\n`
+      break
+    default:
+      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\n`
+  }
+  ass += `\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`
+
+  // Recalculate timestamps relative to cut video (same logic as standard subs)
+  const adjustedSubs: Array<{ start: number; end: number; text: string }> = []
+  let currentOffset = 0
+  for (const cut of cuts) {
+    const cutDuration = cut.keep_end - cut.keep_start
+    for (const seg of subtitles) {
+      const segStart = seg.start ?? seg.keepStart ?? 0
+      const segEnd = seg.end ?? seg.keepEnd ?? 0
+      if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
+        adjustedSubs.push({
+          start: currentOffset + (segStart - cut.keep_start),
+          end: currentOffset + (segEnd - cut.keep_start),
+          text: seg.text || '',
+        })
+      }
+    }
+    currentOffset += cutDuration
+  }
+
+  for (const sub of adjustedSubs) {
+    const text = sub.text
+    const words = text.split(' ').filter((w: string) => w.trim())
+    if (words.length === 0) continue
+
+    const subDuration = sub.end - sub.start
+    const wordDuration = subDuration / words.length
+
+    switch (style) {
+      case 'karaoke': {
+        words.forEach((word: string, wi: number) => {
+          const wordStart = sub.start + wi * wordDuration
+          const wordEnd = wordStart + wordDuration
+          const ws = formatAssTime(wordStart)
+          const we = formatAssTime(wordEnd)
+          const beforeWords = words.slice(0, wi).join(' ')
+          const afterWords = words.slice(wi + 1).join(' ')
+          const highlighted = `${beforeWords ? beforeWords + ' ' : ''}{\\c&H00FFFF&\\fscx110\\fscy110\\b1}${word}{\\r}${afterWords ? ' ' + afterWords : ''}`
+          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,${highlighted}\n`
+        })
+        break
+      }
+      case 'pop': {
+        words.forEach((word: string, wi: number) => {
+          const wordStart = sub.start + wi * wordDuration
+          const wordEnd = sub.end
+          const ws = formatAssTime(wordStart)
+          const we = formatAssTime(wordEnd)
+          const xPos = 540 - ((words.length - 1) * 35) + (wi * 70)
+          ass += `Dialogue: 0,${ws},${we},Pop,,0,0,0,,{\\an5\\pos(${xPos},960)\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${word}\n`
+        })
+        break
+      }
+      case 'typewriter': {
+        const chars = text.split('')
+        const charDuration = subDuration / Math.max(chars.length, 1)
+        let charIdx = 0
+        for (let ci = 0; ci < chars.length; ci++) {
+          if (chars[ci] === ' ') { charIdx++; continue }
+          const charStart = sub.start + charIdx * charDuration
+          const cs = formatAssTime(charStart)
+          const we = formatAssTime(sub.end)
+          const visibleText = text.substring(0, ci + 1)
+          ass += `Dialogue: 0,${cs},${we},Default,,0,0,0,,${visibleText}\n`
+          charIdx++
+        }
+        break
+      }
+      case 'glow': {
+        words.forEach((word: string, wi: number) => {
+          const wordStart = sub.start + wi * wordDuration
+          const wordEnd = wordStart + wordDuration
+          const ws = formatAssTime(wordStart)
+          const we = formatAssTime(wordEnd)
+          const beforeWords = words.slice(0, wi).join(' ')
+          const afterWords = words.slice(wi + 1).join(' ')
+          const glowLine = `${beforeWords ? beforeWords + ' ' : ''}{\\c&HFF00FF&\\bord5\\blur3\\b1}${word}{\\r}${afterWords ? ' ' + afterWords : ''}`
+          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,${glowLine}\n`
+        })
+        break
+      }
+      case 'bounce': {
+        words.forEach((word: string, wi: number) => {
+          const wordStart = sub.start + wi * wordDuration * 0.5
+          const wordEnd = sub.end
+          const ws = formatAssTime(wordStart)
+          const we = formatAssTime(wordEnd)
+          const xPos = 540 - ((words.length - 1) * 35) + (wi * 70)
+          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(${xPos},1200,${xPos},900,0,200)\\fad(0,150)}${word}\n`
+        })
+        break
+      }
+      case 'slide': {
+        words.forEach((word: string, wi: number) => {
+          const wordStart = sub.start + wi * wordDuration * 0.3
+          const wordEnd = sub.end
+          const ws = formatAssTime(wordStart)
+          const we = formatAssTime(wordEnd)
+          const finalX = 540 - ((words.length - 1) * 35) + (wi * 70)
+          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(1200,960,${finalX},960,0,250)\\fad(0,150)}${word}\n`
+        })
+        break
+      }
+      default: {
+        const startTime = formatAssTime(sub.start)
+        const endTime = formatAssTime(sub.end)
+        ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(200,200)}${text}\n`
+      }
+    }
+  }
+
+  return ass
+}
+
+// Generate animated subtitles - ASS with fallback to drawtext
+async function generateAnimatedSubtitles(
+  inputFile: string,
+  subtitles: any[],
+  cuts: any[],
+  style: string,
+  outputDir: string,
+  ffmpegPath: string,
+  timestamp: number,
+  filesToCleanup: string[]
+): Promise<string> {
+  const outputFile = path.join(outputDir, `step5_animated_subs_${timestamp}.mp4`)
+  filesToCleanup.push(outputFile)
+
+  const assContent = buildAnimatedASS(subtitles, style, cuts)
+  const assPath = path.join(outputDir, `animated_subs_${timestamp}.ass`)
+  fs.writeFileSync(assPath, assContent, 'utf-8')
+  filesToCleanup.push(assPath)
+
+  try {
+    const escapedAss = assPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+    execSync(
+      `"${ffmpegPath}" -i "${inputFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputFile}" -y`,
+      { timeout: 180000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+    console.log(`[PROCESS] Animated subtitles applied (${style})`)
+    return outputFile
+  } catch (e: any) {
+    console.warn('[PROCESS] ASS animated failed, trying drawtext fallback:', e.message?.slice(0, 100))
+    return generateDrawtextAnimated(inputFile, subtitles, cuts, style, outputDir, ffmpegPath, timestamp, filesToCleanup)
+  }
+}
+
+// Fallback: drawtext-based animated subtitles
+async function generateDrawtextAnimated(
+  inputFile: string,
+  subtitles: any[],
+  cuts: any[],
+  style: string,
+  outputDir: string,
+  ffmpegPath: string,
+  timestamp: number,
+  filesToCleanup: string[]
+): Promise<string> {
+  // Recalculate timestamps relative to cut video
+  const adjustedSubs: Array<{ start: number; end: number; text: string }> = []
+  let currentOffset = 0
+  for (const cut of cuts) {
+    const cutDuration = cut.keep_end - cut.keep_start
+    for (const seg of subtitles) {
+      const segStart = seg.start ?? seg.keepStart ?? 0
+      const segEnd = seg.end ?? seg.keepEnd ?? 0
+      if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
+        adjustedSubs.push({
+          start: currentOffset + (segStart - cut.keep_start),
+          end: currentOffset + (segEnd - cut.keep_start),
+          text: seg.text || '',
+        })
+      }
+    }
+    currentOffset += cutDuration
+  }
+
+  const filters: string[] = []
+  adjustedSubs.forEach((sub, si) => {
+    const text = sub.text
+    const words = text.split(' ').filter((w: string) => w.trim())
+    const subDuration = sub.end - sub.start
+    const wordDur = subDuration / Math.max(words.length, 1)
+
+    words.forEach((word: string, wi: number) => {
+      const wordStart = sub.start + wi * wordDur
+      const wordEnd = sub.end
+      const highlightEnd = wordStart + wordDur
+
+      const tmpFile = path.join(outputDir, `word_${timestamp}_${si}_${wi}.txt`)
+      fs.writeFileSync(tmpFile, word, 'utf-8')
+      filesToCleanup.push(tmpFile)
+      const escapedTmp = tmpFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+
+      const totalWidth = words.length * 70
+      const x = `(w/2)-${Math.round(totalWidth / 2)}+${wi * 70}`
+      const y = 'h-100'
+      const isHighlighted = style === 'karaoke' || style === 'glow'
+
+      if (isHighlighted) {
+        filters.push(
+          `drawtext=textfile='${escapedTmp}':fontsize=50:fontcolor=white:x=${x}:y=${y}:enable='between(t\\,${wordStart}\\,${wordEnd})*not(between(t\\,${wordStart}\\,${highlightEnd}))'`
+        )
+        filters.push(
+          `drawtext=textfile='${escapedTmp}':fontsize=55:fontcolor=yellow:borderw=3:bordercolor=black:x=${x}:y=${y}:enable='between(t\\,${wordStart}\\,${highlightEnd})'`
+        )
+      } else {
+        filters.push(
+          `drawtext=textfile='${escapedTmp}':fontsize=50:fontcolor=white:borderw=2:bordercolor=black:x=${x}:y=${y}:enable='between(t\\,${wordStart}\\,${wordEnd})'`
+        )
+      }
+    })
+  })
+
+  if (filters.length === 0) return inputFile
+
+  // FFmpeg has filter limits, batch if needed
+  const batchSize = 30
+  let current = inputFile
+
+  for (let i = 0; i < filters.length; i += batchSize) {
+    const batch = filters.slice(i, i + batchSize)
+    const batchOutput = path.join(outputDir, `subs_batch_${timestamp}_${i}.mp4`)
+    filesToCleanup.push(batchOutput)
+
+    try {
+      execSync(
+        `"${ffmpegPath}" -i "${current}" -vf "${batch.join(',')}" -c:a copy "${batchOutput}" -y`,
+        { timeout: 180000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      current = batchOutput
+    } catch (e: any) {
+      console.warn(`[PROCESS] Drawtext batch ${i} failed, skipping remaining:`, e.message?.slice(0, 80))
+      break
+    }
+  }
+
+  if (current !== inputFile) {
+    const finalOutput = path.join(outputDir, `step5_drawtext_subs_${timestamp}.mp4`)
+    filesToCleanup.push(finalOutput)
+    fs.renameSync(current, finalOutput)
+    return finalOutput
+  }
+
+  return inputFile
+}
+
 // Build transition filter for xfade between cuts
 function buildTransitionFilter(cuts: any[], transitions: string[] = ['fade'], transitionDuration: number = 0.5): { filter: string; useTransitions: boolean } {
   if (cuts.length <= 1) {
@@ -3551,45 +3881,63 @@ function buildTransitionFilter(cuts: any[], transitions: string[] = ['fade'], tr
 }
 
 // Build multi-cam crop filter
+// Uses a simpler approach: apply zoompan-based crops per segment using enable= time ranges
+// This avoids trim+concat which is fragile with segment gaps/overlaps
 function buildMultiCamFilter(cameraAngles: any[], videoWidth: number, videoHeight: number): string {
   if (!cameraAngles || cameraAngles.length === 0) return ''
 
-  const parts: string[] = []
-  cameraAngles.forEach((seg: any, i: number) => {
+  // Ensure dimensions are even (required by libx264)
+  const w = videoWidth % 2 === 0 ? videoWidth : videoWidth - 1
+  const h = videoHeight % 2 === 0 ? videoHeight : videoHeight - 1
+
+  // Build per-segment crop filters using enable= time ranges (no trim+concat needed)
+  const cropParts: string[] = []
+  for (const seg of cameraAngles) {
     const camType = seg.camera || 'wide'
-    let crop = ''
+    if (camType === 'wide') continue // wide = no crop needed
 
+    let cropFactor = 1.0
+    let xOff = 0
+    let yOff = 0
     switch (camType) {
-      case 'closeup': {
-        const cwClose = Math.floor(videoWidth * 0.5)
-        const chClose = Math.floor(videoHeight * 0.5)
-        crop = `crop=${cwClose}:${chClose}:${Math.floor((videoWidth - cwClose) / 2)}:${Math.floor((videoHeight - chClose) / 2)},scale=${videoWidth}:${videoHeight}`
+      case 'closeup':
+        cropFactor = 0.6
         break
-      }
-      case 'medium': {
-        const cwMed = Math.floor(videoWidth * 0.7)
-        const chMed = Math.floor(videoHeight * 0.7)
-        crop = `crop=${cwMed}:${chMed}:${Math.floor((videoWidth - cwMed) / 2)}:${Math.floor((videoHeight - chMed) / 2)},scale=${videoWidth}:${videoHeight}`
+      case 'medium':
+        cropFactor = 0.8
         break
-      }
-      default:
-        // wide - no crop
+      case 'left':
+        cropFactor = 0.8
+        xOff = 0 // left-aligned
+        yOff = Math.round(h * 0.1)
+        break
+      case 'right':
+        cropFactor = 0.8
+        xOff = Math.round(w * 0.2)
+        yOff = Math.round(h * 0.1)
         break
     }
 
-    if (crop) {
-      parts.push(`[0:v]trim=start=${seg.start}:end=${seg.end},${crop},setpts=PTS-STARTPTS[cam${i}]`)
-    } else {
-      parts.push(`[0:v]trim=start=${seg.start}:end=${seg.end},setpts=PTS-STARTPTS[cam${i}]`)
+    if (cropFactor < 1.0 && camType !== 'left' && camType !== 'right') {
+      const cw = Math.round(w * cropFactor)
+      const ch = Math.round(h * cropFactor)
+      xOff = Math.round((w - cw) / 2)
+      yOff = Math.round((h - ch) / 2)
     }
-    parts.push(`[0:a]atrim=start=${seg.start}:end=${seg.end},asetpts=PTS-STARTPTS[cama${i}]`)
-  })
 
-  // Concat all cam segments
-  const camInputs = cameraAngles.map((_: any, i: number) => `[cam${i}][cama${i}]`).join('')
-  parts.push(`${camInputs}concat=n=${cameraAngles.length}:v=1:a=1[outv][outa]`)
+    if (cropFactor < 1.0) {
+      const cw = Math.round(w * cropFactor)
+      const ch = Math.round(h * cropFactor)
+      // Use zoompan to smoothly zoom in during the segment's time range
+      // zoompan is applied as overlay so we use crop+scale with enable= instead
+      cropParts.push(`crop=${cw}:${ch}:${xOff}:${yOff}:enable='between(t,${seg.start},${seg.end})',scale=${w}:${h}:enable='between(t,${seg.start},${seg.end})'`)
+    }
+  }
 
-  return parts.join(';')
+  if (cropParts.length === 0) return ''
+
+  // Chain all crop filters (each only active during its time range)
+  return cropParts.join(',')
 }
 
 // Build smart framing filter for platform export
@@ -3663,6 +4011,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
       musicUrl,
       backgroundImage,
       captionStyle,
+      includeSubtitles = true,
+      includeBackground = true,
+      animatedSubtitles = false,
+      animationStyle = 'karaoke',
     } = req.body
 
     const ffmpegPath = getFFmpeg()
@@ -3691,6 +4043,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     }
 
     console.log('[PROCESS] Source file:', sourceFile)
+    console.log('[PROCESS] Options:', { includeSubtitles, includeBackground })
     console.log('[PROCESS] Plan features:', {
       transitions: videoPlan?.transitions?.length || 0,
       zooms: videoPlan?.zooms?.length || 0,
@@ -3761,8 +4114,19 @@ app.post('/api/auto-editor/process', async (req, res) => {
       console.log('[PROCESS] Step 2: Multi-cam simulation with', cameraAngles.length, 'angles...')
 
       try {
+        // Probe actual video dimensions
+        let vidW = 1920, vidH = 1080
+        try {
+          const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+          const probeOut = execSync(
+            `"${ffprobePath}" -v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "${currentFile}"`,
+            { timeout: 15000 }
+          ).toString().trim()
+          const [pw, ph] = probeOut.split('x').map(Number)
+          if (pw > 0 && ph > 0) { vidW = pw; vidH = ph }
+        } catch { /* use defaults */ }
+
         // Remap camera angles to be relative to the cut video
-        let cutOffset = 0
         const cutDurations = cuts.map((c: any) => c.keep_end - c.keep_start)
         const totalCutDuration = cutDurations.reduce((s: number, d: number) => s + d, 0)
 
@@ -3773,16 +4137,21 @@ app.post('/api/auto-editor/process', async (req, res) => {
           return { start: relStart, end: relEnd, camera: ca.camera || 'wide' }
         }).filter((ca: any) => ca.end > ca.start)
 
-        if (scaledAngles.length > 1) {
-          const camFilter = buildMultiCamFilter(scaledAngles, 1920, 1080)
-          execSync(
-            `"${ffmpegPath}" -i "${currentFile}" -filter_complex "${camFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${camFile}" -y`,
-            { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
-          )
-          currentFile = camFile
-          console.log('[PROCESS] Step 2 done: Multi-cam applied')
+        const nonWideAngles = scaledAngles.filter((ca: any) => ca.camera !== 'wide')
+        if (nonWideAngles.length > 0) {
+          const camFilter = buildMultiCamFilter(scaledAngles, vidW, vidH)
+          if (camFilter) {
+            execSync(
+              `"${ffmpegPath}" -i "${currentFile}" -vf "${camFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${camFile}" -y`,
+              { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+            )
+            currentFile = camFile
+            console.log('[PROCESS] Step 2 done: Multi-cam applied')
+          } else {
+            console.log('[PROCESS] Step 2 skipped: All angles are wide')
+          }
         } else {
-          console.log('[PROCESS] Step 2 skipped: Not enough valid camera angles')
+          console.log('[PROCESS] Step 2 skipped: All angles are wide')
         }
       } catch (e: any) {
         console.log('[PROCESS] Multi-cam failed, continuing without:', e.message?.slice(0, 100))
@@ -3807,6 +4176,90 @@ app.post('/api/auto-editor/process', async (req, res) => {
     )
     currentFile = gradedFile
     console.log('[PROCESS] Step 3 done')
+
+    // ============================================
+    // STEP 3.5: ZOOM / KEN BURNS EFFECTS
+    // ============================================
+
+    const zooms = videoPlan?.zooms || []
+    if (zooms.length > 0) {
+      const zoomFile = path.join(uploadsDir, `zoom_${timestamp}.mp4`)
+      filesToCleanup.push(zoomFile)
+      console.log('[PROCESS] Step 3.5: Applying', zooms.length, 'zoom effects...')
+
+      try {
+        // Probe actual video dimensions
+        let zoomW = 1920, zoomH = 1080
+        try {
+          const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+          const probeOut = execSync(
+            `"${ffprobePath}" -v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "${currentFile}"`,
+            { timeout: 15000 }
+          ).toString().trim()
+          const [pw, ph] = probeOut.split('x').map(Number)
+          if (pw > 0 && ph > 0) { zoomW = pw; zoomH = ph }
+        } catch { /* use defaults */ }
+
+        // Remap zoom timestamps to cut video time
+        const remappedZooms = zooms.map((z: any) => {
+          const atTime = z.at_time ?? z.atTime ?? 0
+          let relativeStart = 0
+          let cutOffset = 0
+          for (const cut of cuts) {
+            const cutDuration = cut.keep_end - cut.keep_start
+            if (atTime >= cut.keep_start && atTime <= cut.keep_end) {
+              relativeStart = cutOffset + (atTime - cut.keep_start)
+              break
+            }
+            cutOffset += cutDuration
+          }
+          return {
+            start: relativeStart,
+            duration: z.duration || 3,
+            scale: z.scale || 1.05,
+            direction: z.direction || 'in',
+          }
+        })
+
+        // Build a single scale expression that smoothly zooms at specified time ranges
+        // Outside zoom ranges, scale factor = 1.0 (no change)
+        // During zoom ranges, scale factor smoothly interpolates to target
+        // Then crop center back to original dimensions
+
+        // Limit to 8 zooms to keep filter expression manageable
+        const limitedZooms = remappedZooms.slice(0, 8)
+
+        // Build scale factor expression: starts at 1.0, adds zoom contributions
+        // Each zoom adds: if(between(t,start,end), delta*progress, 0)
+        const zoomExprs = limitedZooms.map((z: any) => {
+          const end = z.start + z.duration
+          const delta = Math.min(z.scale, 1.15) - 1.0 // Cap at 1.15
+          const isZoomIn = z.direction !== 'out'
+          const progress = `((t-${z.start})/${z.duration})`
+          const interpDelta = isZoomIn
+            ? `${delta.toFixed(4)}*${progress}`
+            : `${delta.toFixed(4)}*(1-${progress})`
+          return `if(between(t,${z.start},${end}),${interpDelta},0)`
+        })
+
+        // Total scale = 1 + sum of all zoom contributions
+        const scaleExpr = `(1+${zoomExprs.join('+')})`
+
+        // Use filter_complex: scale up then crop center
+        const zoomFilter = `[0:v]scale=trunc(iw*${scaleExpr}/2)*2:trunc(ih*${scaleExpr}/2)*2,crop=${zoomW}:${zoomH}:(iw-${zoomW})/2:(ih-${zoomH})/2[outv]`
+
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -filter_complex "${zoomFilter}" -map "[outv]" -map 0:a -c:v libx264 -preset fast -crf 23 -c:a copy "${zoomFile}" -y`,
+          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+        currentFile = zoomFile
+        console.log('[PROCESS] Step 3.5 done: Zoom effects applied')
+      } catch (e: any) {
+        console.log('[PROCESS] Zoom effects failed, continuing without:', e.message?.slice(0, 150))
+      }
+    } else {
+      console.log('[PROCESS] Step 3.5 skipped: No zooms in plan')
+    }
 
     // ============================================
     // STEP 4: PROFESSIONAL AUDIO PROCESSING + MUSIC
@@ -3883,7 +4336,37 @@ app.post('/api/auto-editor/process', async (req, res) => {
     const segments = videoPlan?.subtitles || videoPlan?.source_segments || videoPlan?.sourceSegments || []
     let assFilePath: string | null = null
 
-    if (segments.length > 0) {
+    if (!includeSubtitles) {
+      console.log('[PROCESS] Step 5: Skipping subtitles (disabled by user)')
+    } else if (segments.length > 0 && animatedSubtitles) {
+      console.log(`[PROCESS] Step 5: Generating ANIMATED subtitles (${animationStyle})...`)
+      try {
+        currentFile = await generateAnimatedSubtitles(
+          currentFile, segments, cuts, animationStyle || 'karaoke',
+          uploadsDir, ffmpegPath, timestamp, filesToCleanup
+        )
+        console.log('[PROCESS] Step 5 done: Animated subtitles added')
+      } catch (e: any) {
+        console.log('[PROCESS] Animated subtitles failed, falling back to standard:', e.message?.slice(0, 100))
+        // Fall back to standard subtitles
+        try {
+          const subStyle = captionStyle || 'modern'
+          const assContent = generateStyledSubtitles(segments, cuts, subStyle)
+          assFilePath = path.join(uploadsDir, `subs_${timestamp}.ass`)
+          filesToCleanup.push(assFilePath)
+          fs.writeFileSync(assFilePath, assContent, 'utf8')
+          const subFile = path.join(uploadsDir, `subbed_${timestamp}.mp4`)
+          filesToCleanup.push(subFile)
+          const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+            { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+          )
+          currentFile = subFile
+          console.log('[PROCESS] Step 5 done: Standard subtitles fallback')
+        } catch { /* continue without subs */ }
+      }
+    } else if (segments.length > 0) {
       console.log('[PROCESS] Step 5: Generating styled subtitles (ASS)...')
       const subStyle = captionStyle || 'modern'
       const assContent = generateStyledSubtitles(segments, cuts, subStyle)
@@ -3897,14 +4380,13 @@ app.post('/api/auto-editor/process', async (req, res) => {
       try {
         const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
         execSync(
-          `"${ffmpegPath}" -i "${currentFile}" -vf "ass='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+          `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
           { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
         )
         currentFile = subFile
         console.log('[PROCESS] Step 5 done: Styled subtitles added')
       } catch (e: any) {
         console.log('[PROCESS] ASS subtitles failed, trying SRT fallback:', e.message?.slice(0, 100))
-        // Fallback to SRT
         try {
           const srtFile = path.join(uploadsDir, `subs_${timestamp}.srt`)
           filesToCleanup.push(srtFile)
@@ -3929,7 +4411,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
             fs.writeFileSync(srtFile, srtContent, 'utf8')
             const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
             execSync(
-              `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontSize=18,Bold=1,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+              `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontName=Arial,FontSize=22,Bold=1,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=40'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
               { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
             )
             currentFile = subFile
@@ -3953,7 +4435,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
       try {
         // Remap speaker timestamps to cut video
-        const lowerThirdParts = speakers.map((s: any) => {
+        const lowerThirdParts = speakers.map((s: any, idx: number) => {
           const name = s.name || 'דובר'
           const firstAppear = s.first_appearance ?? s.firstAppearance ?? 0
           const displayDur = s.display_duration ?? s.displayDuration ?? 4
@@ -3970,7 +4452,13 @@ app.post('/api/auto-editor/process', async (req, res) => {
             cutOffset += cutDuration
           }
 
-          return `drawtext=text='${name.replace(/'/g, "\\'")}':fontsize=28:fontcolor=white:x=w-text_w-40:y=h-80:enable='between(t,${relativeStart},${relativeStart + displayDur})':box=1:boxcolor=0x7C5CFF@0.7:boxborderw=10`
+          // Write Hebrew text to temp file to avoid FFmpeg encoding issues
+          const tmpTextFile = path.join(uploadsDir, `speaker_${timestamp}_${idx}.txt`)
+          fs.writeFileSync(tmpTextFile, name, 'utf-8')
+          filesToCleanup.push(tmpTextFile)
+
+          const escapedTextFile = tmpTextFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+          return `drawtext=textfile='${escapedTextFile}':fontsize=28:fontcolor=white:x=w-text_w-40:y=h-80:enable='between(t,${relativeStart},${relativeStart + displayDur})':box=1:boxcolor=0x7C5CFF@0.7:boxborderw=10`
         })
 
         const lowerThirdFilter = lowerThirdParts.join(',')
@@ -3999,8 +4487,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
       try {
         // Map graphics to cut video time
-        const gfxParts = graphics.map((g: any) => {
-          const text = (g.text || '').replace(/'/g, "\\'")
+        const gfxParts = graphics.map((g: any, idx: number) => {
+          const text = g.text || ''
           const atTime = g.at_time ?? g.atTime ?? 0
           const duration = g.duration ?? 3
 
@@ -4017,8 +4505,15 @@ app.post('/api/auto-editor/process', async (req, res) => {
           }
 
           const end = relativeStart + duration
+
+          // Write Hebrew text to temp file to avoid FFmpeg encoding issues
+          const tmpTextFile = path.join(uploadsDir, `gfx_${timestamp}_${idx}.txt`)
+          fs.writeFileSync(tmpTextFile, text, 'utf-8')
+          filesToCleanup.push(tmpTextFile)
+
+          const escapedTextFile = tmpTextFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
           // Slide in from right (RTL friendly)
-          return `drawtext=text='${text}':fontsize=36:fontcolor=white:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
+          return `drawtext=textfile='${escapedTextFile}':fontsize=36:fontcolor=white:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
         })
 
         const gfxFilter = gfxParts.join(',')
@@ -4187,6 +4682,83 @@ app.post('/api/auto-editor/export', async (req, res) => {
   }
 })
 
+// Export with animated subtitles burned in (main editor)
+app.post('/api/export/burn-subtitles', async (req, res) => {
+  const filesToCleanup: string[] = []
+  try {
+    const { videoUrl, captions, animationStyle = 'karaoke', format = 'mp4-1080' } = req.body
+    if (!videoUrl || !captions?.length) {
+      return res.status(400).json({ message: 'חסר URL של הסרטון או כתוביות' })
+    }
+
+    const ffmpegPath = getFFmpeg()
+    const timestamp = Date.now()
+
+    // Resolve input file
+    let inputPath: string
+    if (videoUrl.includes('localhost')) {
+      const urlPath = new URL(videoUrl, `http://localhost:${PORT}`).pathname
+      inputPath = path.join(uploadsDir, path.basename(urlPath))
+    } else if (videoUrl.startsWith('/uploads/')) {
+      inputPath = path.join(uploadsDir, path.basename(videoUrl))
+    } else {
+      return res.status(400).json({ message: 'URL לא חוקי' })
+    }
+
+    if (!fs.existsSync(inputPath)) {
+      return res.status(404).json({ message: 'קובץ לא נמצא' })
+    }
+
+    // Build subtitles in format expected by buildAnimatedASS
+    const subs = captions.map((c: any) => ({
+      start: c.startTime || c.start || 0,
+      end: c.endTime || c.end || 0,
+      text: c.text || '',
+    }))
+
+    // For main editor export, cuts = entire video as one cut
+    const totalDur = subs.length > 0 ? Math.max(...subs.map((s: any) => s.end)) + 1 : 300
+    const fakeCuts = [{ keep_start: 0, keep_end: totalDur }]
+
+    const assContent = buildAnimatedASS(subs, animationStyle, fakeCuts)
+    const assPath = path.join(uploadsDir, `export_subs_${timestamp}.ass`)
+    fs.writeFileSync(assPath, assContent, 'utf-8')
+    filesToCleanup.push(assPath)
+
+    const scaleMap: Record<string, string> = {
+      'mp4-720': 'scale=-2:720',
+      'mp4-1080': 'scale=-2:1080',
+      'mp4-4k': 'scale=-2:2160',
+    }
+    const scale = scaleMap[format] || 'scale=-2:1080'
+
+    const outputPath = path.join(uploadsDir, `export_animated_${timestamp}.mp4`)
+    filesToCleanup.push(outputPath)
+
+    const escapedAss = assPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+    execSync(
+      `"${ffmpegPath}" -i "${inputPath}" -vf "subtitles='${escapedAss}',${scale}" -c:v libx264 -preset fast -crf 23 -c:a aac "${outputPath}" -y`,
+      { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+
+    const outputFilename = path.basename(outputPath)
+    console.log(`[EXPORT] Animated subtitles burned: ${outputFilename}`)
+
+    // Don't cleanup the output
+    filesToCleanup.pop()
+
+    res.json({
+      url: `http://localhost:${PORT}/uploads/${outputFilename}`,
+      filename: outputFilename,
+    })
+  } catch (err: any) {
+    console.error('[EXPORT BURN-SUBS ERROR]', err.message)
+    res.status(500).json({ message: 'שגיאת ייצוא: ' + err.message })
+  } finally {
+    filesToCleanup.forEach(f => { try { fs.unlinkSync(f) } catch {} })
+  }
+})
+
 // ==================== DETACH AUDIO ====================
 
 app.post('/api/detach-audio', upload.single('file'), async (req, res) => {
@@ -4324,7 +4896,7 @@ async function runServerLearning() {
 
   console.log('[LEARN] Starting daily learning session...')
 
-  const allCategories = ['viral_editing', 'hooks', 'pacing', 'subtitles', 'broll', 'marketing', 'transitions', 'color_grading']
+  const allCategories = ['viral_editing', 'hooks', 'pacing', 'subtitles', 'broll', 'marketing', 'transitions', 'color_grading', 'animated_captions']
   const dayNumber = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
   const startIndex = (dayNumber * 3) % allCategories.length
   const todayCategories: string[] = []
@@ -4366,6 +4938,7 @@ async function runServerLearning() {
         'broll': 'B-Roll techniques effective videos',
         'color_grading': 'cinematic color grading social media',
         'marketing': 'best product video ads viral 2026',
+        'animated_captions': 'animated captions trending style TikTok Reels viral word by word 2026',
       }
 
       const searchRes = await youtube.search.list({
@@ -4426,11 +4999,11 @@ async function runServerLearning() {
           const synthRes = await ai.chat.completions.create({
             model: 'gpt-5.4',
             messages: [
-              { role: 'system', content: 'נתח patterns מסרטונים ויראליים על בסיס מטא-דאטה בלבד (ללא ניתוח ויזואלי). החזר JSON: {"editing_rules":[{"rule":"כלל בעברית","applies_to":"all/social/marketing","confidence":0.7}],"sop_update":"SOP מעודכן","patterns":{"hook":{"avg_seconds":2,"rule":"כלל"},"pacing":{"avg_cuts":12,"rule":"כלל"},"subtitles":{"style":"classic","rule":"כלל"}}}' },
+              { role: 'system', content: 'נתח patterns מסרטונים ויראליים על בסיס מטא-דאטה בלבד (ללא ניתוח ויזואלי). החזר JSON: {"editing_rules":[{"rule":"כלל בעברית","applies_to":"all/social/marketing","confidence":0.7}],"sop_update":"SOP מעודכן","patterns":{"hook":{"avg_seconds":2,"rule":"כלל"},"pacing":{"avg_cuts":12,"rule":"כלל"},"subtitles":{"style":"classic","rule":"כלל","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":80,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"כלל על כתוביות"}}}}' },
               { role: 'user', content: `קטגוריה: ${category}\nסרטונים (מטא-דאטה בלבד):\n${videos.slice(0, 5).map((v: any) => `- "${v.title}" (${v.views} צפיות, ${v.likes} לייקים, תגיות: ${v.tags?.join(', ')})`).join('\n')}` }
             ],
             response_format: { type: 'json_object' },
-            max_tokens: 1000,
+            max_completion_tokens: 1000,
           })
           state.dailyGptCalls++
           state.monthlyGptCost += 0.01
@@ -4477,7 +5050,7 @@ async function runServerLearning() {
           const analysisRes = await ai.chat.completions.create({
             model: 'gpt-5.4',
             messages: [
-              { role: 'system', content: 'נתח סרטון ויראלי. החזר JSON בלבד: {"hook_seconds":1.5,"hook_type":"text/question/visual","cuts_per_minute":15,"avg_clip_sec":2.5,"subtitle_style":"classic/karaoke/animated","subtitle_position":"center/bottom","broll_percent":35,"color_tone":"warm/cold/vibrant","special":["zoom","emoji"],"virality_reasons":["reason1"],"lessons":["lesson1"]}' },
+              { role: 'system', content: 'נתח סרטון ויראלי. החזר JSON בלבד: {"hook_seconds":1.5,"hook_type":"text/question/visual","cuts_per_minute":15,"avg_clip_sec":2.5,"subtitle_style":"classic/karaoke/animated","subtitle_position":"center/bottom","subtitle_animation":{"type":"none/karaoke/pop/typewriter/glow/bounce/slide","word_by_word":true,"highlight_color":"yellow/white/purple","background":"none/black_box/blur","font_size":"small/medium/large/extra_large","words_per_frame":3,"animation_speed":"slow/medium/fast"},"broll_percent":35,"color_tone":"warm/cold/vibrant","special":["zoom","emoji"],"virality_reasons":["reason1"],"lessons":["lesson1"]}' },
               { role: 'user', content: [
                 { type: 'text' as const, text: `"${video.title}" | ${category} | ${frameImages.length} frames:` },
                 ...frameImages.map((f: any) => ({
@@ -4487,7 +5060,7 @@ async function runServerLearning() {
               ]}
             ],
             response_format: { type: 'json_object' },
-            max_tokens: 1000,
+            max_completion_tokens: 1000,
           })
 
           const analysis = JSON.parse(analysisRes.choices[0]?.message?.content || '{}')
@@ -4510,11 +5083,11 @@ async function runServerLearning() {
         const synthRes = await ai.chat.completions.create({
           model: 'gpt-5.4',
           messages: [
-            { role: 'system', content: 'נתח patterns מסרטונים ויראליים. החזר JSON: {"editing_rules":[{"rule":"כלל בעברית","applies_to":"all/social/marketing","confidence":0.9}],"sop_update":"SOP מעודכן","patterns":{"hook":{"avg_seconds":1.5,"rule":"כלל"},"pacing":{"avg_cuts":15,"rule":"כלל"},"subtitles":{"style":"karaoke","rule":"כלל"}}}' },
+            { role: 'system', content: 'נתח patterns מסרטונים ויראליים. החזר JSON: {"editing_rules":[{"rule":"כלל בעברית","applies_to":"all/social/marketing","confidence":0.9}],"sop_update":"SOP מעודכן","patterns":{"hook":{"avg_seconds":1.5,"rule":"כלל"},"pacing":{"avg_cuts":15,"rule":"כלל"},"subtitles":{"style":"karaoke","rule":"כלל","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":85,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"כלל על כתוביות"}}}}' },
             { role: 'user', content: `${analyses.length} ניתוחים ל-"${category}":\n${JSON.stringify(analyses).substring(0, 6000)}` }
           ],
           response_format: { type: 'json_object' },
-          max_tokens: 1500,
+          max_completion_tokens: 1500,
         })
 
         const patterns = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
@@ -4537,7 +5110,7 @@ async function runServerLearning() {
   // --- STEP 5: Detect missing features (1 GPT call) ---
   if (state.dailyGptCalls < 15 && Object.keys(state.learnedPatterns).length > 0) {
     try {
-      const currentFeatures = 'trim,split,speed,reverse,filters,crop,resize,subtitles,karaoke,tts,voice_clone,clean_audio,ducking,auto_transcribe,filler_removal,silence_removal,ai_chat,auto_editor,broll_generation,multi_platform_export'
+      const currentFeatures = 'trim,split,speed,reverse,filters,crop,resize,subtitles,karaoke,animated_subtitles,word_by_word_captions,tts,voice_clone,clean_audio,ducking,auto_transcribe,filler_removal,silence_removal,ai_chat,auto_editor,broll_generation,multi_platform_export'
 
       const missingRes = await ai.chat.completions.create({
         model: 'gpt-5.4',
@@ -4546,7 +5119,7 @@ async function runServerLearning() {
           { role: 'user', content: `נלמד:\n${JSON.stringify(state.learnedPatterns).substring(0, 6000)}\n\nקיים: ${currentFeatures}` }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 1500,
+        max_completion_tokens: 1500,
       })
 
       const missing = JSON.parse(missingRes.choices[0]?.message?.content || '{}')
@@ -4602,6 +5175,17 @@ async function runServerLearning() {
       allRules.forEach(r => { msg += `• ${r}\n` })
     }
 
+    // Subtitle animation insights
+    const subPatterns = state.learnedPatterns?.subtitles?.patterns?.subtitles?.animation_insights ||
+                        state.learnedPatterns?.animated_captions?.patterns?.subtitles?.animation_insights
+    if (subPatterns) {
+      msg += `\n\n💬 <b>כתוביות מונפשות:</b>\n`
+      msg += `סגנון פופולרי: ${subPatterns.most_popular_animation || '?'}\n`
+      msg += `צבע הדגשה: ${subPatterns.most_popular_highlight_color || '?'}\n`
+      msg += `מילה-מילה: ${subPatterns.word_by_word_percentage || '?'}%\n`
+      msg += `גודל: ${subPatterns.best_font_size || '?'}\n`
+    }
+
     msg += `\n💰 עלות היום: $${results.totalCost.toFixed(2)}`
     msg += `\n💵 עלות החודש: $${state.monthlyGptCost.toFixed(2)} / $5.00`
     msg += `\n📊 YouTube היום: ${state.dailyYoutubeUnits} / 5,000`
@@ -4622,17 +5206,46 @@ async function runServerLearning() {
 app.get('/api/learning/rules', (_req, res) => {
   const state = loadLearningState()
   const rules: string[] = []
+  let subtitleRules = ''
+
   Object.values(state.learnedPatterns || {}).forEach((pattern: any) => {
     ;(pattern.editing_rules || []).forEach((rule: any) => {
       if (rule.confidence >= 0.6) {
         rules.push(`- ${rule.rule} (${Math.round(rule.confidence * 100)}%)`)
       }
     })
+
+    // Extract subtitle animation insights
+    const subInsights = pattern.patterns?.subtitles?.animation_insights
+    if (subInsights) {
+      subtitleRules += `\nכתוביות מונפשות - מה עובד:`
+      subtitleRules += `\n- סגנון פופולרי: ${subInsights.most_popular_animation || 'karaoke'}`
+      subtitleRules += `\n- צבע הדגשה: ${subInsights.most_popular_highlight_color || 'yellow'}`
+      subtitleRules += `\n- מילה-מילה: ${subInsights.word_by_word_percentage || 0}% מהסרטונים`
+      subtitleRules += `\n- גודל פונט: ${subInsights.best_font_size || 'large'}`
+      subtitleRules += `\n- רקע: ${subInsights.background_style || 'black_box'}`
+      if (subInsights.rule) subtitleRules += `\n- כלל: ${subInsights.rule}`
+    }
   })
+
+  // Find the best subtitle recommendation across all patterns
+  let subtitleRecommendation: { style: string; highlightColor: string } | null = null
+  const subPatterns = state.learnedPatterns?.subtitles?.patterns?.subtitles?.animation_insights ||
+                      state.learnedPatterns?.animated_captions?.patterns?.subtitles?.animation_insights
+  if (subPatterns) {
+    subtitleRecommendation = {
+      style: subPatterns.most_popular_animation || 'karaoke',
+      highlightColor: subPatterns.most_popular_highlight_color || 'yellow',
+    }
+  }
+
+  const allRules = rules.length > 0
+    ? `\n=== כללים שנלמדו מסרטונים ויראליים ===\n${rules.join('\n')}${subtitleRules}\n===`
+    : ''
+
   res.json({
-    rules: rules.length > 0
-      ? `\n=== כללים שנלמדו מסרטונים ויראליים ===\n${rules.join('\n')}\n===`
-      : '',
+    rules: allRules,
+    subtitleRecommendation,
     totalVideos: state.totalVideosAnalyzed || 0,
     totalRules: rules.length,
     lastLearned: state.lastLearnDate || 0,
