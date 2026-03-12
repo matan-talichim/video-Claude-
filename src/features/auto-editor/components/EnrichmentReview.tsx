@@ -9,11 +9,13 @@ interface EnrichmentReviewProps {
 
 export default function EnrichmentReview({ enrichment, onApprove }: EnrichmentReviewProps) {
   const transcript = useAutoEditorStore((s) => s.transcript)
+  const detectedPresenter = useAutoEditorStore((s) => s.detectedPresenter)
+  const presenterConfidence = useAutoEditorStore((s) => s.presenterConfidence)
   const [editedPrompt, setEditedPrompt] = useState(enrichment.enhanced_prompt || '')
   const [selectedBRoll, setSelectedBRoll] = useState<Set<number>>(
     new Set((enrichment.broll_suggestions || []).map((_: any, i: number) => i))
   )
-  const [mainPresenter, setMainPresenter] = useState<string>(transcript?.mainSpeaker || '')
+  const [mainPresenter, setMainPresenter] = useState<string>(detectedPresenter || transcript?.mainSpeaker || '')
 
   const brollSuggestions = enrichment.broll_suggestions || []
   const sortedSpeakers = transcript?.sortedSpeakers || []
@@ -194,26 +196,36 @@ export default function EnrichmentReview({ enrichment, onApprove }: EnrichmentRe
           <div className="w-full bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
             <div className="flex items-center gap-2 mb-2">
               <Users size={16} className="text-purple-400" />
-              <h4 className="text-white text-sm font-medium">בחר פרזנטור ראשי</h4>
+              <h4 className="text-white text-sm font-medium">פרזנטור ראשי</h4>
             </div>
-            <p className="text-gray-400 text-xs">
-              זוהו {sortedSpeakers.length} דוברים. בחר מי הפרזנטור הראשי (רק הסגמנטים שלו ישמשו לעריכה):
-            </p>
+            {detectedPresenter && (
+              <p className="text-gray-400 text-xs">
+                המערכת זיהתה את <span className="text-purple-400 font-bold">{detectedPresenter}</span> כפרזנטור הראשי
+                {presenterConfidence === 'high'
+                  ? ' (ביטחון גבוה)'
+                  : presenterConfidence === 'medium'
+                    ? ' (ביטחון בינוני - מומלץ לאשר)'
+                    : ' (ביטחון נמוך - מומלץ לבחור ידנית)'}
+              </p>
+            )}
+            {!detectedPresenter && (
+              <p className="text-gray-400 text-xs">
+                זוהו {sortedSpeakers.length} דוברים. בחר מי הפרזנטור הראשי (רק הסגמנטים שלו ישמשו לעריכה):
+              </p>
+            )}
             <div className="space-y-1.5 mt-2">
-              {sortedSpeakers.map((s: { speaker: string; time: number }, i: number) => (
+              {sortedSpeakers.map((s: { speaker: string; time: number }) => (
                 <button
-                  key={i}
+                  key={s.speaker}
                   onClick={() => setMainPresenter(s.speaker)}
-                  className={`w-full text-right p-2.5 rounded-lg text-sm transition ${
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition ${
                     mainPresenter === s.speaker
                       ? 'bg-purple-600 text-white'
                       : 'bg-white/10 text-gray-300 hover:bg-white/20'
                   }`}
                 >
-                  {s.speaker} ({s.time} שניות דיבור)
-                  {mainPresenter === s.speaker && transcript?.autoDetected && i === 0 && (
-                    <span className="text-purple-200 text-xs mr-2">(זוהה אוטומטית)</span>
-                  )}
+                  <span>{s.speaker}</span>
+                  <span className="text-xs opacity-70">{Math.round(s.time)} שניות</span>
                 </button>
               ))}
             </div>

@@ -2228,7 +2228,8 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
 5. האם יש תנועה או סטטי
 6. האם הפריימינג טוב (הדובר ממורכז? יש אוויר מיותר?)
 7. רגעים בולטים (הבעות פנים, מחוות ידיים, שינוי סצנה)
-8. בעיות טכניות (חושך, טשטוש, חיתוך לא טוב)`
+8. בעיות טכניות (חושך, טשטוש, חיתוך לא טוב)
+9. זהה את הפרזנטור הראשי - האדם שמופיע מול המצלמה ומדבר אליה (לא צוות הפקה מאחורי המצלמה)`
 
     const visualSystemPrompt = promptEvolution || baseVisualSystemPrompt
 
@@ -2250,7 +2251,9 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
       "background": "תיאור הרקע",
       "motion": "static/slight/active",
       "framing": "good/needs_crop_left/needs_crop_right/too_wide/too_tight",
-      "notable": "משהו בולט - הבעה, מחווה, שינוי"
+      "notable": "משהו בולט - הבעה, מחווה, שינוי",
+      "people_visible": 1,
+      "person_speaking_to_camera": true
     }
   ],
   "overall": {
@@ -2270,6 +2273,15 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
         "suggested_prompt_en": "Close-up of [specific product] on desk, warm lighting matching the video"
       }
     ]
+  },
+  "presenter_detection": {
+    "presenter_description": "תיאור פיזי של הפרזנטור הראשי (שיער, לבוש, וכו')",
+    "presenter_appears_in_frames": [0, 1, 2, 3],
+    "presenter_speaking_in_frames": [0, 1, 3],
+    "other_people_visible": false,
+    "other_people_description": "",
+    "confidence": "high",
+    "reasoning": "הסבר למה זה הפרזנטור"
   }
 }`
       },
@@ -2359,6 +2371,176 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
   } catch (error: any) {
     console.error('[VISUAL ERROR]', error.message)
     res.status(500).json({ message: 'שגיאה בניתוח ויזואלי: ' + error.message })
+  }
+})
+
+// POST /api/auto-editor/identify-presenter — Cross-reference visual analysis with speaker diarization
+app.post('/api/auto-editor/identify-presenter', async (req, res) => {
+  try {
+    const { transcript, visualAnalysis, speakerTimes } = req.body
+
+    if (!transcript?.segments || !speakerTimes) {
+      return res.status(400).json({ message: 'חסר תמלול או נתוני דוברים' })
+    }
+
+    const presenterDetection = visualAnalysis?.presenter_detection
+    const segments: Array<{ speaker: string; start: number; end: number; text: string }> = transcript.segments
+
+    // If visual analysis detected presenter frames, cross-reference with speakers
+    const presenterFrames = presenterDetection?.presenter_speaking_in_frames ||
+                            presenterDetection?.presenter_appears_in_frames || []
+
+    if (presenterFrames.length > 0) {
+      // Convert frame numbers to time ranges (each frame = 5 seconds)
+      const presenterTimeRanges = presenterFrames.map((frame: number) => ({
+        start: frame * 5,
+        end: (frame + 1) * 5,
+      }))
+
+      // For each speaker, calculate overlap with presenter visible times
+      const speakerOverlap: Record<string, number> = {}
+      const speakers = [...new Set(segments.map(s => s.speaker))]
+
+      speakers.forEach(speaker => {
+        const speakerSegments = segments.filter(s => s.speaker === speaker)
+        let overlap = 0
+
+        speakerSegments.forEach(seg => {
+          presenterTimeRanges.forEach((range: { start: number; end: number }) => {
+            const overlapStart = Math.max(seg.start, range.start)
+            const overlapEnd = Math.min(seg.end, range.end)
+            if (overlapEnd > overlapStart) {
+              overlap += overlapEnd - overlapStart
+            }
+          })
+        })
+
+        speakerOverlap[speaker] = overlap
+      })
+
+      console.log('[PRESENTER] Speaker overlap with on-screen presenter:', speakerOverlap)
+
+      // The speaker with most overlap with on-screen time is the presenter
+      const sortedByOverlap = Object.entries(speakerOverlap)
+        .sort((a, b) => b[1] - a[1])
+
+      if (sortedByOverlap.length > 0 && sortedByOverlap[0][1] > 0) {
+        const presenter = sortedByOverlap[0][0]
+        const confidence = presenterDetection?.confidence || 'medium'
+        console.log(`[PRESENTER] Identified via visual cross-reference: ${presenter} (${sortedByOverlap[0][1]}s overlap, confidence: ${confidence})`)
+        return res.json({
+          mainPresenter: presenter,
+          confidence,
+          method: 'visual_crossref',
+          presenterDescription: presenterDetection?.presenter_description || '',
+          reasoning: presenterDetection?.reasoning || '',
+          speakerOverlap,
+        })
+      }
+    }
+
+    // Fallback: if visual analysis didn't help, use GPT to decide
+    console.log('[PRESENTER] Visual overlap inconclusive, asking GPT...')
+    const ai = await getOpenAI()
+    if (!ai) {
+      // No AI available — fall back to most speaking time
+      const fallback = Object.entries(speakerTimes).sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+      return res.json({
+        mainPresenter: fallback?.[0] || 'unknown',
+        confidence: 'low',
+        method: 'speaking_time_fallback',
+        presenterDescription: '',
+        reasoning: 'No visual analysis or AI available, using most speaking time',
+        speakerOverlap: {},
+      })
+    }
+
+    const prompt = `You are analyzing a video to identify the MAIN PRESENTER.
+SPEAKER DATA:
+${Object.entries(speakerTimes).map(([s, t]) => `${s}: ${Math.round(t as number)} seconds of speaking`).join('\n')}
+
+VISUAL ANALYSIS:
+${JSON.stringify(visualAnalysis?.presenter_detection || visualAnalysis?.overall || {}, null, 2)}
+
+TRANSCRIPT SAMPLE (first 3 segments per speaker):
+${[...new Set(segments.map(s => s.speaker))].map((speaker: string) => {
+  const segs = segments.filter(s => s.speaker === speaker).slice(0, 3)
+  return `${speaker}:\n${segs.map(s => `  [${s.start.toFixed(1)}s] "${s.text}"`).join('\n')}`
+}).join('\n\n')}
+
+The MAIN PRESENTER is the person who:
+- Speaks TO THE CAMERA (not asking questions from behind camera)
+- Delivers the main content/message
+- Is the "talent" / expert / host
+
+Someone who asks questions, gives directions, or speaks from off-camera is NOT the presenter.
+They are production crew or an interviewer.
+
+CLUES:
+- The presenter usually has longer monologues (explains things)
+- Production crew usually has short sentences (questions, directions)
+- The presenter's content is the TOPIC of the video
+- The interviewer's content is questions about the topic
+
+Return ONLY the speaker name (e.g., "דובר 1"). Nothing else.`
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 50,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const result = response.choices[0].message.content?.trim() || ''
+    console.log(`[PRESENTER] GPT identified: ${result}`)
+
+    // Validate it's a real speaker
+    const validSpeakers = Object.keys(speakerTimes)
+    let identified = ''
+    if (validSpeakers.includes(result)) {
+      identified = result
+    } else {
+      const match = result.match(/דובר \d+/)
+      if (match && validSpeakers.includes(match[0])) {
+        identified = match[0]
+      }
+    }
+
+    if (identified) {
+      return res.json({
+        mainPresenter: identified,
+        confidence: 'medium',
+        method: 'gpt_analysis',
+        presenterDescription: presenterDetection?.presenter_description || '',
+        reasoning: `GPT identified ${identified} based on content analysis`,
+        speakerOverlap: {},
+      })
+    }
+
+    // Last fallback: most speaking time
+    console.warn('[PRESENTER] GPT response not valid, falling back to most speaking time')
+    const fallback = Object.entries(speakerTimes).sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+    return res.json({
+      mainPresenter: fallback?.[0] || 'unknown',
+      confidence: 'low',
+      method: 'speaking_time_fallback',
+      presenterDescription: '',
+      reasoning: 'GPT response not valid, using most speaking time as fallback',
+      speakerOverlap: {},
+    })
+
+  } catch (error: any) {
+    console.error('[PRESENTER ERROR]', error.message)
+    // Non-fatal: return fallback
+    const speakerTimes = req.body.speakerTimes || {}
+    const fallback = Object.entries(speakerTimes).sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+    res.json({
+      mainPresenter: fallback?.[0] || 'unknown',
+      confidence: 'low',
+      method: 'error_fallback',
+      presenterDescription: '',
+      reasoning: 'Error during presenter identification: ' + error.message,
+      speakerOverlap: {},
+    })
   }
 })
 
@@ -3660,13 +3842,14 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       .sort(([, a], [, b]) => (b as number) - (a as number))
       .map(([speaker, time]) => ({ speaker, time: Math.round((time as number) * 10) / 10 }))
 
-    // Default to most-talking speaker, but mark as "auto-detected" so UI can override
+    // Temporarily default to most-talking speaker — will be overridden by identify-presenter endpoint
+    // which cross-references visual analysis with speaker diarization
     const mainSpeaker = sortedSpeakers[0]?.speaker || segments[0]?.speaker || 'unknown'
 
     console.log('[AUTO-TRANSCRIBE] All speakers:', JSON.stringify(sortedSpeakers))
-    console.log('[AUTO-TRANSCRIBE] Auto-detected main presenter:', mainSpeaker, '(can be overridden by user)')
+    console.log('[AUTO-TRANSCRIBE] Preliminary main speaker (most talking):', mainSpeaker, '(will be refined by visual cross-reference)')
 
-    // Mark each segment with isPresenter flag (default, UI can change this)
+    // Mark each segment with isPresenter flag (preliminary, will be updated after visual analysis)
     segments.forEach((seg: any) => {
       seg.isPresenter = (seg.speaker === mainSpeaker)
     })
