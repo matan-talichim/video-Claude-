@@ -77,16 +77,19 @@ const PRESET_CATEGORIES = [
 ]
 
 function EvolutionBadge() {
-  const stats = usePromptEvolutionStore(s => s.getStats())
-  const totalLearnings = stats.reduce((sum, s) => sum + s.additions, 0)
+  const evolutions = usePromptEvolutionStore(s => s.evolutions)
+  const entries = Object.values(evolutions)
+  const totalLearnings = entries.reduce((sum, e) => sum + (e.additions?.length || 0), 0)
 
   if (totalLearnings === 0) return null
+
+  const totalVersions = entries.reduce((sum, e) => sum + (e.version || 0), 0)
 
   return (
     <div className="flex items-center gap-2 bg-purple-500/10 rounded-full px-3 py-1 mb-4" dir="rtl">
       <span className="text-purple-400 text-xs">&#x1F9EC;</span>
       <span className="text-purple-300 text-xs">
-        AI למד {totalLearnings} תובנות מ-{stats.reduce((s, st) => s + st.version, 0)} עריכות
+        AI למד {totalLearnings} תובנות מ-{totalVersions} עריכות
       </span>
     </div>
   )
