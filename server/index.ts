@@ -3509,12 +3509,13 @@ const colorGrades: Record<string, string> = {
 }
 
 // Subtitle style presets (ASS format)
+// Use "Sans" as font name for maximum cross-platform compatibility (maps to system sans-serif)
 const subtitleStyles: Record<string, string> = {
-  modern: 'Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,1',
-  karaoke: 'Style: Default,Arial,22,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,50,1',
-  bold_white: 'Style: Default,Impact,24,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,1',
-  minimal: 'Style: Default,Helvetica,18,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,30,1',
-  colorful: 'Style: Default,Arial,22,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,45,1',
+  modern: 'Style: Default,Sans,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,1',
+  karaoke: 'Style: Default,Sans,22,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,50,1',
+  bold_white: 'Style: Default,Sans,24,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,1',
+  minimal: 'Style: Default,Sans,18,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,30,1',
+  colorful: 'Style: Default,Sans,22,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,45,1',
 }
 
 // Generate styled ASS subtitles
@@ -3598,45 +3599,63 @@ function buildTransitionFilter(cuts: any[], transitions: string[] = ['fade'], tr
 }
 
 // Build multi-cam crop filter
+// Uses a simpler approach: apply zoompan-based crops per segment using enable= time ranges
+// This avoids trim+concat which is fragile with segment gaps/overlaps
 function buildMultiCamFilter(cameraAngles: any[], videoWidth: number, videoHeight: number): string {
   if (!cameraAngles || cameraAngles.length === 0) return ''
 
-  const parts: string[] = []
-  cameraAngles.forEach((seg: any, i: number) => {
+  // Ensure dimensions are even (required by libx264)
+  const w = videoWidth % 2 === 0 ? videoWidth : videoWidth - 1
+  const h = videoHeight % 2 === 0 ? videoHeight : videoHeight - 1
+
+  // Build per-segment crop filters using enable= time ranges (no trim+concat needed)
+  const cropParts: string[] = []
+  for (const seg of cameraAngles) {
     const camType = seg.camera || 'wide'
-    let crop = ''
+    if (camType === 'wide') continue // wide = no crop needed
 
+    let cropFactor = 1.0
+    let xOff = 0
+    let yOff = 0
     switch (camType) {
-      case 'closeup': {
-        const cwClose = Math.floor(videoWidth * 0.5)
-        const chClose = Math.floor(videoHeight * 0.5)
-        crop = `crop=${cwClose}:${chClose}:${Math.floor((videoWidth - cwClose) / 2)}:${Math.floor((videoHeight - chClose) / 2)},scale=${videoWidth}:${videoHeight}`
+      case 'closeup':
+        cropFactor = 0.6
         break
-      }
-      case 'medium': {
-        const cwMed = Math.floor(videoWidth * 0.7)
-        const chMed = Math.floor(videoHeight * 0.7)
-        crop = `crop=${cwMed}:${chMed}:${Math.floor((videoWidth - cwMed) / 2)}:${Math.floor((videoHeight - chMed) / 2)},scale=${videoWidth}:${videoHeight}`
+      case 'medium':
+        cropFactor = 0.8
         break
-      }
-      default:
-        // wide - no crop
+      case 'left':
+        cropFactor = 0.8
+        xOff = 0 // left-aligned
+        yOff = Math.round(h * 0.1)
+        break
+      case 'right':
+        cropFactor = 0.8
+        xOff = Math.round(w * 0.2)
+        yOff = Math.round(h * 0.1)
         break
     }
 
-    if (crop) {
-      parts.push(`[0:v]trim=start=${seg.start}:end=${seg.end},${crop},setpts=PTS-STARTPTS[cam${i}]`)
-    } else {
-      parts.push(`[0:v]trim=start=${seg.start}:end=${seg.end},setpts=PTS-STARTPTS[cam${i}]`)
+    if (cropFactor < 1.0 && camType !== 'left' && camType !== 'right') {
+      const cw = Math.round(w * cropFactor)
+      const ch = Math.round(h * cropFactor)
+      xOff = Math.round((w - cw) / 2)
+      yOff = Math.round((h - ch) / 2)
     }
-    parts.push(`[0:a]atrim=start=${seg.start}:end=${seg.end},asetpts=PTS-STARTPTS[cama${i}]`)
-  })
 
-  // Concat all cam segments
-  const camInputs = cameraAngles.map((_: any, i: number) => `[cam${i}][cama${i}]`).join('')
-  parts.push(`${camInputs}concat=n=${cameraAngles.length}:v=1:a=1[outv][outa]`)
+    if (cropFactor < 1.0) {
+      const cw = Math.round(w * cropFactor)
+      const ch = Math.round(h * cropFactor)
+      // Use zoompan to smoothly zoom in during the segment's time range
+      // zoompan is applied as overlay so we use crop+scale with enable= instead
+      cropParts.push(`crop=${cw}:${ch}:${xOff}:${yOff}:enable='between(t,${seg.start},${seg.end})',scale=${w}:${h}:enable='between(t,${seg.start},${seg.end})'`)
+    }
+  }
 
-  return parts.join(';')
+  if (cropParts.length === 0) return ''
+
+  // Chain all crop filters (each only active during its time range)
+  return cropParts.join(',')
 }
 
 // Build smart framing filter for platform export
@@ -3811,8 +3830,19 @@ app.post('/api/auto-editor/process', async (req, res) => {
       console.log('[PROCESS] Step 2: Multi-cam simulation with', cameraAngles.length, 'angles...')
 
       try {
+        // Probe actual video dimensions
+        let vidW = 1920, vidH = 1080
+        try {
+          const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+          const probeOut = execSync(
+            `"${ffprobePath}" -v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "${currentFile}"`,
+            { timeout: 15000 }
+          ).toString().trim()
+          const [pw, ph] = probeOut.split('x').map(Number)
+          if (pw > 0 && ph > 0) { vidW = pw; vidH = ph }
+        } catch { /* use defaults */ }
+
         // Remap camera angles to be relative to the cut video
-        let cutOffset = 0
         const cutDurations = cuts.map((c: any) => c.keep_end - c.keep_start)
         const totalCutDuration = cutDurations.reduce((s: number, d: number) => s + d, 0)
 
@@ -3823,16 +3853,21 @@ app.post('/api/auto-editor/process', async (req, res) => {
           return { start: relStart, end: relEnd, camera: ca.camera || 'wide' }
         }).filter((ca: any) => ca.end > ca.start)
 
-        if (scaledAngles.length > 1) {
-          const camFilter = buildMultiCamFilter(scaledAngles, 1920, 1080)
-          execSync(
-            `"${ffmpegPath}" -i "${currentFile}" -filter_complex "${camFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${camFile}" -y`,
-            { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
-          )
-          currentFile = camFile
-          console.log('[PROCESS] Step 2 done: Multi-cam applied')
+        const nonWideAngles = scaledAngles.filter((ca: any) => ca.camera !== 'wide')
+        if (nonWideAngles.length > 0) {
+          const camFilter = buildMultiCamFilter(scaledAngles, vidW, vidH)
+          if (camFilter) {
+            execSync(
+              `"${ffmpegPath}" -i "${currentFile}" -vf "${camFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${camFile}" -y`,
+              { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+            )
+            currentFile = camFile
+            console.log('[PROCESS] Step 2 done: Multi-cam applied')
+          } else {
+            console.log('[PROCESS] Step 2 skipped: All angles are wide')
+          }
         } else {
-          console.log('[PROCESS] Step 2 skipped: Not enough valid camera angles')
+          console.log('[PROCESS] Step 2 skipped: All angles are wide')
         }
       } catch (e: any) {
         console.log('[PROCESS] Multi-cam failed, continuing without:', e.message?.slice(0, 100))
@@ -3857,6 +3892,90 @@ app.post('/api/auto-editor/process', async (req, res) => {
     )
     currentFile = gradedFile
     console.log('[PROCESS] Step 3 done')
+
+    // ============================================
+    // STEP 3.5: ZOOM / KEN BURNS EFFECTS
+    // ============================================
+
+    const zooms = videoPlan?.zooms || []
+    if (zooms.length > 0) {
+      const zoomFile = path.join(uploadsDir, `zoom_${timestamp}.mp4`)
+      filesToCleanup.push(zoomFile)
+      console.log('[PROCESS] Step 3.5: Applying', zooms.length, 'zoom effects...')
+
+      try {
+        // Probe actual video dimensions
+        let zoomW = 1920, zoomH = 1080
+        try {
+          const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+          const probeOut = execSync(
+            `"${ffprobePath}" -v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "${currentFile}"`,
+            { timeout: 15000 }
+          ).toString().trim()
+          const [pw, ph] = probeOut.split('x').map(Number)
+          if (pw > 0 && ph > 0) { zoomW = pw; zoomH = ph }
+        } catch { /* use defaults */ }
+
+        // Remap zoom timestamps to cut video time
+        const remappedZooms = zooms.map((z: any) => {
+          const atTime = z.at_time ?? z.atTime ?? 0
+          let relativeStart = 0
+          let cutOffset = 0
+          for (const cut of cuts) {
+            const cutDuration = cut.keep_end - cut.keep_start
+            if (atTime >= cut.keep_start && atTime <= cut.keep_end) {
+              relativeStart = cutOffset + (atTime - cut.keep_start)
+              break
+            }
+            cutOffset += cutDuration
+          }
+          return {
+            start: relativeStart,
+            duration: z.duration || 3,
+            scale: z.scale || 1.05,
+            direction: z.direction || 'in',
+          }
+        })
+
+        // Build a single scale expression that smoothly zooms at specified time ranges
+        // Outside zoom ranges, scale factor = 1.0 (no change)
+        // During zoom ranges, scale factor smoothly interpolates to target
+        // Then crop center back to original dimensions
+
+        // Limit to 8 zooms to keep filter expression manageable
+        const limitedZooms = remappedZooms.slice(0, 8)
+
+        // Build scale factor expression: starts at 1.0, adds zoom contributions
+        // Each zoom adds: if(between(t,start,end), delta*progress, 0)
+        const zoomExprs = limitedZooms.map((z: any) => {
+          const end = z.start + z.duration
+          const delta = Math.min(z.scale, 1.15) - 1.0 // Cap at 1.15
+          const isZoomIn = z.direction !== 'out'
+          const progress = `((t-${z.start})/${z.duration})`
+          const interpDelta = isZoomIn
+            ? `${delta.toFixed(4)}*${progress}`
+            : `${delta.toFixed(4)}*(1-${progress})`
+          return `if(between(t,${z.start},${end}),${interpDelta},0)`
+        })
+
+        // Total scale = 1 + sum of all zoom contributions
+        const scaleExpr = `(1+${zoomExprs.join('+')})`
+
+        // Use filter_complex: scale up then crop center
+        const zoomFilter = `[0:v]scale=trunc(iw*${scaleExpr}/2)*2:trunc(ih*${scaleExpr}/2)*2,crop=${zoomW}:${zoomH}:(iw-${zoomW})/2:(ih-${zoomH})/2[outv]`
+
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -filter_complex "${zoomFilter}" -map "[outv]" -map 0:a -c:v libx264 -preset fast -crf 23 -c:a copy "${zoomFile}" -y`,
+          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+        currentFile = zoomFile
+        console.log('[PROCESS] Step 3.5 done: Zoom effects applied')
+      } catch (e: any) {
+        console.log('[PROCESS] Zoom effects failed, continuing without:', e.message?.slice(0, 150))
+      }
+    } else {
+      console.log('[PROCESS] Step 3.5 skipped: No zooms in plan')
+    }
 
     // ============================================
     // STEP 4: PROFESSIONAL AUDIO PROCESSING + MUSIC
@@ -3947,9 +4066,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
       filesToCleanup.push(subFile)
 
       try {
+        // Use subtitles= filter (more robust than ass= for path handling and font fallback)
         const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
         execSync(
-          `"${ffmpegPath}" -i "${currentFile}" -vf "ass='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+          `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
           { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
         )
         currentFile = subFile
