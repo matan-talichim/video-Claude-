@@ -1882,13 +1882,13 @@ app.post('/api/chatgpt-plan', async (req, res) => {
 app.post('/api/auto-editor/expand-prompt', async (req, res) => {
   try {
     const ai = await getOpenAI()
-    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
     const { prompt } = req.body
     if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
     const response = await ai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       messages: [
         {
           role: 'system' as const,
@@ -2072,7 +2072,7 @@ SOP — סרטון מוצר (E-Commerce):
 app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
   try {
     const ai = await getOpenAI()
-    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
     const { videoUrl, duration, promptEvolution } = req.body
     const ffmpegPath = getFFmpeg()
@@ -2087,7 +2087,7 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
     }
 
     if (!fs.existsSync(sourceFile)) {
-      return res.status(400).json({ message: 'File not found' })
+      return res.status(400).json({ message: 'הקובץ לא נמצא' })
     }
 
     // Extract frames every 5 seconds
@@ -2272,7 +2272,7 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
 app.post('/api/auto-editor/enrich-prompt', async (req, res) => {
   try {
     const ai = await getOpenAI()
-    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
     const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, visualAnalysis, energyAnalysis, promptEvolution } = req.body
 
@@ -3212,7 +3212,7 @@ app.post('/api/generate-broll', async (req, res) => {
     return
   }
 
-  res.status(400).json({ message: 'Provider לא מוכר: ' + provider })
+  res.status(400).json({ message: 'חסר ספק (provider). בחר seedance או veo.' })
 })
 
 // POST /api/find-music — Pixabay music search proxy
@@ -4179,6 +4179,42 @@ app.post('/api/auto-editor/export', async (req, res) => {
   } catch (err: any) {
     console.error('[EXPORT ERROR]', err.message)
     res.status(500).json({ message: 'שגיאת ייצוא: ' + err.message })
+  }
+})
+
+// ==================== DETACH AUDIO ====================
+
+app.post('/api/detach-audio', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'לא התקבל קובץ וידאו' })
+
+    const ffmpegPath = getFFmpeg()
+    const inputPath = req.file.path
+    const audioPath = path.join(uploadsDir, `audio-${Date.now()}.mp3`)
+
+    console.log('[DETACH AUDIO] Extracting audio from:', req.file.originalname)
+
+    execSync(
+      `"${ffmpegPath}" -i "${inputPath}" -vn -acodec libmp3lame -ab 192k -ar 44100 "${audioPath}" -y`,
+      { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+
+    // Cleanup original file
+    try { fs.unlinkSync(inputPath) } catch {}
+
+    const audioFilename = path.basename(audioPath)
+    console.log('[DETACH AUDIO] Success:', audioFilename)
+
+    res.json({
+      audioUrl: `/api/audio/${audioFilename}`,
+      filename: audioFilename,
+    })
+  } catch (error: any) {
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path) } catch {}
+    }
+    console.error('[DETACH AUDIO ERROR]', error.message)
+    res.status(500).json({ message: 'שגיאה בהפרדת האודיו: ' + error.message })
   }
 })
 
