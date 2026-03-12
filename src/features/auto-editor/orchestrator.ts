@@ -507,6 +507,43 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       addLog('ניתוח ויזואלי נכשל, ממשיך ללא')
     }
 
+    // === Identify presenter by cross-referencing visual analysis with speaker diarization ===
+    if (visualAnalysis && transcript.sortedSpeakers?.length > 1) {
+      try {
+        addLog('מזהה פרזנטור ראשי לפי ניתוח ויזואלי + דיאריזציה...')
+        const presenterRes = await fetch(`${API_BASE}/auto-editor/identify-presenter`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transcript: { segments: transcript.segments },
+            visualAnalysis,
+            speakerTimes: transcript.speakerTimes,
+          }),
+        })
+        if (presenterRes.ok) {
+          const presenterData = await presenterRes.json()
+          const { mainPresenter: detectedPresenter, confidence, presenterDescription, method } = presenterData
+
+          // Update store with detected presenter
+          store.setDetectedPresenter(detectedPresenter, confidence, presenterDescription)
+          store.setMainPresenter(detectedPresenter)
+
+          // Update transcript mainSpeaker and segment flags
+          transcript.mainSpeaker = detectedPresenter
+          transcript.autoDetected = true
+          transcript.segments.forEach((seg: any) => {
+            seg.isPresenter = (seg.speaker === detectedPresenter)
+          })
+          setTranscript({ ...transcript })
+
+          addLog(`פרזנטור זוהה: ${detectedPresenter} (שיטה: ${method}, ביטחון: ${confidence})`)
+        }
+      } catch (e: any) {
+        console.warn('[AUTO-EDIT] Presenter identification failed, using default:', e.message)
+        addLog('זיהוי פרזנטור נכשל, משתמש בברירת מחדל')
+      }
+    }
+
     // === IMPROVEMENT 3: Energy Analysis ===
     const energyAnalysis = analyzeTranscriptEnergy(transcript)
     setEnergyAnalysis(energyAnalysis)
