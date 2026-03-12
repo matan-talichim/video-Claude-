@@ -214,6 +214,13 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
     passed: [],
   }
 
+  // Use actual store data to verify what was really available, not just what was planned
+  const storeState = useAutoEditorStore.getState()
+  const hasTranscript = (storeState.transcript?.segments?.length || 0) > 0
+  const hasPresenter = !!(storeState.mainPresenter || storeState.detectedPresenter)
+  const hasBrollAssets = (storeState.cachedAssets?.brollClips?.length || 0) > 0
+  const hasMusicAsset = !!(storeState.cachedAssets?.music)
+
   // Check 1: Duration matches target
   const durationDiff = Math.abs(outputDuration - targetDuration)
   if (durationDiff > 5) {
@@ -226,25 +233,32 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
     report.passed.push(`אורך תואם ליעד (${outputDuration.toFixed(1)}שנ)`)
   }
 
-  // Check 2: Has B-Roll
-  const brollCount = plan.brollMoments?.length || plan.broll?.length || 0
+  // Check 2: Has B-Roll (check actual assets, not just plan)
+  const brollCount = hasBrollAssets ? storeState.cachedAssets!.brollClips.length : 0
+  const planBrollCount = plan.brollMoments?.length || plan.broll?.length || 0
   const expectedBRoll = Math.floor(targetDuration / 15)
   if (brollCount >= expectedBRoll) {
-    report.passed.push(`B-Roll: ${brollCount} קטעים`)
+    report.passed.push(`B-Roll: ${brollCount} קטעים (הוכנסו לסרטון)`)
   } else if (brollCount > 0) {
     report.score -= 5
-    report.issues.push({ severity: 'info', message: `B-Roll: ${brollCount} קטעים (מומלץ ${expectedBRoll}+)` })
+    report.issues.push({ severity: 'info', message: `B-Roll: ${brollCount} קטעים מוכנסים (מומלץ ${expectedBRoll}+)` })
+  } else if (planBrollCount > 0) {
+    report.score -= 10
+    report.issues.push({ severity: 'warning', message: `B-Roll: ${planBrollCount} תוכננו אך לא הוכנסו` })
   } else {
     report.score -= 15
     report.issues.push({ severity: 'warning', message: 'אין B-Roll כלל' })
   }
 
-  // Check 3: Has subtitles
-  if (plan.subtitles?.length > 0) {
-    report.passed.push(`כתוביות: ${plan.subtitles.length} שורות`)
+  // Check 3: Has subtitles (check if transcript segments exist for subtitle generation)
+  const subtitleCount = plan.subtitles?.length || 0
+  const transcriptCount = hasTranscript ? storeState.transcript.segments.length : 0
+  if (subtitleCount > 0 || transcriptCount > 0) {
+    const count = subtitleCount || transcriptCount
+    report.passed.push(`כתוביות: ${count} שורות (מתמלול${hasPresenter ? ' - דובר ראשי בלבד' : ''})`)
   } else {
     report.score -= 10
-    report.issues.push({ severity: 'warning', message: 'אין כתוביות' })
+    report.issues.push({ severity: 'warning', message: 'אין כתוביות - חסר תמלול' })
   }
 
   // Check 4: Has transitions
@@ -276,9 +290,20 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
     report.issues.push({ severity: 'info', message: 'אין זומים' })
   }
 
-  // Check 8: Music
-  if (plan.musicMoments?.length > 0 || plan.music_moments?.length > 0) {
+  // Check 8: Music (check actual asset, not just plan)
+  if (hasMusicAsset) {
     report.passed.push('מוזיקת רקע')
+  } else if (plan.musicMoments?.length > 0 || plan.music_moments?.length > 0) {
+    report.score -= 5
+    report.issues.push({ severity: 'info', message: 'מוזיקת רקע תוכננה אך לא נמצאה' })
+  }
+
+  // Check 9: Presenter isolation
+  if (hasPresenter) {
+    report.passed.push(`בידוד דובר ראשי: ${storeState.mainPresenter || storeState.detectedPresenter}`)
+  } else if (hasTranscript && storeState.transcript.segments.some((s: any) => s.speaker)) {
+    report.score -= 5
+    report.issues.push({ severity: 'info', message: 'זוהו מספר דוברים אך לא בוצע בידוד' })
   }
 
   report.score = Math.max(0, Math.min(100, report.score))
@@ -293,7 +318,8 @@ async function processVideosWithPlan(
   musicUrl: string,
   backgroundImage: string,
   versionLabel: string,
-  skipPlatformExport: boolean = false
+  skipPlatformExport: boolean = false,
+  brollClips: string[] = []
 ): Promise<VideoResult[]> {
   const addLog = useAutoEditorStore.getState().addLog
   const processedVideos: VideoResult[] = []
@@ -332,8 +358,19 @@ async function processVideosWithPlan(
     }
 
     // Get transcript segments and presenter from store for subtitle generation
-    const storedTranscript = useAutoEditorStore.getState().transcript
-    const storedMainPresenter = useAutoEditorStore.getState().mainPresenter
+    const storeState = useAutoEditorStore.getState()
+    const storedTranscript = storeState.transcript || storeState.cachedTranscript
+    const storedMainPresenter = storeState.mainPresenter || storeState.detectedPresenter
+
+    // Build B-Roll assets from brollClips URLs + plan timing info
+    const planBroll = videoPlan.brollMoments || videoPlan.broll || editingPlan.prompts?.broll || []
+    const brollAssets = brollClips.map((url: string, idx: number) => ({
+      url,
+      insertAt: planBroll[idx]?.time || planBroll[idx]?.insert_at || planBroll[idx]?.atTime || (idx * 15),
+      duration: planBroll[idx]?.duration || 4,
+    })).filter((b: any) => b.url)
+
+    addLog(`[${versionLabel}] Sending to process: transcript=${storedTranscript?.segments?.length || 0} presenter=${storedMainPresenter || 'none'} broll=${brollAssets.length} music=${musicUrl ? 'YES' : 'NO'} bg=${backgroundImage ? 'YES' : 'NO'}`)
 
     const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
       method: 'POST',
@@ -354,11 +391,14 @@ async function processVideosWithPlan(
         animationStyle: finalInput.animationStyle || 'karaoke',
         skipPlatformExport,
         mainPresenter: storedMainPresenter || storedTranscript?.mainSpeaker || undefined,
-        // Send transcript segments for subtitle generation when plan doesn't include them
-        transcript: storedTranscript?.segments ? {
-          segments: storedTranscript.segments,
+        // Send transcript segments for subtitle generation
+        transcript: storedTranscript ? {
+          segments: storedTranscript.segments || [],
           mainSpeaker: storedTranscript.mainSpeaker,
+          totalDuration: storedTranscript.totalDuration || storedTranscript.total_duration,
         } : undefined,
+        // Send B-Roll assets for insertion
+        brollAssets,
       }),
     })
 
@@ -760,14 +800,14 @@ export async function continueAfterEnrichment(
     // Process Version A - FULL quality, skip platform export for A/B comparison
     const hasVersionB = !!editingPlanB
     setProgress({ current: 0, total: 2, label: 'עורך גרסה A...' })
-    const processedA = await processVideosWithPlan(editingPlanA, enrichment, finalInput, musicUrl, backgroundImage, 'A', hasVersionB)
+    const processedA = await processVideosWithPlan(editingPlanA, enrichment, finalInput, musicUrl, backgroundImage, 'A', hasVersionB, brollClips)
 
     // Process Version B (if available) - FULL quality, skip platform export
     let processedB: VideoResult[] | null = null
     if (editingPlanB) {
       setProgress({ current: 1, total: 2, label: 'עורך גרסה B...' })
       try {
-        processedB = await processVideosWithPlan(editingPlanB, enrichment, finalInput, musicUrl, backgroundImage, 'B', true)
+        processedB = await processVideosWithPlan(editingPlanB, enrichment, finalInput, musicUrl, backgroundImage, 'B', true, brollClips)
       } catch (err: any) {
         addLog(`גרסה B נכשלה: ${err.message}. ממשיך עם גרסה A בלבד.`)
       }

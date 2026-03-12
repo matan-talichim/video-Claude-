@@ -4431,6 +4431,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       animationStyle = 'karaoke',
       skipPlatformExport = false,
       transcript,
+      brollAssets = [],
     } = req.body
 
     const ffmpegPath = getFFmpeg()
@@ -4463,6 +4464,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     console.log('[PROCESS] Top-level keys:', Object.keys(req.body))
     console.log('[PROCESS] Options:', { includeSubtitles, includeBackground, animatedSubtitles, animationStyle })
     console.log('[PROCESS] Plan keys:', Object.keys(videoPlan || {}))
+    console.log('[PROCESS] B-Roll assets:', brollAssets.length)
 
     // Extract features from videoPlan with multiple field name fallbacks
     const planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
@@ -4553,6 +4555,254 @@ app.post('/api/auto-editor/process', async (req, res) => {
     }
 
     let currentFile = cutFile
+
+    // ============================================
+    // STEP 1.5: PRESENTER-ONLY AUDIO ISOLATION
+    // ============================================
+    // If we have transcript segments and a main presenter,
+    // re-cut the video to only include segments where the presenter speaks
+    if (mainPresenter && mainPresenter !== 'none' && transcriptSegments.length > 0) {
+      console.log(`[PROCESS] Step 1.5: Isolating presenter "${mainPresenter}" audio...`)
+
+      // Get time ranges where the main presenter speaks
+      const presenterRanges = transcriptSegments
+        .filter((s: any) => s.speaker === mainPresenter)
+        .map((s: any) => ({ start: s.start, end: s.end }))
+
+      const nonPresenterCount = transcriptSegments.length - presenterRanges.length
+      console.log(`[PROCESS] Presenter segments: ${presenterRanges.length}, Non-presenter (cutting): ${nonPresenterCount}`)
+
+      if (presenterRanges.length > 0 && nonPresenterCount > 0) {
+        // Merge overlapping/adjacent ranges (within 0.5s gap)
+        const mergedRanges: Array<{ start: number; end: number }> = []
+        const sorted = [...presenterRanges].sort((a: any, b: any) => a.start - b.start)
+
+        sorted.forEach((range: any) => {
+          const last = mergedRanges[mergedRanges.length - 1]
+          if (last && range.start - last.end < 0.5) {
+            last.end = Math.max(last.end, range.end)
+          } else {
+            mergedRanges.push({ start: range.start, end: range.end })
+          }
+        })
+
+        console.log(`[PROCESS] Merged into ${mergedRanges.length} continuous ranges`)
+
+        // Remap presenter ranges from original timestamps to cut video timestamps
+        const remappedRanges: Array<{ start: number; end: number }> = []
+        let cutOffset = 0
+        for (const cut of cuts) {
+          const cutStart = cut.keep_start
+          const cutEnd = cut.keep_end
+          const cutDuration = cutEnd - cutStart
+
+          for (const range of mergedRanges) {
+            // Check if presenter range overlaps with this cut
+            const overlapStart = Math.max(range.start, cutStart)
+            const overlapEnd = Math.min(range.end, cutEnd)
+            if (overlapStart < overlapEnd) {
+              remappedRanges.push({
+                start: cutOffset + (overlapStart - cutStart),
+                end: cutOffset + (overlapEnd - cutStart),
+              })
+            }
+          }
+          cutOffset += cutDuration
+        }
+
+        // Merge remapped ranges
+        const finalRanges: Array<{ start: number; end: number }> = []
+        remappedRanges.sort((a, b) => a.start - b.start)
+        remappedRanges.forEach(range => {
+          const last = finalRanges[finalRanges.length - 1]
+          if (last && range.start - last.end < 0.3) {
+            last.end = Math.max(last.end, range.end)
+          } else {
+            finalRanges.push({ ...range })
+          }
+        })
+
+        if (finalRanges.length > 0) {
+          // Extract each presenter segment and concat
+          const segmentFiles: string[] = []
+          for (let i = 0; i < finalRanges.length; i++) {
+            const range = finalRanges[i]
+            const segFile = path.join(uploadsDir, `presenter_seg_${timestamp}_${i}.mp4`)
+            filesToCleanup.push(segFile)
+
+            try {
+              execSync(
+                `"${ffmpegPath}" -i "${currentFile}" -ss ${range.start} -to ${range.end} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${segFile}" -y`,
+                { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+              )
+
+              if (fs.existsSync(segFile) && fs.statSync(segFile).size > 0) {
+                segmentFiles.push(segFile)
+              }
+            } catch (e: any) {
+              console.warn(`[PROCESS] Presenter segment ${i} failed:`, e.stderr?.toString().substring(0, 200))
+            }
+          }
+
+          if (segmentFiles.length > 0) {
+            const listFile = path.join(uploadsDir, `presenter_list_${timestamp}.txt`)
+            filesToCleanup.push(listFile)
+            fs.writeFileSync(listFile, segmentFiles.map(f => `file '${f}'`).join('\n'))
+
+            const presenterOutput = path.join(uploadsDir, `presenter_cut_${timestamp}.mp4`)
+            filesToCleanup.push(presenterOutput)
+
+            try {
+              execSync(
+                `"${ffmpegPath}" -f concat -safe 0 -i "${listFile}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${presenterOutput}" -y`,
+                { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+              )
+
+              if (fs.existsSync(presenterOutput) && fs.statSync(presenterOutput).size > 0) {
+                currentFile = presenterOutput
+                console.log(`[PROCESS] Step 1.5 done: Cut to presenter only (${segmentFiles.length} segments)`)
+              }
+            } catch (e: any) {
+              console.warn('[PROCESS] Presenter concat failed:', e.stderr?.toString().substring(0, 200))
+            }
+          }
+        } else {
+          console.log('[PROCESS] Step 1.5: No remapped ranges found, keeping full cut')
+        }
+      } else if (nonPresenterCount === 0) {
+        console.log('[PROCESS] Step 1.5: All segments are from presenter, no filtering needed')
+      }
+    } else {
+      console.log('[PROCESS] Step 1.5 skipped:', !mainPresenter || mainPresenter === 'none' ? 'No presenter identified' : 'No transcript segments')
+    }
+
+    // ============================================
+    // STEP 1.75: INSERT B-ROLL CLIPS
+    // ============================================
+    if (brollAssets.length > 0) {
+      console.log(`[PROCESS] Step 1.75: Inserting ${brollAssets.length} B-Roll clips...`)
+
+      for (let i = 0; i < brollAssets.length; i++) {
+        const broll = brollAssets[i]
+        const brollUrl = broll.url || broll.localPath || ''
+        const insertAt = parseFloat(broll.insertAt || broll.insert_at || broll.time || 0)
+        const duration = parseFloat(broll.duration || 4)
+
+        if (!brollUrl) {
+          console.warn(`[B-ROLL] Asset ${i} has no URL, skipping`)
+          continue
+        }
+
+        // Download B-Roll if it's a URL
+        let brollFile = ''
+        if (brollUrl.includes('localhost')) {
+          const brollFilename = path.basename(new URL(brollUrl, `http://localhost:${PORT}`).pathname)
+          brollFile = path.join(uploadsDir, brollFilename)
+        }
+
+        if (!brollFile || !fs.existsSync(brollFile)) {
+          if (brollUrl.startsWith('http')) {
+            brollFile = path.join(uploadsDir, `broll_dl_${timestamp}_${i}.mp4`)
+            try {
+              const brollRes = await fetch(brollUrl)
+              if (brollRes.ok) {
+                const brollBuffer = Buffer.from(await brollRes.arrayBuffer())
+                fs.writeFileSync(brollFile, brollBuffer)
+                filesToCleanup.push(brollFile)
+              } else {
+                console.warn(`[B-ROLL] Download failed for asset ${i}: ${brollRes.status}`)
+                continue
+              }
+            } catch (e: any) {
+              console.warn(`[B-ROLL] Download error for asset ${i}:`, e.message)
+              continue
+            }
+          } else {
+            console.warn(`[B-ROLL] Asset ${i} file not found: ${brollUrl}`)
+            continue
+          }
+        }
+
+        if (!fs.existsSync(brollFile)) {
+          console.warn(`[B-ROLL] Asset ${i} file missing after download`)
+          continue
+        }
+
+        console.log(`[B-ROLL] Inserting clip ${i} at ${insertAt}s for ${duration}s`)
+
+        // Get main video dimensions
+        let vidWidth = 1920, vidHeight = 1080
+        try {
+          const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+          const probe = execSync(
+            `"${ffprobePath}" -v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "${currentFile}"`,
+            { timeout: 10000, encoding: 'utf-8' }
+          ).trim()
+          const [pw, ph] = probe.split('x').map(Number)
+          if (pw > 0 && ph > 0) { vidWidth = pw; vidHeight = ph }
+        } catch { /* use defaults */ }
+
+        // Ensure even dimensions
+        vidWidth = vidWidth % 2 === 0 ? vidWidth : vidWidth - 1
+        vidHeight = vidHeight % 2 === 0 ? vidHeight : vidHeight - 1
+
+        const output = path.join(uploadsDir, `broll_insert_${timestamp}_${i}.mp4`)
+        filesToCleanup.push(output)
+
+        try {
+          const part1 = path.join(uploadsDir, `bp1_${timestamp}_${i}.mp4`)
+          const brollScaled = path.join(uploadsDir, `bs_${timestamp}_${i}.mp4`)
+          const part2 = path.join(uploadsDir, `bp2_${timestamp}_${i}.mp4`)
+          filesToCleanup.push(part1, brollScaled, part2)
+
+          // Part 1: main video up to insert point
+          if (insertAt > 0.5) {
+            execSync(
+              `"${ffmpegPath}" -i "${currentFile}" -t ${insertAt} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${part1}" -y`,
+              { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+            )
+          }
+
+          // Scale B-Roll to match main video dimensions
+          execSync(
+            `"${ffmpegPath}" -i "${brollFile}" -t ${duration} -vf "scale=${vidWidth}:${vidHeight}:force_original_aspect_ratio=decrease,pad=${vidWidth}:${vidHeight}:(ow-iw)/2:(oh-ih)/2" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -shortest "${brollScaled}" -y`,
+            { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+          )
+
+          // Part 2: main video after insert point
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -ss ${insertAt} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${part2}" -y`,
+            { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+          )
+
+          // Concat: part1 + broll + part2
+          const files: string[] = []
+          if (insertAt > 0.5 && fs.existsSync(part1) && fs.statSync(part1).size > 10000) files.push(part1)
+          files.push(brollScaled)
+          if (fs.existsSync(part2) && fs.statSync(part2).size > 10000) files.push(part2)
+
+          const listFile = path.join(uploadsDir, `bl_${timestamp}_${i}.txt`)
+          filesToCleanup.push(listFile)
+          fs.writeFileSync(listFile, files.map(f => `file '${f}'`).join('\n'))
+
+          execSync(
+            `"${ffmpegPath}" -f concat -safe 0 -i "${listFile}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${output}" -y`,
+            { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+          )
+
+          if (fs.existsSync(output) && fs.statSync(output).size > 50000) {
+            currentFile = output
+            console.log(`[B-ROLL] Clip ${i} inserted at ${insertAt}s`)
+          }
+        } catch (e: any) {
+          console.warn(`[B-ROLL] Insert ${i} failed:`, e.stderr?.toString().substring(0, 200))
+        }
+      }
+
+      console.log('[PROCESS] Step 1.75 done: B-Roll insertion')
+    } else {
+      console.log('[PROCESS] Step 1.75 skipped: No B-Roll assets')
+    }
 
     // ============================================
     // STEP 2: MULTI-CAM SIMULATION
