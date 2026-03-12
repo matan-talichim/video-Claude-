@@ -160,7 +160,7 @@ export default function ContextMenu() {
             <MenuItem label="וידאו" onClick={() => { addTrack('video'); hideContextMenu() }} />
             <MenuItem label="אודיו" onClick={() => { addTrack('audio'); hideContextMenu() }} />
             <MenuItem label="טקסט" onClick={() => { addTrack('text'); hideContextMenu() }} />
-            <MenuItem label="B-Roll" onClick={() => { addTrack('broll'); hideContextMenu() }} />
+            <MenuItem label="בי-רול" onClick={() => { addTrack('broll'); hideContextMenu() }} />
             <MenuItem label="מוזיקה" onClick={() => { addTrack('music'); hideContextMenu() }} />
           </SubMenu>
           {contextMenu.trackId && (

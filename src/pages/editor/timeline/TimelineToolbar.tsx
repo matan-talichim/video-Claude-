@@ -65,21 +65,21 @@ export default function TimelineToolbar() {
       <div className="flex items-center gap-1">
         <ModeToggle
           icon="🔀"
-          label="Ripple"
+          label="גלישה"
           active={rippleEnabled}
           onClick={toggleRipple}
-          tooltip="מצב Ripple - קליפים זזים בעת מחיקה (R)"
+          tooltip="מצב גלישה - קליפים זזים בעת מחיקה (R)"
         />
         <ModeToggle
           icon={<Magnet size={14} />}
-          label="Snap"
+          label="הצמדה"
           active={snapEnabled}
           onClick={toggleSnap}
           tooltip="הצמדה - קליפים נצמדים לקצוות (N)"
         />
         <ModeToggle
           icon={<Zap size={14} />}
-          label="Speed"
+          label="מהירות"
           active={speedTrimEnabled}
           onClick={toggleSpeedTrim}
           tooltip="גזירת מהירות - גרירת קצוות משנה מהירות"

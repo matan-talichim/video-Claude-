@@ -282,11 +282,11 @@ export default function Canvas({ selectedItem, onSelect }: CanvasProps) {
             </div>
           )}
 
-          {/* Safe Zones overlay */}
+          {/* אזור בטוח overlay */}
           {showSafeZones && (
             <div className="absolute inset-0 pointer-events-none z-40">
               <div className="absolute top-[15%] left-[5%] right-[5%] bottom-[25%] border border-yellow-500/30 rounded" />
-              <span className="absolute top-[13%] right-[5%] text-yellow-500/50 text-[8px]">Safe Zone</span>
+              <span className="absolute top-[13%] right-[5%] text-yellow-500/50 text-[8px]">אזור בטוח</span>
             </div>
           )}
 
