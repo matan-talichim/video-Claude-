@@ -1668,12 +1668,12 @@ app.post('/api/generate-image-gemini', async (req, res) => {
     const { prompt, aspectRatio = '16:9', model = 'nano-banana-2' } = req.body
 
     const modelMap: Record<string, string> = {
-      'nano-banana': 'gemini-2.5-flash-image',
-      'nano-banana-2': 'gemini-3.1-flash-image-preview',
+      'nano-banana': 'gemini-3.1-flash-image',
+      'nano-banana-2': 'gemini-3.1-flash-image',
       'nano-banana-pro': 'gemini-3-pro-image-preview',
     }
 
-    const modelId = modelMap[model] || 'gemini-2.5-flash-image'
+    const modelId = modelMap[model] || 'gemini-3.1-flash-image'
 
     console.log('[NANO BANANA] Generating image with', modelId)
     console.log('[NANO BANANA] Prompt:', prompt)
@@ -1730,13 +1730,13 @@ app.post('/api/generate-video-veo', async (req, res) => {
     } = req.body
 
     const modelMap: Record<string, string> = {
-      'veo-3': 'veo-3.0-generate-preview',
-      'veo-3-fast': 'veo-3.0-fast-generate-preview',
-      'veo-3.1': 'veo-3.1-generate-preview',
-      'veo-3.1-fast': 'veo-3.1-fast-generate-preview',
+      'veo-3': 'veo-3.1-generate',
+      'veo-3-fast': 'veo-3.1-generate',
+      'veo-3.1': 'veo-3.1-generate',
+      'veo-3.1-fast': 'veo-3.1-generate',
     }
 
-    const modelId = modelMap[model] || 'veo-3.1-generate-preview'
+    const modelId = modelMap[model] || 'veo-3.1-generate'
 
     console.log('[VEO] Generating video with', modelId)
     console.log('[VEO] Prompt:', prompt)
@@ -1809,7 +1809,7 @@ app.post('/api/generate-image-to-video', async (req, res) => {
     console.log('[IMAGE-TO-VIDEO] Step 1: Generating image with Nano Banana...')
 
     const imageResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: 'gemini-3.1-flash-image',
       contents: prompt,
       config: { responseModalities: ['IMAGE'] },
     })
@@ -1825,7 +1825,7 @@ app.post('/api/generate-image-to-video', async (req, res) => {
     console.log('[IMAGE-TO-VIDEO] Step 2: Generating video from image with Veo...')
 
     const operation = await ai.models.generateVideos({
-      model: 'veo-3.1-generate-preview',
+      model: 'veo-3.1-generate',
       prompt: prompt,
       image: imagePart,
     })
@@ -3072,7 +3072,7 @@ app.post('/api/generate-background', async (req, res) => {
     let imageData: any = null
 
     // Use correct Gemini image generation models
-    const modelNames = ['gemini-2.0-flash-exp', 'gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview']
+    const modelNames = ['gemini-3.1-flash-image', 'gemini-3-pro-image-preview']
 
     for (const modelName of modelNames) {
       try {
@@ -3103,7 +3103,12 @@ app.post('/api/generate-background', async (req, res) => {
         }
         throw new Error('No image in response')
       } catch (modelErr: any) {
-        console.warn(`[NANO BANANA] Model ${modelName} failed:`, modelErr.message?.slice(0, 100))
+        const errMsg = modelErr.message || ''
+        console.warn(`[NANO BANANA] Model ${modelName} failed:`, errMsg.slice(0, 150))
+        if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+          console.log('[NANO BANANA] Quota exceeded, stopping')
+          break
+        }
       }
     }
 
@@ -3189,23 +3194,50 @@ app.post('/api/generate-broll', async (req, res) => {
         return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai' })
       }
 
-      // Step 2: Poll for result
+      // Step 2: Find working polling endpoint
+      const pollEndpoints = [
+        `https://api.kie.ai/api/v1/jobs/getTaskDetails?taskId=${taskId}`,
+        `https://api.kie.ai/api/v1/jobs/${taskId}`,
+        `https://api.kie.ai/api/v1/tasks/${taskId}`,
+        `https://api.kie.ai/api/v1/jobs/query?taskId=${taskId}`,
+        `https://api.kie.ai/api/v1/jobs/status?taskId=${taskId}`,
+      ]
+
+      let workingPollUrl = ''
+      for (const ep of pollEndpoints) {
+        try {
+          console.log('[SEEDANCE] Trying poll endpoint:', ep)
+          const testRes = await fetch(ep, {
+            headers: { 'Authorization': `Bearer ${kieKey}`, 'Content-Type': 'application/json' },
+          })
+          console.log('[SEEDANCE] Endpoint status:', testRes.status)
+          if (testRes.status !== 404) {
+            const testData = await testRes.json()
+            console.log('[SEEDANCE] Endpoint response:', JSON.stringify(testData).substring(0, 300))
+            workingPollUrl = ep
+            break
+          }
+        } catch {}
+      }
+
+      if (!workingPollUrl) {
+        console.warn('[SEEDANCE] No working polling endpoint found')
+        return res.status(500).json({ message: 'Seedance: לא נמצא endpoint לבדיקת סטטוס' })
+      }
+
+      console.log('[SEEDANCE] Using poll endpoint:', workingPollUrl)
+
+      // Step 3: Poll for result
       let videoUrl = null
       let attempts = 0
-      const maxAttempts = 10 // Max 10 polls at 10-second intervals
+      const maxAttempts = 10
 
       while (!videoUrl && attempts < maxAttempts) {
         await new Promise(r => setTimeout(r, 10000))
         attempts++
 
-        const pollUrl = `https://api.kie.ai/api/v1/jobs/getTaskDetails?taskId=${taskId}`
-        console.log('[SEEDANCE] Polling URL:', pollUrl)
-
-        const statusRes = await fetch(pollUrl, {
-          headers: {
-            'Authorization': `Bearer ${kieKey}`,
-            'Content-Type': 'application/json',
-          },
+        const statusRes = await fetch(workingPollUrl, {
+          headers: { 'Authorization': `Bearer ${kieKey}`, 'Content-Type': 'application/json' },
         })
 
         console.log('[SEEDANCE] Poll status:', statusRes.status)
@@ -3213,14 +3245,16 @@ app.post('/api/generate-broll', async (req, res) => {
         const statusData = await statusRes.json()
         console.log('[SEEDANCE] Poll response:', JSON.stringify(statusData).substring(0, 500))
 
-        const status = statusData.data?.status || statusData.status
+        const status = statusData.data?.status || statusData.status || statusData.state
 
         console.log(`[SEEDANCE] Poll ${attempts}/${maxAttempts}: status=${status}`)
 
         if (status === 'completed' || status === 'success') {
           videoUrl = statusData.data?.output?.video_url ||
                      statusData.data?.result?.video_url ||
-                     statusData.data?.video_url
+                     statusData.data?.video_url ||
+                     statusData.url || statusData.data?.url ||
+                     statusData.data?.resultUrl || statusData.data?.videoUrl
           break
         }
 
@@ -3272,7 +3306,7 @@ app.post('/api/generate-broll', async (req, res) => {
 
       // Use GoogleGenAI SDK for Veo
       const operation = await ai.models.generateVideos({
-        model: 'veo-3.1-generate-preview',
+        model: 'veo-3.1-generate',
         prompt,
         config: { aspectRatio: aspectRatio as any },
       })
@@ -5540,6 +5574,8 @@ app.listen(PORT, () => {
   console.log(`   ElevenLabs:  ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   DeepL:       ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Gemini (Nano Banana + Veo): ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log('   Gemini Image: gemini-3.1-flash-image (Nano Banana 2)')
+  console.log('   Gemini Video: veo-3.1-generate (Veo 3.1)')
   console.log(`   Seedance (kie.ai): ${process.env.KIE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Pixabay:     ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   YouTube API: ${process.env.YOUTUBE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
