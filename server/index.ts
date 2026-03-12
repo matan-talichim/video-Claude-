@@ -109,6 +109,87 @@ function getFFmpeg(): string {
   throw new Error('FFmpeg not found')
 }
 
+// Detect which text overlay filter is available in FFmpeg
+function getAvailableTextFilter(ffmpegBin: string): 'subtitles' | 'ass' | 'drawtext' | null {
+  try {
+    const filters = execSync(`"${ffmpegBin}" -filters 2>/dev/null`, { encoding: 'utf-8', timeout: 5000 })
+    if (filters.includes(' subtitles ')) return 'subtitles'
+    if (filters.includes(' ass ')) return 'ass'
+    if (filters.includes('drawtext')) return 'drawtext'
+    return null
+  } catch {
+    // If we can't check, assume subtitles is available (most common)
+    return 'subtitles'
+  }
+}
+
+// Cache the available text filter on startup
+let AVAILABLE_TEXT_FILTER: 'subtitles' | 'ass' | 'drawtext' | null = null
+try {
+  const ffmpegBin = getFFmpeg()
+  AVAILABLE_TEXT_FILTER = getAvailableTextFilter(ffmpegBin)
+  console.log(`[FFMPEG] Path: ${ffmpegBin}`)
+  console.log(`[FFMPEG] Available text filter: ${AVAILABLE_TEXT_FILTER || 'NONE'}`)
+} catch (e: any) {
+  console.warn(`[FFMPEG] Could not detect text filter: ${e.message}`)
+}
+
+// Helper: Apply subtitle/text overlay file using best available filter
+function applySubtitleFilter(
+  inputFile: string, subtitleFile: string, outputFile: string,
+  ffmpegPath: string, uploadsDir: string
+): boolean {
+  const ext = path.extname(subtitleFile)
+  const simpleName = `subs_${Date.now()}${ext}`
+  const simplePath = path.join(uploadsDir, simpleName)
+  fs.copyFileSync(subtitleFile, simplePath)
+
+  const inputBase = path.basename(inputFile)
+  const outputBase = path.basename(outputFile)
+
+  const approaches: Array<{ name: string; cmd: string }> = []
+
+  // Try subtitles filter (most common, supports ASS/SRT)
+  if (AVAILABLE_TEXT_FILTER === 'subtitles' || AVAILABLE_TEXT_FILTER === null) {
+    approaches.push({
+      name: 'subtitles (relative)',
+      cmd: `cd "${uploadsDir}" && "${ffmpegPath}" -i "${inputBase}" -vf "subtitles=${simpleName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBase}" -y`,
+    })
+  }
+
+  // Try ass filter
+  if (AVAILABLE_TEXT_FILTER === 'ass' || AVAILABLE_TEXT_FILTER === null) {
+    approaches.push({
+      name: 'ass (relative)',
+      cmd: `cd "${uploadsDir}" && "${ffmpegPath}" -i "${inputBase}" -vf "ass=${simpleName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBase}" -y`,
+    })
+  }
+
+  // Try drawtext as last resort
+  if (AVAILABLE_TEXT_FILTER === 'drawtext') {
+    const escapedPath = simplePath.replace(/\\/g, '/').replace(/:/g, '\\\\:')
+    approaches.push({
+      name: 'drawtext',
+      cmd: `"${ffmpegPath}" -i "${inputFile}" -vf "drawtext=textfile='${escapedPath}':fontsize=24:fontcolor=white:x=(w-text_w)/2:y=h-80" -c:a copy "${outputFile}" -y`,
+    })
+  }
+
+  for (const approach of approaches) {
+    try {
+      console.log(`[SUBS] Trying: ${approach.name}`)
+      execSync(approach.cmd, { timeout: 180000, maxBuffer: 10 * 1024 * 1024 })
+      console.log(`[SUBS] Success with: ${approach.name}`)
+      try { fs.unlinkSync(simplePath) } catch {}
+      return true
+    } catch (e: any) {
+      console.warn(`[SUBS] ${approach.name} failed:`, e.stderr?.toString().substring(0, 200))
+    }
+  }
+
+  try { fs.unlinkSync(simplePath) } catch {}
+  return false
+}
+
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
   console.log('=== TRANSCRIBE HANDLER V2 ===')
   let inputPath = ''
@@ -1668,12 +1749,12 @@ app.post('/api/generate-image-gemini', async (req, res) => {
     const { prompt, aspectRatio = '16:9', model = 'nano-banana-2' } = req.body
 
     const modelMap: Record<string, string> = {
-      'nano-banana': 'gemini-3.1-flash-image',
-      'nano-banana-2': 'gemini-3.1-flash-image',
+      'nano-banana': 'gemini-3-pro-image-preview',
+      'nano-banana-2': 'gemini-3-pro-image-preview',
       'nano-banana-pro': 'gemini-3-pro-image-preview',
     }
 
-    const modelId = modelMap[model] || 'gemini-3.1-flash-image'
+    const modelId = modelMap[model] || 'gemini-3-pro-image-preview'
 
     console.log('[NANO BANANA] Generating image with', modelId)
     console.log('[NANO BANANA] Prompt:', prompt)
@@ -1809,7 +1890,7 @@ app.post('/api/generate-image-to-video', async (req, res) => {
     console.log('[IMAGE-TO-VIDEO] Step 1: Generating image with Nano Banana...')
 
     const imageResponse = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-image',
+      model: 'gemini-3-pro-image-preview',
       contents: prompt,
       config: { responseModalities: ['IMAGE'] },
     })
@@ -3100,7 +3181,7 @@ app.post('/api/generate-background', async (req, res) => {
     let imageData: any = null
 
     // Use correct Gemini image generation models
-    const modelNames = ['gemini-3.1-flash-image', 'gemini-3-pro-image-preview']
+    const modelNames = ['gemini-3-pro-image-preview', 'gemini-3.1-flash-image']
 
     for (const modelName of modelNames) {
       try {
@@ -4194,19 +4275,51 @@ app.post('/api/auto-editor/process', async (req, res) => {
       return res.status(400).json({ message: 'קובץ המקור לא נמצא: ' + sourceFile })
     }
 
+    console.log('[PROCESS] === RECEIVED BODY ===')
     console.log('[PROCESS] Source file:', sourceFile)
-    console.log('[PROCESS] Options:', { includeSubtitles, includeBackground, animatedSubtitles })
-    console.log('[PROCESS] Plan features:', {
-      transitions: videoPlan?.transitions?.length || 0,
-      zooms: videoPlan?.zooms?.length || 0,
-      cameraAngles: (videoPlan?.camera_angles || videoPlan?.cameraAngles)?.length || 0,
-      colorGrade: videoPlan?.color_grade || videoPlan?.colorGrade || 'clean',
-      speakers: (videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds)?.length || 0,
-      graphics: (videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays)?.length || 0,
-      subtitles: videoPlan?.subtitles?.length || 0,
-      transcriptSegments: transcript?.segments?.length || 0,
-    })
+    console.log('[PROCESS] Top-level keys:', Object.keys(req.body))
+    console.log('[PROCESS] Options:', { includeSubtitles, includeBackground, animatedSubtitles, animationStyle })
     console.log('[PROCESS] Plan keys:', Object.keys(videoPlan || {}))
+
+    // Extract features from videoPlan with multiple field name fallbacks
+    const planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
+    const planCameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles || videoPlan?.angles || []
+    const planColorGrade = videoPlan?.color_grade || videoPlan?.colorGrade || 'clean'
+    const planSpeakers = videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds || []
+    const planGraphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays || []
+    const planTransitions = videoPlan?.transitions || ['fade']
+
+    // Subtitles: use plan subtitles first, then transcript segments
+    const planSubtitles = videoPlan?.subtitles || []
+    const transcriptSegments = transcript?.segments || []
+    const mainPresenter = req.body.mainPresenter || transcript?.mainSpeaker
+
+    // Filter transcript segments by main presenter if available
+    const filteredTranscriptSegments = mainPresenter && transcriptSegments.length > 0
+      ? transcriptSegments.filter((s: any) => s.speaker === mainPresenter)
+      : transcriptSegments
+
+    // Resolve subtitle segments: plan > filtered transcript > raw transcript
+    const subtitleSegments = planSubtitles.length > 0
+      ? planSubtitles
+      : filteredTranscriptSegments.length > 0
+        ? filteredTranscriptSegments
+        : transcriptSegments
+
+    console.log('[PROCESS] Extracted features:', {
+      zooms: planZooms.length,
+      cameraAngles: planCameraAngles.length,
+      colorGrade: planColorGrade,
+      speakers: planSpeakers.length,
+      graphics: planGraphics.length,
+      transitions: planTransitions.length,
+      planSubtitles: planSubtitles.length,
+      transcriptSegments: transcriptSegments.length,
+      filteredTranscriptSegments: filteredTranscriptSegments.length,
+      subtitleSegments: subtitleSegments.length,
+      includeSubtitles,
+      mainPresenter: mainPresenter || 'none',
+    })
 
     const outputFiles: any[] = []
 
@@ -4224,7 +4337,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       cuts.push({ keep_start: 0, keep_end: targetDuration || 60 })
     }
 
-    const transitions = videoPlan?.transitions || ['fade']
+    const transitions = planTransitions
     const cutFile = path.join(uploadsDir, `cut_${timestamp}.mp4`)
     filesToCleanup.push(cutFile)
 
@@ -4262,7 +4375,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 2: MULTI-CAM SIMULATION
     // ============================================
 
-    const cameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles || []
+    const cameraAngles = planCameraAngles
     if (cameraAngles.length > 1) {
       const camFile = path.join(uploadsDir, `multicam_${timestamp}.mp4`)
       filesToCleanup.push(camFile)
@@ -4381,7 +4494,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 3: COLOR GRADE
     // ============================================
 
-    const colorGradeName = videoPlan?.color_grade || videoPlan?.colorGrade || 'clean'
+    const colorGradeName = planColorGrade
     const gradeFilter = colorGrades[colorGradeName] || colorGrades.clean
     const gradedFile = path.join(uploadsDir, `graded_${timestamp}.mp4`)
     filesToCleanup.push(gradedFile)
@@ -4398,7 +4511,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 3.5: ZOOM / KEN BURNS EFFECTS
     // ============================================
 
-    const zooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
+    const zooms = planZooms
     if (zooms.length > 0) {
       const zoomFile = path.join(uploadsDir, `zoom_${timestamp}.mp4`)
       filesToCleanup.push(zoomFile)
@@ -4564,20 +4677,18 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 5: STYLED SUBTITLES (ASS FORMAT)
     // ============================================
 
-    // Use plan subtitles first, then fall back to transcript segments for subtitle generation
-    const segments = (videoPlan?.subtitles?.length > 0 ? videoPlan.subtitles : null)
-      || (videoPlan?.source_segments?.length > 0 ? videoPlan.source_segments : null)
-      || (videoPlan?.sourceSegments?.length > 0 ? videoPlan.sourceSegments : null)
-      || (transcript?.segments?.length > 0 ? transcript.segments : null)
-      || []
+    // Use pre-resolved subtitleSegments (plan > filtered transcript > raw transcript)
+    const segments = subtitleSegments
     let assFilePath: string | null = null
 
     console.log('[PROCESS] Step 5 check:', {
-      planSubtitles: videoPlan?.subtitles?.length || 0,
-      transcriptSegments: transcript?.segments?.length || 0,
+      planSubtitles: planSubtitles.length,
+      transcriptSegments: transcriptSegments.length,
+      filteredTranscript: filteredTranscriptSegments.length,
       resolvedSegments: segments.length,
       includeSubtitles,
       animatedSubtitles,
+      mainPresenter: mainPresenter || 'none',
     })
 
     if (!includeSubtitles) {
@@ -4740,14 +4851,14 @@ app.post('/api/auto-editor/process', async (req, res) => {
         }
       }
     } else {
-      console.log('[PROCESS] Step 5 skipped: No subtitles in plan')
+      console.log('[PROCESS] Step 5 skipped: No subtitles available (plan:', planSubtitles.length, 'transcript:', transcriptSegments.length, 'includeSubtitles:', includeSubtitles, ')')
     }
 
     // ============================================
     // STEP 6: LOWER THIRDS (SPEAKER NAMES)
     // ============================================
 
-    const speakers = videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds || []
+    const speakers = planSpeakers
     if (speakers.length > 0) {
       const lowerFile = path.join(uploadsDir, `lower_${timestamp}.mp4`)
       filesToCleanup.push(lowerFile)
@@ -4846,7 +4957,7 @@ ${dialogueLines.join('\n')}
     // STEP 7: MOTION GRAPHICS OVERLAYS
     // ============================================
 
-    const graphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays || []
+    const graphics = planGraphics
     if (graphics.length > 0) {
       const gfxFile = path.join(uploadsDir, `gfx_${timestamp}.mp4`)
       filesToCleanup.push(gfxFile)
@@ -5794,7 +5905,7 @@ app.listen(PORT, () => {
   console.log(`   ElevenLabs:  ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   DeepL:       ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Gemini (Nano Banana + Veo): ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
-  console.log('   Gemini Image: gemini-3.1-flash-image (Nano Banana 2)')
+  console.log('   Gemini Image: gemini-3-pro-image-preview (Nano Banana Pro)')
   console.log('   Gemini Video: veo-3.1-generate (Veo 3.1)')
   console.log(`   Seedance (kie.ai): ${process.env.KIE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Pixabay:     ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)

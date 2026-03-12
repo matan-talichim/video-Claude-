@@ -98,6 +98,9 @@ interface AutoEditorStore {
   visualAnalysis: any | null
   energyAnalysis: any | null
 
+  // Main presenter selection
+  mainPresenter: string | null
+
   // A/B version comparison
   versionA: ABVersionResult[] | null
   versionB: ABVersionResult[] | null
@@ -133,6 +136,7 @@ interface AutoEditorStore {
   setEnergyAnalysis: (data: any) => void
   setVersionA: (data: ABVersionResult[], approach: string) => void
   setVersionB: (data: ABVersionResult[], approach: string) => void
+  setMainPresenter: (speaker: string | null) => void
   setSelectedVersion: (v: 'A' | 'B') => void
   setQualityReport: (report: QualityReport) => void
   setCachedTranscript: (t: any) => void
@@ -155,6 +159,7 @@ const initialState = {
   transcript: null as any | null,
   visualAnalysis: null as any | null,
   energyAnalysis: null as any | null,
+  mainPresenter: null as string | null,
   versionA: null as ABVersionResult[] | null,
   versionB: null as ABVersionResult[] | null,
   versionAApproach: '',
@@ -202,6 +207,7 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
   setEnergyAnalysis: (energyAnalysis) => set({ energyAnalysis }),
   setVersionA: (data, approach) => set({ versionA: data, versionAApproach: approach }),
   setVersionB: (data, approach) => set({ versionB: data, versionBApproach: approach }),
+  setMainPresenter: (mainPresenter) => set({ mainPresenter }),
   setSelectedVersion: (selectedVersion) => set({ selectedVersion }),
   setQualityReport: (qualityReport) => set({ qualityReport }),
 
