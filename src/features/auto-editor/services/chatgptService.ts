@@ -258,8 +258,8 @@ function normalizeTechnicalPlan(
         title: v.title || '',
         sourceSegments: [],
         cuts: (v.cuts || []).map((c: any) => ({
-          keepStart: c.keep_start || c.keepStart,
-          keepEnd: c.keep_end || c.keepEnd,
+          keepStart: parseFloat(c.keep_start ?? c.keepStart ?? c.start ?? 0),
+          keepEnd: parseFloat(c.keep_end ?? c.keepEnd ?? c.end ?? 0),
         })),
         transitions: [],
         zooms: (v.zooms || []).map((z: any) => ({
@@ -324,8 +324,10 @@ function normalizeTechnicalPlan(
 
       // Build sourceSegments from cuts + transcript
       for (const cut of video.cuts) {
+        const cutStart = parseFloat(String(cut.keepStart ?? 0))
+        const cutEnd = parseFloat(String(cut.keepEnd ?? 0))
         const matchingSegs = transcript.segments.filter(
-          (s) => s.start >= cut.keepStart && s.end <= cut.keepEnd
+          (s) => s.start >= cutStart && s.end <= cutEnd
         )
         for (const seg of matchingSegs) {
           video.sourceSegments.push({
@@ -368,12 +370,14 @@ function normalizeTechnicalPlan(
     for (const video of (plan?.videos || [])) {
       const beforeCount = video.cuts.length
       video.cuts = video.cuts.filter(cut => {
+        const cutStart = parseFloat(String(cut.keepStart ?? 0))
+        const cutEnd = parseFloat(String(cut.keepEnd ?? 0))
         // Check if this cut timerange overlaps with presenter segments
         const isPresenterCut = presenterSegments.some(seg =>
-          seg.start < cut.keepEnd && seg.end > cut.keepStart
+          seg.start < cutEnd && seg.end > cutStart
         )
         if (!isPresenterCut) {
-          log(`[תכנון] הסרת חיתוך לא-פרזנטור: ${cut.keepStart.toFixed(1)}-${cut.keepEnd.toFixed(1)}`)
+          log(`[תכנון] הסרת חיתוך לא-פרזנטור: ${cutStart.toFixed(1)}-${cutEnd.toFixed(1)}`)
         }
         return isPresenterCut
       })
@@ -386,7 +390,7 @@ function normalizeTechnicalPlan(
   // Validate cuts sum to approximately target duration
   for (const video of (plan?.videos || [])) {
     const videoTarget = input.targetDuration === -1 ? (video.optimalDuration || 60) : input.targetDuration
-    const totalCutDuration = video.cuts.reduce((sum, c) => sum + (c.keepEnd - c.keepStart), 0)
+    const totalCutDuration = video.cuts.reduce((sum, c) => sum + (parseFloat(String(c.keepEnd ?? 0)) - parseFloat(String(c.keepStart ?? 0))), 0)
     log(`סרטון ${video.videoIndex}: סך חיתוכים = ${totalCutDuration.toFixed(1)}s (יעד: ${videoTarget}s), ${video.brollMoments.length} B-Roll, ${video.subtitles.length} כתוביות`)
 
     if (video.cuts.length === 0) {
@@ -431,7 +435,7 @@ export async function planWithChatGPT(
 
   // Verify plan quality
   for (const video of (plan?.videos || [])) {
-    const cutsDuration = video.cuts.reduce((sum, c) => sum + (c.keepEnd - c.keepStart), 0)
+    const cutsDuration = video.cuts.reduce((sum, c) => sum + (parseFloat(String(c.keepEnd ?? 0)) - parseFloat(String(c.keepStart ?? 0))), 0)
     log(`[אימות] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${input.targetDuration}s), ${video.brollMoments.length} B-Roll, ${video.subtitles.length} כתוביות, ${video.zooms.length} זומים`)
   }
 

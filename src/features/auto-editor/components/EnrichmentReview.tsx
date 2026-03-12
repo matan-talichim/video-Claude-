@@ -12,9 +12,16 @@ export default function EnrichmentReview({ enrichment, onApprove }: EnrichmentRe
   const detectedPresenter = useAutoEditorStore((s) => s.detectedPresenter)
   const presenterConfidence = useAutoEditorStore((s) => s.presenterConfidence)
   const [editedPrompt, setEditedPrompt] = useState(enrichment.enhanced_prompt || '')
-  const [selectedBRoll, setSelectedBRoll] = useState<Set<number>>(
-    new Set((enrichment.broll_suggestions || []).map((_: any, i: number) => i))
-  )
+  const MAX_BROLL = 3
+  const [selectedBRoll, setSelectedBRoll] = useState<Set<number>>(() => {
+    // Auto-select only top 3 (AI already ordered by relevance)
+    const initial = new Set<number>()
+    const suggestions = enrichment.broll_suggestions || []
+    for (let i = 0; i < Math.min(MAX_BROLL, suggestions.length); i++) {
+      initial.add(i)
+    }
+    return initial
+  })
   const [mainPresenter, setMainPresenter] = useState<string>(detectedPresenter || transcript?.mainSpeaker || '')
 
   const brollSuggestions = enrichment.broll_suggestions || []
@@ -96,48 +103,62 @@ export default function EnrichmentReview({ enrichment, onApprove }: EnrichmentRe
           <div className="w-full bg-green-500/10 border border-green-500/20 rounded-xl p-4">
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-green-400 font-medium text-sm">B-Roll מוצע ({brollSuggestions.length})</h3>
-              <div className="flex gap-2 text-xs">
-                <button onClick={() => setSelectedBRoll(new Set(brollSuggestions.map((_: any, i: number) => i)))}
-                  className="text-green-400 hover:text-green-300">בחר הכל</button>
-                <button onClick={() => setSelectedBRoll(new Set())}
-                  className="text-gray-400 hover:text-gray-300">נקה</button>
-              </div>
+              <span className="text-gray-400 text-xs">{selectedBRoll.size}/{MAX_BROLL} נבחרו</span>
+            </div>
+            <div className="flex gap-2 mb-3">
+              <button onClick={() => setSelectedBRoll(new Set([0, 1, 2].filter(i => i < brollSuggestions.length)))}
+                className="text-xs text-purple-400 hover:text-purple-300">בחר מומלצים</button>
+              <button onClick={() => setSelectedBRoll(new Set())}
+                className="text-xs text-gray-400 hover:text-gray-300">נקה</button>
             </div>
 
             <div className="space-y-2">
               {brollSuggestions.map((broll: any, i: number) => (
-                <label key={i} className={`flex gap-3 p-3 rounded-lg cursor-pointer transition ${
-                  selectedBRoll.has(i) ? 'bg-green-500/10 border border-green-500/20' : 'bg-white/5 border border-transparent'
+                <div key={i} onClick={() => {
+                  setSelectedBRoll(prev => {
+                    const next = new Set(prev)
+                    if (next.has(i)) {
+                      next.delete(i)
+                    } else if (next.size < MAX_BROLL) {
+                      next.add(i)
+                    }
+                    return next
+                  })
+                }} className={`p-3 rounded-lg cursor-pointer transition border-2 ${
+                  selectedBRoll.has(i)
+                    ? 'border-green-500 bg-green-500/10'
+                    : selectedBRoll.size >= MAX_BROLL
+                      ? 'border-white/5 bg-white/5 opacity-50 cursor-not-allowed'
+                      : 'border-white/10 bg-white/5 hover:border-white/30'
                 }`}>
-                  <input
-                    type="checkbox"
-                    checked={selectedBRoll.has(i)}
-                    onChange={() => {
-                      const newSet = new Set(selectedBRoll)
-                      if (newSet.has(i)) newSet.delete(i)
-                      else newSet.add(i)
-                      setSelectedBRoll(newSet)
-                    }}
-                    className="accent-green-500 mt-0.5"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white text-xs truncate">"{broll.at_text || broll.trigger_text}"</p>
-                    <p className="text-green-300 text-xs mt-1">{broll.description_he || broll.prompt_he}</p>
-                    <div className="flex gap-2 mt-1 flex-wrap">
-                      {broll.at_time != null && (
-                        <span className="text-gray-500 text-[10px]">
-                          {(broll.at_time?.toFixed?.(1) || broll.at_time)}s
-                        </span>
-                      )}
-                      {broll.duration && (
-                        <span className="text-gray-500 text-[10px]">{broll.duration}s</span>
-                      )}
-                      {broll.why && (
-                        <span className="text-gray-600 text-[10px]">{broll.why}</span>
-                      )}
+                  {i < 3 && (
+                    <span className="text-xs bg-purple-600/50 text-purple-200 px-2 py-0.5 rounded-full mb-1 inline-block">מומלץ</span>
+                  )}
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-xs truncate">"{broll.at_text || broll.trigger_text}"</p>
+                      <p className="text-green-300 text-xs mt-1">{broll.description_he || broll.prompt_he}</p>
+                      <div className="flex gap-2 mt-1 flex-wrap">
+                        {broll.at_time != null && (
+                          <span className="text-gray-500 text-[10px]">
+                            {(broll.at_time?.toFixed?.(1) || broll.at_time)}s
+                          </span>
+                        )}
+                        {broll.duration && (
+                          <span className="text-gray-500 text-[10px]">{broll.duration}s</span>
+                        )}
+                        {broll.why && (
+                          <span className="text-gray-600 text-[10px]">{broll.why}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                      selectedBRoll.has(i) ? 'border-green-500 bg-green-500' : 'border-gray-600'
+                    }`}>
+                      {selectedBRoll.has(i) && <span className="text-white text-xs">✓</span>}
                     </div>
                   </div>
-                </label>
+                </div>
               ))}
             </div>
           </div>

@@ -2426,9 +2426,10 @@ app.post('/api/auto-editor/identify-presenter', async (req, res) => {
 
       // For each speaker, calculate overlap with presenter visible times
       const speakerOverlap: Record<string, number> = {}
-      const speakers = [...new Set(segments.map(s => s.speaker))]
+      const speakers = [...new Set(segments.map(s => s.speaker))].filter(s => s && s !== 'undefined' && s !== 'null')
 
       speakers.forEach(speaker => {
+        if (!speaker || speaker === 'undefined') return
         const speakerSegments = segments.filter(s => s.speaker === speaker)
         let overlap = 0
 
@@ -2454,15 +2455,20 @@ app.post('/api/auto-editor/identify-presenter', async (req, res) => {
       if (sortedByOverlap.length > 0 && sortedByOverlap[0][1] > 0) {
         const presenter = sortedByOverlap[0][0]
         const confidence = presenterDetection?.confidence || 'medium'
-        console.log(`[PRESENTER] Identified via visual cross-reference: ${presenter} (${sortedByOverlap[0][1]}s overlap, confidence: ${confidence})`)
-        return res.json({
-          mainPresenter: presenter,
-          confidence,
-          method: 'visual_crossref',
-          presenterDescription: presenterDetection?.presenter_description || '',
-          reasoning: presenterDetection?.reasoning || '',
-          speakerOverlap,
-        })
+        // Validate presenter is not undefined/invalid
+        if (!presenter || presenter === 'undefined' || presenter === 'null') {
+          console.warn('[PRESENTER] Cross-reference returned invalid speaker, falling back to GPT')
+        } else {
+          console.log(`[PRESENTER] Identified via visual cross-reference: ${presenter} (${sortedByOverlap[0][1]}s overlap, confidence: ${confidence})`)
+          return res.json({
+            mainPresenter: presenter,
+            confidence,
+            method: 'visual_crossref',
+            presenterDescription: presenterDetection?.presenter_description || '',
+            reasoning: presenterDetection?.reasoning || '',
+            speakerOverlap,
+          })
+        }
       }
     }
 
@@ -2471,9 +2477,9 @@ app.post('/api/auto-editor/identify-presenter', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) {
       // No AI available — fall back to most speaking time
-      const fallback = Object.entries(speakerTimes).sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+      const fallback = Object.entries(speakerTimes).filter(([s]) => s && s !== 'undefined').sort((a, b) => (b[1] as number) - (a[1] as number))[0]
       return res.json({
-        mainPresenter: fallback?.[0] || 'unknown',
+        mainPresenter: fallback?.[0] || 'דובר 1',
         confidence: 'low',
         method: 'speaking_time_fallback',
         presenterDescription: '',
@@ -2521,7 +2527,7 @@ Return ONLY the speaker name (e.g., "דובר 1"). Nothing else.`
     console.log(`[PRESENTER] GPT identified: ${result}`)
 
     // Validate it's a real speaker
-    const validSpeakers = Object.keys(speakerTimes)
+    const validSpeakers = Object.keys(speakerTimes).filter(s => s && s !== 'undefined' && s !== 'null')
     let identified = ''
     if (validSpeakers.includes(result)) {
       identified = result
@@ -2545,9 +2551,9 @@ Return ONLY the speaker name (e.g., "דובר 1"). Nothing else.`
 
     // Last fallback: most speaking time
     console.warn('[PRESENTER] GPT response not valid, falling back to most speaking time')
-    const fallback = Object.entries(speakerTimes).sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+    const fallback = Object.entries(speakerTimes).filter(([s]) => s && s !== 'undefined').sort((a, b) => (b[1] as number) - (a[1] as number))[0]
     return res.json({
-      mainPresenter: fallback?.[0] || 'unknown',
+      mainPresenter: fallback?.[0] || 'דובר 1',
       confidence: 'low',
       method: 'speaking_time_fallback',
       presenterDescription: '',
@@ -2559,9 +2565,9 @@ Return ONLY the speaker name (e.g., "דובר 1"). Nothing else.`
     console.error('[PRESENTER ERROR]', error.message)
     // Non-fatal: return fallback
     const speakerTimes = req.body.speakerTimes || {}
-    const fallback = Object.entries(speakerTimes).sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+    const fallback = Object.entries(speakerTimes).filter(([s]) => s && s !== 'undefined').sort((a, b) => (b[1] as number) - (a[1] as number))[0]
     res.json({
-      mainPresenter: fallback?.[0] || 'unknown',
+      mainPresenter: fallback?.[0] || 'דובר 1',
       confidence: 'low',
       method: 'error_fallback',
       presenterDescription: '',
