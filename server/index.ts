@@ -2293,6 +2293,33 @@ app.post('/api/auto-editor/enrich-prompt', async (req, res) => {
     const speakers = [...new Set((transcript.segments || []).map((s: any) => s.speaker))]
     const duration = transcript.total_duration || transcript.totalDuration || 0
 
+    // Build speaker analysis context
+    const speakerTimesData: Record<string, number> = {}
+    ;(transcript.segments || []).forEach((seg: any) => {
+      const sp = seg.speaker || 'unknown'
+      if (!speakerTimesData[sp]) speakerTimesData[sp] = 0
+      speakerTimesData[sp] += ((seg.end || 0) - (seg.start || 0))
+    })
+    const sortedSpeakersForPrompt = Object.entries(speakerTimesData)
+      .sort(([, a], [, b]) => (b as number) - (a as number))
+      .map(([sp, t]) => `${sp}: ${Math.round(t as number)}s`)
+
+    const speakerContext = speakers.length > 1 ? `
+זיהוי דוברים:
+הסרטון מכיל ${speakers.length} דוברים: ${sortedSpeakersForPrompt.join(', ')}
+
+חשוב מאוד: הפרזנטור הראשי הוא לא בהכרח מי שמדבר הכי הרבה!
+הפרזנטור הוא מי ש:
+1. מופיע במצלמה (פנים נראות)
+2. מדבר ישירות למצלמה
+3. הוא ה"טאלנט" / מנחה / מומחה
+
+דוברים אחרים יכולים להיות מראיינים, עוזרים, או קולות מחוץ למסך.
+אם אדם אחד מופיע במצלמה ואחר שואל שאלות מחוץ למסך - האדם במצלמה הוא הפרזנטור.
+השתמש רק בסגמנטים של הפרזנטור לסרטון הראשי.
+קולות מחוץ למצלמה (מראיינים/עוזרים) צריכים להיחתך אלא אם הם מוסיפים הקשר.
+` : ''
+
     // Build visual analysis context if available
     const visualContext = visualAnalysis ? `
 ניתוח ויזואלי של הסרטון:
@@ -2378,6 +2405,7 @@ ${(visualAnalysis.scene_analysis || []).map((s: any) =>
 
 ${visualContext}
 ${energyContext}
+${speakerContext}
 ${userProfile || ''}
 ${socialLearningRules || ''}
 
@@ -3538,7 +3566,7 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       console.log('[AUTO-TRANSCRIBE] Estimated duration:', totalDuration)
     }
 
-    // Identify main speaker (presenter) by total speaking time
+    // Identify speakers - return ALL speakers sorted by time so UI can allow manual selection
     const speakerTimes: Record<string, number> = {}
     segments.forEach((seg: any) => {
       const speaker = seg.speaker || 'unknown'
@@ -3546,13 +3574,18 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       speakerTimes[speaker] += ((seg.end || 0) - (seg.start || 0))
     })
 
-    const mainSpeaker = Object.entries(speakerTimes)
-      .sort(([, a], [, b]) => (b as number) - (a as number))[0]?.[0] || segments[0]?.speaker || 'unknown'
+    // Sort speakers by time (most talking first) but don't assume most-talking = presenter
+    const sortedSpeakers = Object.entries(speakerTimes)
+      .sort(([, a], [, b]) => (b as number) - (a as number))
+      .map(([speaker, time]) => ({ speaker, time: Math.round((time as number) * 10) / 10 }))
 
-    console.log('[AUTO-TRANSCRIBE] Speaker times:', speakerTimes)
-    console.log('[AUTO-TRANSCRIBE] Main presenter:', mainSpeaker)
+    // Default to most-talking speaker, but mark as "auto-detected" so UI can override
+    const mainSpeaker = sortedSpeakers[0]?.speaker || segments[0]?.speaker || 'unknown'
 
-    // Mark each segment with isPresenter flag
+    console.log('[AUTO-TRANSCRIBE] All speakers:', JSON.stringify(sortedSpeakers))
+    console.log('[AUTO-TRANSCRIBE] Auto-detected main presenter:', mainSpeaker, '(can be overridden by user)')
+
+    // Mark each segment with isPresenter flag (default, UI can change this)
     segments.forEach((seg: any) => {
       seg.isPresenter = (seg.speaker === mainSpeaker)
     })
@@ -3566,6 +3599,8 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       speakers,
       mainSpeaker,
       speakerTimes,
+      sortedSpeakers,
+      autoDetected: true,
       model: usedModel,
     })
   } catch (err: any) {
@@ -3824,13 +3859,16 @@ async function generateAnimatedSubtitles(
   fs.writeFileSync(assPath, '\ufeff' + assContent, 'utf-8')
   filesToCleanup.push(assPath)
 
-  const escapedAss = assPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+  // Use basenames to avoid path escaping issues with colons/quotes/spaces
+  const assBaseName = path.basename(assPath)
+  const inputBaseName = path.basename(inputFile)
+  const outputBaseName = path.basename(outputFile)
 
   // Try subtitles filter first (needs libass)
   try {
     execSync(
-      `"${ffmpegPath}" -i "${inputFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputFile}" -y`,
-      { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }
+      `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "subtitles=${assBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
+      { timeout: 180000, maxBuffer: 10 * 1024 * 1024, cwd: outputDir }
     )
     console.log(`[PROCESS] Animated subtitles applied via subtitles filter (${style})`)
     return outputFile
@@ -3839,8 +3877,8 @@ async function generateAnimatedSubtitles(
     // Try ass filter as alternative
     try {
       execSync(
-        `"${ffmpegPath}" -i "${inputFile}" -vf "ass='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputFile}" -y`,
-        { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }
+        `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "ass=${assBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
+        { timeout: 180000, maxBuffer: 10 * 1024 * 1024, cwd: outputDir }
       )
       console.log(`[PROCESS] Animated subtitles applied via ass filter (${style})`)
       return outputFile
@@ -4128,6 +4166,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       animatedSubtitles = false,
       animationStyle = 'karaoke',
       skipPlatformExport = false,
+      transcript,
     } = req.body
 
     const ffmpegPath = getFFmpeg()
@@ -4156,15 +4195,18 @@ app.post('/api/auto-editor/process', async (req, res) => {
     }
 
     console.log('[PROCESS] Source file:', sourceFile)
-    console.log('[PROCESS] Options:', { includeSubtitles, includeBackground })
+    console.log('[PROCESS] Options:', { includeSubtitles, includeBackground, animatedSubtitles })
     console.log('[PROCESS] Plan features:', {
       transitions: videoPlan?.transitions?.length || 0,
       zooms: videoPlan?.zooms?.length || 0,
       cameraAngles: (videoPlan?.camera_angles || videoPlan?.cameraAngles)?.length || 0,
       colorGrade: videoPlan?.color_grade || videoPlan?.colorGrade || 'clean',
-      speakers: videoPlan?.speakers?.length || 0,
-      graphics: videoPlan?.graphics?.length || 0,
+      speakers: (videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds)?.length || 0,
+      graphics: (videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays)?.length || 0,
+      subtitles: videoPlan?.subtitles?.length || 0,
+      transcriptSegments: transcript?.segments?.length || 0,
     })
+    console.log('[PROCESS] Plan keys:', Object.keys(videoPlan || {}))
 
     const outputFiles: any[] = []
 
@@ -4356,7 +4398,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 3.5: ZOOM / KEN BURNS EFFECTS
     // ============================================
 
-    const zooms = videoPlan?.zooms || []
+    const zooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
     if (zooms.length > 0) {
       const zoomFile = path.join(uploadsDir, `zoom_${timestamp}.mp4`)
       filesToCleanup.push(zoomFile)
@@ -4522,8 +4564,21 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 5: STYLED SUBTITLES (ASS FORMAT)
     // ============================================
 
-    const segments = videoPlan?.subtitles || videoPlan?.source_segments || videoPlan?.sourceSegments || []
+    // Use plan subtitles first, then fall back to transcript segments for subtitle generation
+    const segments = (videoPlan?.subtitles?.length > 0 ? videoPlan.subtitles : null)
+      || (videoPlan?.source_segments?.length > 0 ? videoPlan.source_segments : null)
+      || (videoPlan?.sourceSegments?.length > 0 ? videoPlan.sourceSegments : null)
+      || (transcript?.segments?.length > 0 ? transcript.segments : null)
+      || []
     let assFilePath: string | null = null
+
+    console.log('[PROCESS] Step 5 check:', {
+      planSubtitles: videoPlan?.subtitles?.length || 0,
+      transcriptSegments: transcript?.segments?.length || 0,
+      resolvedSegments: segments.length,
+      includeSubtitles,
+      animatedSubtitles,
+    })
 
     if (!includeSubtitles) {
       console.log('[PROCESS] Step 5: Skipping subtitles (disabled by user)')
@@ -4546,10 +4601,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
           fs.writeFileSync(assFilePath, '\ufeff' + assContent, 'utf-8')
           const subFile = path.join(uploadsDir, `subbed_${timestamp}.mp4`)
           filesToCleanup.push(subFile)
-          const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+          const assBase = path.basename(assFilePath)
           execSync(
-            `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
-            { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${assBase}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(subFile)}" -y`,
+            { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           currentFile = subFile
           console.log('[PROCESS] Step 5 done: Standard subtitles fallback')
@@ -4568,11 +4623,15 @@ app.post('/api/auto-editor/process', async (req, res) => {
       const subFile = path.join(uploadsDir, `subbed_${timestamp}.mp4`)
       filesToCleanup.push(subFile)
 
+      // Use basenames to avoid path escaping issues with colons/quotes/spaces
+      const assBase = path.basename(assFilePath)
+      const subBase = path.basename(subFile)
+      const curBase = path.basename(currentFile)
+
       try {
-        const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
         execSync(
-          `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
-          { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+          `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${assBase}" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+          { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
         )
         currentFile = subFile
         console.log('[PROCESS] Step 5 done: Styled subtitles added')
@@ -4581,10 +4640,9 @@ app.post('/api/auto-editor/process', async (req, res) => {
         // Try ass filter
         let assWorked = false
         try {
-          const escapedAss2 = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
           execSync(
-            `"${ffmpegPath}" -i "${currentFile}" -vf "ass='${escapedAss2}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
-            { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "ass=${assBase}" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+            { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           currentFile = subFile
           assWorked = true
@@ -4617,10 +4675,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
             }
             if (srtContent.trim()) {
               fs.writeFileSync(srtFile, '\ufeff' + srtContent, 'utf-8')
-              const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+              const srtBase = path.basename(srtFile)
               execSync(
-                `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontName=Arial,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
-                { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+                `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${srtBase}:force_style='FontName=Arial,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+                { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
               )
               currentFile = subFile
               console.log('[PROCESS] Step 5 done: SRT fallback subtitles added')
@@ -4689,7 +4747,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 6: LOWER THIRDS (SPEAKER NAMES)
     // ============================================
 
-    const speakers = videoPlan?.speakers || []
+    const speakers = videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds || []
     if (speakers.length > 0) {
       const lowerFile = path.join(uploadsDir, `lower_${timestamp}.mp4`)
       filesToCleanup.push(lowerFile)
@@ -4697,7 +4755,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
       try {
         // Remap speaker timestamps to cut video
-        const lowerThirdParts = speakers.map((s: any, idx: number) => {
+        const dialogueLines: string[] = []
+        speakers.forEach((s: any) => {
           const name = s.name || 'דובר'
           const firstAppear = s.first_appearance ?? s.firstAppearance ?? 0
           const displayDur = s.display_duration ?? s.displayDuration ?? 4
@@ -4714,23 +4773,63 @@ app.post('/api/auto-editor/process', async (req, res) => {
             cutOffset += cutDuration
           }
 
-          // Write Hebrew text to temp file (no BOM for drawtext compatibility)
-          const tmpTextFile = path.join(uploadsDir, `speaker_${timestamp}_${idx}.txt`)
-          fs.writeFileSync(tmpTextFile, name, 'utf-8')
-          filesToCleanup.push(tmpTextFile)
-
-          const escapedTextFile = tmpTextFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
-          return `drawtext=textfile='${escapedTextFile}':fontsize=28:fontcolor=white:borderw=2:bordercolor=black:x=w-text_w-40:y=h-80:enable='between(t,${relativeStart},${relativeStart + displayDur})':box=1:boxcolor=0x7C5CFF@0.7:boxborderw=10`
+          const endTime = relativeStart + displayDur
+          dialogueLines.push(
+            `Dialogue: 0,${formatAssTime(relativeStart)},${formatAssTime(endTime)},LowerThird,,20,20,40,,${name}`
+          )
         })
 
-        const lowerThirdFilter = lowerThirdParts.join(',')
-        console.log(`[LOWER THIRDS] Filter count: ${lowerThirdParts.length}, filter length: ${lowerThirdFilter.length}`)
-        execSync(
-          `"${ffmpegPath}" -i "${currentFile}" -vf "${lowerThirdFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${lowerFile}" -y`,
-          { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
-        )
-        currentFile = lowerFile
-        console.log('[PROCESS] Step 6 done: Speaker names added')
+        // Build ASS file for lower thirds (no drawtext needed)
+        const ltAss = `\ufeff[Script Info]
+Title: Lower Thirds
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: LowerThird,Sans,28,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB07C5CFF,-1,0,0,0,100,100,0,0,3,2,1,1,20,20,40,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+${dialogueLines.join('\n')}
+`
+        const ltAssPath = path.join(uploadsDir, `lt_${timestamp}.ass`)
+        fs.writeFileSync(ltAssPath, ltAss, 'utf-8')
+        filesToCleanup.push(ltAssPath)
+
+        console.log(`[LOWER THIRDS] ASS file created with ${dialogueLines.length} entries`)
+
+        // Use ASS filter (works without libfreetype/drawtext)
+        let ltApplied = false
+        // Try subtitles filter first
+        try {
+          const ltBaseName = path.basename(ltAssPath)
+          execSync(
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${ltBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(lowerFile)}" -y`,
+            { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
+          )
+          ltApplied = true
+        } catch {
+          // Try ass filter
+          try {
+            const ltBaseName = path.basename(ltAssPath)
+            execSync(
+              `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "ass=${ltBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(lowerFile)}" -y`,
+              { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
+            )
+            ltApplied = true
+          } catch (e2: any) {
+            console.warn('[PROCESS] ASS lower thirds failed:', e2.stderr?.toString().substring(0, 300))
+          }
+        }
+
+        if (ltApplied) {
+          currentFile = lowerFile
+          console.log('[PROCESS] Step 6 done: Speaker names added (ASS)')
+        } else {
+          console.log('[PROCESS] Step 6: ASS lower thirds failed, skipping')
+        }
       } catch (e: any) {
         const stderr = e.stderr?.toString() || ''
         const stdout = e.stdout?.toString() || ''
@@ -4747,15 +4846,16 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 7: MOTION GRAPHICS OVERLAYS
     // ============================================
 
-    const graphics = videoPlan?.graphics || []
+    const graphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays || []
     if (graphics.length > 0) {
       const gfxFile = path.join(uploadsDir, `gfx_${timestamp}.mp4`)
       filesToCleanup.push(gfxFile)
       console.log('[PROCESS] Step 7: Adding motion graphics overlays...')
 
       try {
-        // Map graphics to cut video time
-        const gfxParts = graphics.map((g: any, idx: number) => {
+        // Map graphics to cut video time and build ASS dialogue lines
+        const gfxDialogueLines: string[] = []
+        graphics.forEach((g: any) => {
           const text = g.text || ''
           const atTime = g.at_time ?? g.atTime ?? 0
           const duration = g.duration ?? 3
@@ -4772,46 +4872,63 @@ app.post('/api/auto-editor/process', async (req, res) => {
             cutOffset += cutDuration
           }
 
-          const end = relativeStart + duration
-
-          // Write Hebrew text to temp file (no BOM for drawtext compatibility)
-          const tmpTextFile = path.join(uploadsDir, `gfx_${timestamp}_${idx}.txt`)
-          fs.writeFileSync(tmpTextFile, text, 'utf-8')
-          filesToCleanup.push(tmpTextFile)
-
-          const escapedTextFile = tmpTextFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
-          // Slide in from right (RTL friendly)
-          return `drawtext=textfile='${escapedTextFile}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
+          const endTime = relativeStart + duration
+          // Use ASS \move tag for slide-in from right (RTL friendly)
+          gfxDialogueLines.push(
+            `Dialogue: 0,${formatAssTime(relativeStart)},${formatAssTime(endTime)},GraphicOverlay,,0,0,0,,{\\move(1920,162,1500,162)}${text}`
+          )
         })
 
-        // Apply graphics in batches to avoid FFmpeg filter limit
-        let gfxCurrent = currentFile
-        for (let gi = 0; gi < gfxParts.length; gi += 15) {
-          const batch = gfxParts.slice(gi, gi + 15)
-          const batchFile = gi === 0 && gfxParts.length <= 15 ? gfxFile : path.join(uploadsDir, `gfx_batch_${timestamp}_${gi}.mp4`)
-          if (batchFile !== gfxFile) filesToCleanup.push(batchFile)
+        // Build ASS file for graphics (no drawtext needed)
+        const gfxAss = `\ufeff[Script Info]
+Title: Motion Graphics
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
 
-          console.log(`[GRAPHICS] Applying batch ${gi} (${batch.length} filters)`)
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: GraphicOverlay,Sans,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC7C5CFF,-1,0,0,0,100,100,0,0,3,2,1,7,20,20,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+${gfxDialogueLines.join('\n')}
+`
+        const gfxAssPath = path.join(uploadsDir, `gfx_${timestamp}.ass`)
+        fs.writeFileSync(gfxAssPath, gfxAss, 'utf-8')
+        filesToCleanup.push(gfxAssPath)
+
+        console.log(`[GRAPHICS] ASS file created with ${gfxDialogueLines.length} entries`)
+
+        // Use ASS filter (works without libfreetype/drawtext)
+        let gfxApplied = false
+        // Try subtitles filter first
+        try {
+          const gfxBaseName = path.basename(gfxAssPath)
+          execSync(
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${gfxBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(gfxFile)}" -y`,
+            { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
+          )
+          gfxApplied = true
+        } catch {
+          // Try ass filter
           try {
+            const gfxBaseName = path.basename(gfxAssPath)
             execSync(
-              `"${ffmpegPath}" -i "${gfxCurrent}" -vf "${batch.join(',')}" -c:v libx264 -preset fast -crf 23 -c:a copy "${batchFile}" -y`,
-              { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+              `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "ass=${gfxBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(gfxFile)}" -y`,
+              { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
             )
-            gfxCurrent = batchFile
-          } catch (batchErr: any) {
-            console.warn(`[GRAPHICS] Batch ${gi} failed:`, batchErr.stderr?.toString().substring(0, 400))
-            break
+            gfxApplied = true
+          } catch (e2: any) {
+            console.warn('[PROCESS] ASS graphics failed:', e2.stderr?.toString().substring(0, 300))
           }
         }
 
-        if (gfxCurrent !== currentFile) {
-          if (gfxCurrent !== gfxFile) {
-            fs.copyFileSync(gfxCurrent, gfxFile)
-          }
+        if (gfxApplied) {
           currentFile = gfxFile
-          console.log('[PROCESS] Step 7 done: Graphics overlays added')
+          console.log('[PROCESS] Step 7 done: Graphics overlays added (ASS)')
         } else {
-          console.log('[PROCESS] Step 7: All graphics batches failed')
+          console.log('[PROCESS] Step 7: ASS graphics failed, skipping')
         }
       } catch (e: any) {
         const stderr = e.stderr?.toString() || ''

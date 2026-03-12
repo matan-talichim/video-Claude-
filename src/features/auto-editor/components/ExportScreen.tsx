@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Download, Play, PartyPopper, X } from 'lucide-react'
 import { useAutoEditorStore, type VideoResult, type PlatformFile } from '../store/autoEditorStore'
 import { useProjectsStore } from '../../../stores/projectsStore'
@@ -163,6 +164,7 @@ function VideoCard({ video, file, onPreview }: VideoCardProps) {
 }
 
 export default function ExportScreen({ onReset }: ExportScreenProps) {
+  const navigate = useNavigate()
   const processedVideos = useAutoEditorStore((s) => s.processedVideos)
   const results = useAutoEditorStore((s) => s.results)
   const input = useAutoEditorStore((s) => s.input)
@@ -241,6 +243,10 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
           const response = await fetch(videoUrl)
           if (!response.ok) {
             console.error('[TRANSFER] Video fetch failed:', videoUrl, response.status)
+            // Use server URL directly as fallback
+            const emptyBlob = new Blob([], { type: 'video/mp4' })
+            const file = new File([emptyBlob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
+            videoFiles.push({ file, blobUrl: videoUrl, mediaType: 'video' })
             continue
           }
 
@@ -249,6 +255,9 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
 
           if (blob.size === 0) {
             console.error('[TRANSFER] Empty blob for:', videoUrl)
+            const emptyBlob = new Blob([], { type: 'video/mp4' })
+            const file = new File([emptyBlob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
+            videoFiles.push({ file, blobUrl: videoUrl, mediaType: 'video' })
             continue
           }
 
@@ -304,8 +313,9 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
       const editorStore = useAutoEditorStore.getState()
       editorStore.setEditedFiles(editedFiles)
 
-      console.log('[TRANSFER] Navigating to editor:', `/editor/${projectId}`)
-      window.location.href = `/editor/${projectId}`
+      console.log('[TRANSFER] Navigating to editor (SPA):', `/editor/${projectId}`)
+      // Use SPA navigation to preserve in-memory state (blob URLs, Zustand stores)
+      navigate(`/editor/${projectId}`)
     } catch (error) {
       console.error('[TRANSFER] Failed to open in editor:', error)
       setOpeningEditor(false)

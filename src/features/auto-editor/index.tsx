@@ -77,7 +77,21 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
     }
   }
 
-  const handleEnrichmentApprove = (editedPrompt: string, selectedBRoll: any[]) => {
+  const handleEnrichmentApprove = (editedPrompt: string, selectedBRoll: any[], mainPresenter?: string) => {
+    // If user selected a different presenter, update transcript segments
+    if (mainPresenter) {
+      const store = useAutoEditorStore.getState()
+      const transcript = store.transcript
+      if (transcript?.segments) {
+        transcript.segments.forEach((seg: any) => {
+          seg.isPresenter = (seg.speaker === mainPresenter)
+        })
+        transcript.mainSpeaker = mainPresenter
+        transcript.autoDetected = false
+        store.setTranscript({ ...transcript })
+      }
+    }
+
     continueAfterEnrichment({
       userPrompt: editedPrompt,
       selectedBRoll,
