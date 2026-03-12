@@ -3625,8 +3625,8 @@ function buildAnimatedASS(subtitles: any[], style: string, cuts: any[]): string 
   let ass = `[Script Info]
 Title: Animated Subtitles
 ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: 1920
+PlayResY: 1080
 WrapStyle: 0
 
 [V4+ Styles]
@@ -3703,8 +3703,8 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
           const wordEnd = sub.end
           const ws = formatAssTime(wordStart)
           const we = formatAssTime(wordEnd)
-          const xPos = 540 - ((words.length - 1) * 35) + (wi * 70)
-          ass += `Dialogue: 0,${ws},${we},Pop,,0,0,0,,{\\an5\\pos(${xPos},960)\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${word}\n`
+          const xPos = 960 - ((words.length - 1) * 35) + (wi * 70)
+          ass += `Dialogue: 0,${ws},${we},Pop,,0,0,0,,{\\an5\\pos(${xPos},950)\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${word}\n`
         })
         break
       }
@@ -3742,8 +3742,8 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
           const wordEnd = sub.end
           const ws = formatAssTime(wordStart)
           const we = formatAssTime(wordEnd)
-          const xPos = 540 - ((words.length - 1) * 35) + (wi * 70)
-          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(${xPos},1200,${xPos},900,0,200)\\fad(0,150)}${word}\n`
+          const xPos = 960 - ((words.length - 1) * 35) + (wi * 70)
+          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(${xPos},1150,${xPos},950,0,200)\\fad(0,150)}${word}\n`
         })
         break
       }
@@ -3753,8 +3753,8 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
           const wordEnd = sub.end
           const ws = formatAssTime(wordStart)
           const we = formatAssTime(wordEnd)
-          const finalX = 540 - ((words.length - 1) * 35) + (wi * 70)
-          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(1200,960,${finalX},960,0,250)\\fad(0,150)}${word}\n`
+          const finalX = 960 - ((words.length - 1) * 35) + (wi * 70)
+          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(2000,950,${finalX},950,0,250)\\fad(0,150)}${word}\n`
         })
         break
       }
@@ -3785,20 +3785,34 @@ async function generateAnimatedSubtitles(
 
   const assContent = buildAnimatedASS(subtitles, style, cuts)
   const assPath = path.join(outputDir, `animated_subs_${timestamp}.ass`)
-  fs.writeFileSync(assPath, assContent, 'utf-8')
+  fs.writeFileSync(assPath, '\ufeff' + assContent, 'utf-8')
   filesToCleanup.push(assPath)
 
+  const escapedAss = assPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+
+  // Try subtitles filter first (needs libass)
   try {
-    const escapedAss = assPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
     execSync(
       `"${ffmpegPath}" -i "${inputFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputFile}" -y`,
-      { timeout: 180000, stdio: ['pipe', 'pipe', 'pipe'] }
+      { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }
     )
-    console.log(`[PROCESS] Animated subtitles applied (${style})`)
+    console.log(`[PROCESS] Animated subtitles applied via subtitles filter (${style})`)
     return outputFile
   } catch (e: any) {
-    console.warn('[PROCESS] ASS animated failed, trying drawtext fallback:', e.message?.slice(0, 100))
-    return generateDrawtextAnimated(inputFile, subtitles, cuts, style, outputDir, ffmpegPath, timestamp, filesToCleanup)
+    console.warn('[PROCESS] ASS subtitles filter failed:', e.stderr?.toString().substring(0, 300))
+    // Try ass filter as alternative
+    try {
+      execSync(
+        `"${ffmpegPath}" -i "${inputFile}" -vf "ass='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputFile}" -y`,
+        { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }
+      )
+      console.log(`[PROCESS] Animated subtitles applied via ass filter (${style})`)
+      return outputFile
+    } catch (e2: any) {
+      console.warn('[PROCESS] ASS ass filter also failed:', e2.stderr?.toString().substring(0, 300))
+      console.warn('[PROCESS] Falling back to drawtext...')
+      return generateDrawtextAnimated(inputFile, subtitles, cuts, style, outputDir, ffmpegPath, timestamp, filesToCleanup)
+    }
   }
 }
 
@@ -3856,14 +3870,14 @@ async function generateDrawtextAnimated(
 
       if (isHighlighted) {
         filters.push(
-          `drawtext=textfile='${escapedTmp}':fontsize=50:fontcolor=white:x=${x}:y=${y}:enable='between(t\\,${wordStart}\\,${wordEnd})*not(between(t\\,${wordStart}\\,${highlightEnd}))'`
+          `drawtext=textfile='${escapedTmp}':fontsize=50:fontcolor=white:x=${x}:y=${y}:enable='between(t,${wordStart},${wordEnd})*not(between(t,${wordStart},${highlightEnd}))'`
         )
         filters.push(
-          `drawtext=textfile='${escapedTmp}':fontsize=55:fontcolor=yellow:borderw=3:bordercolor=black:x=${x}:y=${y}:enable='between(t\\,${wordStart}\\,${highlightEnd})'`
+          `drawtext=textfile='${escapedTmp}':fontsize=55:fontcolor=yellow:borderw=3:bordercolor=black:x=${x}:y=${y}:enable='between(t,${wordStart},${highlightEnd})'`
         )
       } else {
         filters.push(
-          `drawtext=textfile='${escapedTmp}':fontsize=50:fontcolor=white:borderw=2:bordercolor=black:x=${x}:y=${y}:enable='between(t\\,${wordStart}\\,${wordEnd})'`
+          `drawtext=textfile='${escapedTmp}':fontsize=50:fontcolor=white:borderw=2:bordercolor=black:x=${x}:y=${y}:enable='between(t,${wordStart},${wordEnd})'`
         )
       }
     })
@@ -3882,12 +3896,12 @@ async function generateDrawtextAnimated(
 
     try {
       execSync(
-        `"${ffmpegPath}" -i "${current}" -vf "${batch.join(',')}" -c:a copy "${batchOutput}" -y`,
-        { timeout: 180000, stdio: ['pipe', 'pipe', 'pipe'] }
+        `"${ffmpegPath}" -i "${current}" -vf "${batch.join(',')}" -c:v libx264 -preset fast -crf 23 -c:a copy "${batchOutput}" -y`,
+        { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }
       )
       current = batchOutput
     } catch (e: any) {
-      console.warn(`[PROCESS] Drawtext batch ${i} failed, skipping remaining:`, e.message?.slice(0, 80))
+      console.warn(`[PROCESS] Drawtext batch ${i} failed:`, e.stderr?.toString().substring(0, 400))
       break
     }
   }
@@ -4189,6 +4203,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
           if (pw > 0 && ph > 0) { vidW = pw; vidH = ph }
         } catch { /* use defaults */ }
 
+        // Ensure even dimensions
+        vidW = vidW % 2 === 0 ? vidW : vidW - 1
+        vidH = vidH % 2 === 0 ? vidH : vidH - 1
+
         // Remap camera angles to be relative to the cut video
         const cutDurations = cuts.map((c: any) => c.keep_end - c.keep_start)
         const totalCutDuration = cutDurations.reduce((s: number, d: number) => s + d, 0)
@@ -4197,27 +4215,85 @@ app.post('/api/auto-editor/process', async (req, res) => {
         const scaledAngles = cameraAngles.map((ca: any) => {
           const relStart = Math.max(0, Math.min(ca.start, totalCutDuration))
           const relEnd = Math.max(relStart, Math.min(ca.end, totalCutDuration))
-          return { start: relStart, end: relEnd, camera: ca.camera || 'wide' }
+          return { start: relStart, end: relEnd, camera: ca.camera || 'wide', duration: Math.max(relEnd - relStart, 0.1) }
         }).filter((ca: any) => ca.end > ca.start)
 
         const nonWideAngles = scaledAngles.filter((ca: any) => ca.camera !== 'wide')
         if (nonWideAngles.length > 0) {
-          const camFilter = buildMultiCamFilter(scaledAngles, vidW, vidH)
-          if (camFilter) {
-            execSync(
-              `"${ffmpegPath}" -i "${currentFile}" -vf "${camFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${camFile}" -y`,
-              { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
-            )
-            currentFile = camFile
-            console.log('[PROCESS] Step 2 done: Multi-cam applied')
+          // Segment-based approach: process each angle as a separate segment, then concat
+          const mcSegments: string[] = []
+          console.log(`[MULTI-CAM] Input: ${vidW}x${vidH}, ${scaledAngles.length} angles (${nonWideAngles.length} non-wide)`)
+
+          for (let i = 0; i < scaledAngles.length; i++) {
+            const angle = scaledAngles[i]
+            const segFile = path.join(uploadsDir, `mc_${timestamp}_${i}.mp4`)
+            filesToCleanup.push(segFile)
+
+            let vf = `scale=${vidW}:${vidH}`
+            switch (angle.camera) {
+              case 'closeup': case 'close':
+                vf = `crop=iw*0.6:ih*0.6:iw*0.2:ih*0.2,scale=${vidW}:${vidH}`
+                break
+              case 'medium':
+                vf = `crop=iw*0.8:ih*0.8:iw*0.1:ih*0.1,scale=${vidW}:${vidH}`
+                break
+              case 'left':
+                vf = `crop=iw*0.75:ih*0.85:0:ih*0.075,scale=${vidW}:${vidH}`
+                break
+              case 'right':
+                vf = `crop=iw*0.75:ih*0.85:iw*0.25:ih*0.075,scale=${vidW}:${vidH}`
+                break
+              default:
+                vf = `scale=${vidW}:${vidH}`
+            }
+
+            try {
+              execSync(
+                `"${ffmpegPath}" -i "${currentFile}" -ss ${angle.start} -t ${angle.duration} -vf "${vf}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${segFile}" -y`,
+                { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+              )
+              mcSegments.push(segFile)
+            } catch (segErr: any) {
+              console.warn(`[MULTI-CAM] Segment ${i} (${angle.camera}) failed:`, segErr.stderr?.toString().substring(0, 300))
+              // Fallback: copy without crop
+              try {
+                execSync(
+                  `"${ffmpegPath}" -i "${currentFile}" -ss ${angle.start} -t ${angle.duration} -c:v copy -c:a copy "${segFile}" -y`,
+                  { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
+                )
+                mcSegments.push(segFile)
+              } catch {}
+            }
+          }
+
+          if (mcSegments.length > 0) {
+            const listFile = path.join(uploadsDir, `mc_list_${timestamp}.txt`)
+            filesToCleanup.push(listFile)
+            fs.writeFileSync(listFile, mcSegments.map(f => `file '${f}'`).join('\n'))
+
+            try {
+              execSync(
+                `"${ffmpegPath}" -f concat -safe 0 -i "${listFile}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${camFile}" -y`,
+                { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+              )
+              currentFile = camFile
+              console.log('[PROCESS] Step 2 done: Multi-cam applied (' + mcSegments.length + ' segments)')
+            } catch (concatErr: any) {
+              console.warn('[MULTI-CAM] Concat failed:', concatErr.stderr?.toString().substring(0, 300))
+            }
           } else {
-            console.log('[PROCESS] Step 2 skipped: All angles are wide')
+            console.log('[PROCESS] Step 2 skipped: No segments produced')
           }
         } else {
           console.log('[PROCESS] Step 2 skipped: All angles are wide')
         }
       } catch (e: any) {
-        console.log('[PROCESS] Multi-cam failed, continuing without:', e.message?.slice(0, 100))
+        const stderr = e.stderr?.toString() || ''
+        const stdout = e.stdout?.toString() || ''
+        console.error(`[PROCESS] Step 2 MULTI-CAM FAILED:`)
+        console.error(`  Command: ${e.cmd?.substring(0, 200)}`)
+        console.error(`  stderr: ${stderr.substring(0, 500)}`)
+        console.error(`  stdout: ${stdout.substring(0, 200)}`)
       }
     } else {
       console.log('[PROCESS] Step 2 skipped: No camera angles in plan')
@@ -4235,7 +4311,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     console.log(`[PROCESS] Step 3: Color grading (${colorGradeName})...`)
     execSync(
       `"${ffmpegPath}" -i "${currentFile}" -vf "${gradeFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
-      { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+      { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
     )
     currentFile = gradedFile
     console.log('[PROCESS] Step 3 done')
@@ -4263,6 +4339,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
           if (pw > 0 && ph > 0) { zoomW = pw; zoomH = ph }
         } catch { /* use defaults */ }
 
+        // Ensure even dimensions
+        zoomW = zoomW % 2 === 0 ? zoomW : zoomW - 1
+        zoomH = zoomH % 2 === 0 ? zoomH : zoomH - 1
+
         // Remap zoom timestamps to cut video time
         const remappedZooms = zooms.map((z: any) => {
           const atTime = z.at_time ?? z.atTime ?? 0
@@ -4284,60 +4364,51 @@ app.post('/api/auto-editor/process', async (req, res) => {
           }
         })
 
-        // Build a single scale expression that smoothly zooms at specified time ranges
-        // Outside zoom ranges, scale factor = 1.0 (no change)
-        // During zoom ranges, scale factor smoothly interpolates to target
-        // Then crop center back to original dimensions
+        // Apply zooms one at a time for reliability
+        let zoomCurrent = currentFile
+        const limitedZooms = remappedZooms.slice(0, 5)
 
-        // Limit to 8 zooms to keep filter expression manageable
-        const limitedZooms = remappedZooms.slice(0, 8)
+        for (let zi = 0; zi < limitedZooms.length; zi++) {
+          const z = limitedZooms[zi]
+          const start = z.start
+          const dur = z.duration
+          const intensity = Math.min(z.scale || 1.05, 1.5)
+          const zoomOut = path.join(uploadsDir, `zoom_${timestamp}_${zi}.mp4`)
+          filesToCleanup.push(zoomOut)
 
-        // Build scale factor expression: starts at 1.0, adds zoom contributions
-        // Each zoom adds: if(between(t,start,end), delta*progress, 0)
-        const zoomExprs = limitedZooms.map((z: any) => {
-          const end = z.start + z.duration
-          const delta = Math.min(z.scale, 1.15) - 1.0 // Cap at 1.15
-          const isZoomIn = z.direction !== 'out'
-          const progress = `((t-${z.start})/${z.duration})`
-          const interpDelta = isZoomIn
-            ? `${delta.toFixed(4)}*${progress}`
-            : `${delta.toFixed(4)}*(1-${progress})`
-          return `if(between(t,${z.start},${end}),${interpDelta},0)`
-        })
+          // Use crop with enable expression: crop center during zoom, full frame otherwise
+          // Inside single quotes, commas are literal - no escaping needed
+          const cropRatio = (1 / intensity).toFixed(4)
+          const vf = `crop='if(between(t,${start},${start + dur}),iw*${cropRatio},iw)':'if(between(t,${start},${start + dur}),ih*${cropRatio},ih)':'if(between(t,${start},${start + dur}),(iw-iw*${cropRatio})/2,0)':'if(between(t,${start},${start + dur}),(ih-ih*${cropRatio})/2,0)',scale=${zoomW}:${zoomH}`
 
-        // Total scale = 1 + sum of all zoom contributions
-        const scaleExpr = `(1+${zoomExprs.join('+')})`
-
-        // Use filter_complex: scale up then crop center
-        const zoomFilter = `[0:v]scale=trunc(iw*${scaleExpr}/2)*2:trunc(ih*${scaleExpr}/2)*2,crop=${zoomW}:${zoomH}:(iw-${zoomW})/2:(ih-${zoomH})/2[outv]`
-
-        execSync(
-          `"${ffmpegPath}" -i "${currentFile}" -filter_complex "${zoomFilter}" -map "[outv]" -map 0:a -c:v libx264 -preset fast -crf 23 -c:a copy "${zoomFile}" -y`,
-          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
-        )
-        currentFile = zoomFile
-        console.log('[PROCESS] Step 3.5 done: Zoom effects applied')
-      } catch (e: any) {
-        console.log('[PROCESS] Zoom filter_complex failed, trying simple crop fallback:', e.message?.slice(0, 100))
-        // Simpler fallback: apply just the first zoom as a static crop+scale
-        try {
-          const firstZoom = remappedZooms[0]
-          if (firstZoom) {
-            const intensity = Math.min(firstZoom.scale || 1.15, 1.3)
-            const cropW = Math.round(zoomW / intensity)
-            const cropH = Math.round(zoomH / intensity)
-            const cropX = Math.round((zoomW - cropW) / 2)
-            const cropY = Math.round((zoomH - cropH) / 2)
+          try {
             execSync(
-              `"${ffmpegPath}" -i "${currentFile}" -vf "crop=${cropW}:${cropH}:${cropX}:${cropY}:enable='between(t,${firstZoom.start},${firstZoom.start + firstZoom.duration})',scale=${zoomW}:${zoomH}" -c:a copy "${zoomFile}" -y`,
-              { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+              `"${ffmpegPath}" -i "${zoomCurrent}" -vf "${vf}" -c:v libx264 -preset fast -crf 23 -c:a copy "${zoomOut}" -y`,
+              { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
             )
-            currentFile = zoomFile
-            console.log('[PROCESS] Step 3.5 done: Simple zoom fallback applied')
+            zoomCurrent = zoomOut
+          } catch (ze: any) {
+            console.warn(`[ZOOM] Effect ${zi} failed:`, ze.stderr?.toString().substring(0, 300))
           }
-        } catch {
-          console.log('[PROCESS] Zoom effects failed completely, continuing without')
         }
+
+        if (zoomCurrent !== currentFile) {
+          // Rename last successful zoom to the expected output file
+          if (zoomCurrent !== zoomFile) {
+            fs.copyFileSync(zoomCurrent, zoomFile)
+          }
+          currentFile = zoomFile
+          console.log('[PROCESS] Step 3.5 done: Zoom effects applied')
+        } else {
+          console.log('[PROCESS] Step 3.5: All zoom effects failed, continuing without')
+        }
+      } catch (e: any) {
+        const stderr = e.stderr?.toString() || ''
+        const stdout = e.stdout?.toString() || ''
+        console.error(`[PROCESS] Step 3.5 ZOOM FAILED:`)
+        console.error(`  Command: ${e.cmd?.substring(0, 200)}`)
+        console.error(`  stderr: ${stderr.substring(0, 500)}`)
+        console.error(`  stdout: ${stdout.substring(0, 200)}`)
       }
     } else {
       console.log('[PROCESS] Step 3.5 skipped: No zooms in plan')
@@ -4429,7 +4500,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
         )
         console.log('[PROCESS] Step 5 done: Animated subtitles added')
       } catch (e: any) {
-        console.log('[PROCESS] Animated subtitles failed, falling back to standard:', e.message?.slice(0, 100))
+        console.warn('[PROCESS] Animated subtitles failed, falling back to standard:', e.stderr?.toString().substring(0, 300) || e.message?.slice(0, 200))
         // Fall back to standard subtitles
         try {
           const subStyle = captionStyle || 'modern'
@@ -4442,11 +4513,13 @@ app.post('/api/auto-editor/process', async (req, res) => {
           const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
           execSync(
             `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
-            { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+            { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
           )
           currentFile = subFile
           console.log('[PROCESS] Step 5 done: Standard subtitles fallback')
-        } catch { /* continue without subs */ }
+        } catch (e2: any) {
+          console.warn('[PROCESS] Standard ASS fallback also failed:', e2.stderr?.toString().substring(0, 300))
+        }
       }
     } else if (segments.length > 0) {
       console.log('[PROCESS] Step 5: Generating styled subtitles (ASS)...')
@@ -4463,43 +4536,114 @@ app.post('/api/auto-editor/process', async (req, res) => {
         const escapedAss = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
         execSync(
           `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedAss}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
-          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+          { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
         )
         currentFile = subFile
         console.log('[PROCESS] Step 5 done: Styled subtitles added')
       } catch (e: any) {
-        console.log('[PROCESS] ASS subtitles failed, trying SRT fallback:', e.message?.slice(0, 100))
+        console.warn('[PROCESS] ASS subtitles filter failed:', e.stderr?.toString().substring(0, 300))
+        // Try ass filter
+        let assWorked = false
         try {
-          const srtFile = path.join(uploadsDir, `subs_${timestamp}.srt`)
-          filesToCleanup.push(srtFile)
-          let srtContent = ''
-          let index = 1
-          let currentOffset = 0
-          for (const cut of cuts) {
-            const cutDuration = cut.keep_end - cut.keep_start
-            for (const seg of segments) {
-              const segStart = seg.start ?? seg.keepStart
-              const segEnd = seg.end ?? seg.keepEnd
-              if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
-                const relStart = currentOffset + (segStart - cut.keep_start)
-                const relEnd = currentOffset + (segEnd - cut.keep_start)
-                srtContent += `${index}\n${formatSrtTime(relStart)} --> ${formatSrtTime(relEnd)}\n${seg.text}\n\n`
-                index++
+          const escapedAss2 = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -vf "ass='${escapedAss2}'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+            { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+          )
+          currentFile = subFile
+          assWorked = true
+          console.log('[PROCESS] Step 5 done: ASS filter subtitles added')
+        } catch (e1: any) {
+          console.warn('[PROCESS] ASS filter also failed:', e1.stderr?.toString().substring(0, 200))
+        }
+
+        if (!assWorked) {
+          console.log('[PROCESS] Trying SRT fallback...')
+          try {
+            const srtFile = path.join(uploadsDir, `subs_${timestamp}.srt`)
+            filesToCleanup.push(srtFile)
+            let srtContent = ''
+            let index = 1
+            let currentOffset = 0
+            for (const cut of cuts) {
+              const cutDuration = cut.keep_end - cut.keep_start
+              for (const seg of segments) {
+                const segStart = seg.start ?? seg.keepStart
+                const segEnd = seg.end ?? seg.keepEnd
+                if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
+                  const relStart = currentOffset + (segStart - cut.keep_start)
+                  const relEnd = currentOffset + (segEnd - cut.keep_start)
+                  srtContent += `${index}\n${formatSrtTime(relStart)} --> ${formatSrtTime(relEnd)}\n${seg.text}\n\n`
+                  index++
+                }
               }
+              currentOffset += cutDuration
             }
-            currentOffset += cutDuration
+            if (srtContent.trim()) {
+              fs.writeFileSync(srtFile, '\ufeff' + srtContent, 'utf-8')
+              const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+              execSync(
+                `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontName=Arial,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+                { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+              )
+              currentFile = subFile
+              console.log('[PROCESS] Step 5 done: SRT fallback subtitles added')
+            }
+          } catch (srtErr: any) {
+            console.warn('[PROCESS] SRT subtitles also failed:', srtErr.stderr?.toString().substring(0, 300))
+            // Last resort: drawtext fallback for Hebrew
+            console.log('[PROCESS] Trying drawtext fallback for subtitles...')
+            try {
+              const dtFilters: string[] = []
+              let dtOffset = 0
+              for (const cut of cuts) {
+                const cutDuration = cut.keep_end - cut.keep_start
+                for (const seg of segments) {
+                  const segStart = seg.start ?? seg.keepStart ?? 0
+                  const segEnd = seg.end ?? seg.keepEnd ?? 0
+                  if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
+                    const relStart = dtOffset + (segStart - cut.keep_start)
+                    const relEnd = dtOffset + (segEnd - cut.keep_start)
+                    const textFile = path.join(uploadsDir, `sub_dt_${timestamp}_${dtFilters.length}.txt`)
+                    fs.writeFileSync(textFile, seg.text || '', 'utf-8')
+                    filesToCleanup.push(textFile)
+                    const escapedTF = textFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+                    dtFilters.push(
+                      `drawtext=textfile='${escapedTF}':fontsize=24:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-80:enable='between(t,${relStart},${relEnd})'`
+                    )
+                  }
+                }
+                dtOffset += cutDuration
+              }
+
+              if (dtFilters.length > 0) {
+                let dtCurrent = currentFile
+                for (let dti = 0; dti < dtFilters.length; dti += 20) {
+                  const batch = dtFilters.slice(dti, dti + 20)
+                  const batchOut = path.join(uploadsDir, `sub_dt_batch_${timestamp}_${dti}.mp4`)
+                  filesToCleanup.push(batchOut)
+                  try {
+                    execSync(
+                      `"${ffmpegPath}" -i "${dtCurrent}" -vf "${batch.join(',')}" -c:v libx264 -preset fast -crf 23 -c:a copy "${batchOut}" -y`,
+                      { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+                    )
+                    dtCurrent = batchOut
+                  } catch (dtErr: any) {
+                    console.warn(`[PROCESS] Drawtext subtitle batch ${dti} failed:`, dtErr.stderr?.toString().substring(0, 300))
+                    break
+                  }
+                }
+                if (dtCurrent !== currentFile) {
+                  fs.copyFileSync(dtCurrent, subFile)
+                  currentFile = subFile
+                  console.log('[PROCESS] Step 5 done: Drawtext fallback subtitles added')
+                }
+              }
+            } catch (dtFinalErr: any) {
+              console.warn('[PROCESS] All subtitle methods failed:', dtFinalErr.message?.substring(0, 200))
+            }
           }
-          if (srtContent.trim()) {
-            fs.writeFileSync(srtFile, '\ufeff' + srtContent, 'utf-8')
-            const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
-            execSync(
-              `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontName=Arial,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
-              { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
-            )
-            currentFile = subFile
-            console.log('[PROCESS] Step 5 done: SRT fallback subtitles added')
-          }
-        } catch { /* continue without subs */ }
+        }
       }
     } else {
       console.log('[PROCESS] Step 5 skipped: No subtitles in plan')
@@ -4544,14 +4688,20 @@ app.post('/api/auto-editor/process', async (req, res) => {
         })
 
         const lowerThirdFilter = lowerThirdParts.join(',')
+        console.log(`[LOWER THIRDS] Filter count: ${lowerThirdParts.length}, filter length: ${lowerThirdFilter.length}`)
         execSync(
           `"${ffmpegPath}" -i "${currentFile}" -vf "${lowerThirdFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${lowerFile}" -y`,
-          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
+          { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
         )
         currentFile = lowerFile
         console.log('[PROCESS] Step 6 done: Speaker names added')
       } catch (e: any) {
-        console.log('[PROCESS] Lower thirds failed, continuing without:', e.message?.slice(0, 100))
+        const stderr = e.stderr?.toString() || ''
+        const stdout = e.stdout?.toString() || ''
+        console.error(`[PROCESS] Step 6 LOWER THIRDS FAILED:`)
+        console.error(`  Command: ${e.cmd?.substring(0, 200)}`)
+        console.error(`  stderr: ${stderr.substring(0, 500)}`)
+        console.error(`  stdout: ${stdout.substring(0, 200)}`)
       }
     } else {
       console.log('[PROCESS] Step 6 skipped: No speakers in plan')
@@ -4598,15 +4748,42 @@ app.post('/api/auto-editor/process', async (req, res) => {
           return `drawtext=textfile='${escapedTextFile}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
         })
 
-        const gfxFilter = gfxParts.join(',')
-        execSync(
-          `"${ffmpegPath}" -i "${currentFile}" -vf "${gfxFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gfxFile}" -y`,
-          { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
-        )
-        currentFile = gfxFile
-        console.log('[PROCESS] Step 7 done: Graphics overlays added')
+        // Apply graphics in batches to avoid FFmpeg filter limit
+        let gfxCurrent = currentFile
+        for (let gi = 0; gi < gfxParts.length; gi += 15) {
+          const batch = gfxParts.slice(gi, gi + 15)
+          const batchFile = gi === 0 && gfxParts.length <= 15 ? gfxFile : path.join(uploadsDir, `gfx_batch_${timestamp}_${gi}.mp4`)
+          if (batchFile !== gfxFile) filesToCleanup.push(batchFile)
+
+          console.log(`[GRAPHICS] Applying batch ${gi} (${batch.length} filters)`)
+          try {
+            execSync(
+              `"${ffmpegPath}" -i "${gfxCurrent}" -vf "${batch.join(',')}" -c:v libx264 -preset fast -crf 23 -c:a copy "${batchFile}" -y`,
+              { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+            )
+            gfxCurrent = batchFile
+          } catch (batchErr: any) {
+            console.warn(`[GRAPHICS] Batch ${gi} failed:`, batchErr.stderr?.toString().substring(0, 400))
+            break
+          }
+        }
+
+        if (gfxCurrent !== currentFile) {
+          if (gfxCurrent !== gfxFile) {
+            fs.copyFileSync(gfxCurrent, gfxFile)
+          }
+          currentFile = gfxFile
+          console.log('[PROCESS] Step 7 done: Graphics overlays added')
+        } else {
+          console.log('[PROCESS] Step 7: All graphics batches failed')
+        }
       } catch (e: any) {
-        console.log('[PROCESS] Graphics failed, continuing without:', e.message?.slice(0, 100))
+        const stderr = e.stderr?.toString() || ''
+        const stdout = e.stdout?.toString() || ''
+        console.error(`[PROCESS] Step 7 GRAPHICS FAILED:`)
+        console.error(`  Command: ${e.cmd?.substring(0, 200)}`)
+        console.error(`  stderr: ${stderr.substring(0, 500)}`)
+        console.error(`  stdout: ${stdout.substring(0, 200)}`)
       }
     } else {
       console.log('[PROCESS] Step 7 skipped: No graphics in plan')
