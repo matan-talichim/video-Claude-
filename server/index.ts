@@ -2326,21 +2326,25 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
         messages: [
           {
             role: 'system',
-            content: `אתה מומחה לשיפור פרומפטים. קיבלת את הפרומפט שבו השתמשת לניתוח ויזואלי של סרטון, ואת התוצאה שיצרת.
+            content: `Based on the visual analysis you just did for THIS SPECIFIC VIDEO, suggest 3 improvements to your analysis prompt.
 
-תפקידך: לזהות מה אפשר לשפר בפרומפט כדי שבפעם הבאה הניתוח יהיה מדויק יותר ושימושי יותר לעריכת וידאו.
+Focus ONLY on things you MISSED in THIS video:
+- Did you miss a scene change at a specific frame?
+- Did you fail to notice lighting issues at a specific timestamp?
+- Did you miss someone entering/leaving frame?
+- Could you better identify the presenter vs crew at specific moments?
 
-חשוב על:
-- שאלות שלא שאלת אבל היו נותנות מידע חשוב
-- פרטים ויזואליים שפספסת
-- מידע שהיה עוזר לעורך וידאו לקבל החלטות
-- דברים ספציפיים לסוג התוכן הזה שכדאי לבדוק בפעם הבאה
+Do NOT give generic advice. Reference specific frames and timestamps from THIS video.
+BAD example: "בקש לזהות הבעות רגש" (too generic)
+GOOD example: "בפריים 5 (25 שניות) לא זיהיתי שהדובר החליף מבט מהמצלמה ללפטופ - זה רגע טוב לB-Roll"
+
+Return exactly 3 suggestions. Each suggestion must be:
+- ONE sentence only
+- Reference a specific timestamp or frame number from THIS video
+- About VIDEO EDITING, not marketing strategy
+- Actionable for the next edit of a similar video
 
 חוקים:
-- מקסימום 3 שיפורים חדשים
-- כל שיפור = משפט אחד קצר וברור
-- רק דברים שבאמת יעזרו לעריכה
-- אל תחזור על דברים שכבר קיימים בפרומפט
 - אם הפרומפט כבר מושלם, החזר רשימה ריקה
 
 החזר JSON:
@@ -2749,18 +2753,22 @@ ${(transcript.segments || []).map((s: any) => `[${(s.start || 0).toFixed(1)}s] $
         messages: [
           {
             role: 'system',
-            content: `אתה מומחה לשיפור פרומפטים לניתוח תוכן וידאו.
+            content: `Based on the enrichment you just did for THIS SPECIFIC VIDEO, suggest 3 improvements.
 
-קיבלת את הפרומפט שבו השתמשת לניתוח תוכן ואת התוצאה.
+Focus on what you could do BETTER for editing THIS video:
+- Which B-Roll suggestion is weak and why?
+- Where in the video is a strong moment you didn't highlight?
+- What editing technique would work for a specific timestamp?
 
-מה אפשר לשפר? חשוב על:
-- שאלות על הקהל שלא שאלת
-- ניתוח רגשי שחסר
-- B-Roll ספציפי יותר
-- הבנה טובה יותר של מטרת הסרטון
-- דברים שעורך וידאו מקצועי היה שואל
+Do NOT give generic marketing advice. Reference specific content from the transcript.
+BAD example: "להוסיף שאלות סגמנטציה" (marketing advice, not editing)
+GOOD example: "בשנייה 15-18 הדובר אומר 'אנחנו חוסכים 40 שעות בחודש' - זה הרגע הכי חזק, צריך zoom in + טקסט על המסך"
 
-מקסימום 3 שיפורים. כל אחד = משפט אחד.
+Return exactly 3 suggestions. Each suggestion must be:
+- ONE sentence only
+- Reference a specific timestamp or frame number from THIS video
+- About VIDEO EDITING, not marketing strategy
+- Actionable for the next edit of a similar video
 
 החזר JSON:
 {
@@ -2954,10 +2962,11 @@ ${aiChoosesDuration ? '- optimal_duration: חובה! קבע אורך אופטי�
 דוברים אחרים (עוזרי הפקה/רקע): ${Object.keys(speakerTimesData).filter((s: string) => s !== mainSpeakerName).join(', ')}
 
 חוקים קריטיים:
-- השתמש רק בקטעים של הפרזנטור (isPresenter=true)
-- התעלם לחלוטין מדיבורים של עוזרי הפקה
-- אם עוזר הפקה מדבר - חתוך את הקטע הזה
-- ה-hook חייב להיות מהפרזנטור, לא מאף אחד אחר
+- העדף קטעים של הפרזנטור (isPresenter=true) אם קיים שדה כזה
+- אם אין קטעים עם isPresenter=true, השתמש בכל הקטעים
+- התעלם מדיבורים של עוזרי הפקה רק אם זוהו בפירוש
+- ה-hook צריך להיות מהפרזנטור אם אפשר
+- חובה להחזיר לפחות סרטון אחד! אסור להחזיר 0 סרטונים
 
 קטעים להתעלם מהם (לא הפרזנטור):
 ${nonPresenterSegments.map((s: any) => `[${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s] ${s.speaker}: ${s.text}`).join('\n')}
@@ -2997,18 +3006,21 @@ ${aiChoosesDuration ? 'אורך יעד: AI בוחר - קבע אורך אופטי
         messages: [
           {
             role: 'system',
-            content: `אתה מומחה לשיפור פרומפטים לתכנון קריאטיבי של סרטונים.
+            content: `Based on the creative brief you just wrote for THIS SPECIFIC VIDEO, suggest 3 improvements.
 
-קיבלת את התוצאה של brief יצירתי. מה אפשר לשפר בפרומפט כדי שבפעם הבאה ה-brief יהיה טוב יותר?
+Focus on THIS video's content:
+- Is the hook based on the strongest moment in the transcript?
+- Does the brief use the actual words/claims from the video?
+- Are the B-Roll suggestions matching specific moments?
 
-חשוב על:
-- שאלות על קהל היעד שלא נשאלו
-- ניתוח רגשי עמוק יותר
-- hook טוב יותר
-- story arc מורכב יותר
-- התאמה טובה יותר לפלטפורמה
+BAD example: "להוסיף שאלות סגמנטציה מדויקות" (generic)
+GOOD example: "ההוק שבחרתי ('אם הצמיחה שלך...') פחות חזק מהמשפט בשנייה 8: 'כל לקוח חדש עולה לי עובד' - תשתמש בזה כהוק"
 
-מקסימום 3 שיפורים. כל אחד = משפט אחד.
+Return exactly 3 suggestions. Each suggestion must be:
+- ONE sentence only
+- Reference a specific timestamp or frame number from THIS video
+- About VIDEO EDITING, not marketing strategy
+- Actionable for the next edit of a similar video
 
 החזר JSON:
 {
@@ -3047,6 +3059,36 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
 
     const { creativeBrief, transcript, targetDuration, platforms, promptEvolution, socialLearningRules } = req.body
     if (!creativeBrief || !transcript) return res.status(400).json({ message: 'חסר creativeBrief או transcript' })
+
+    // Ensure presenter segments are marked - if no isPresenter field exists, mark all as presenter
+    const mainPresenter = transcript.mainSpeaker
+    if (transcript.segments && transcript.segments.length > 0) {
+      const hasPresenterField = transcript.segments.some((s: any) => s.isPresenter === true)
+      if (!hasPresenterField) {
+        if (mainPresenter) {
+          transcript.segments = transcript.segments.map((seg: any) => ({
+            ...seg,
+            isPresenter: seg.speaker === mainPresenter,
+          }))
+          const presenterCount = transcript.segments.filter((s: any) => s.isPresenter).length
+          console.log(`[TECH PLAN] Marked ${presenterCount}/${transcript.segments.length} segments as presenter (${mainPresenter})`)
+          // If still no presenter segments (speaker name mismatch), mark ALL as presenter
+          if (presenterCount === 0) {
+            console.log('[TECH PLAN] No segments matched presenter name, marking ALL segments as presenter')
+            transcript.segments = transcript.segments.map((seg: any) => ({
+              ...seg,
+              isPresenter: true,
+            }))
+          }
+        } else {
+          console.log('[TECH PLAN] No presenter identified, marking ALL segments as presenter')
+          transcript.segments = transcript.segments.map((seg: any) => ({
+            ...seg,
+            isPresenter: true,
+          }))
+        }
+      }
+    }
 
     const aiChoosesDuration = targetDuration === -1
 
@@ -3210,6 +3252,13 @@ Color grade:
   }
 }
 
+CRITICAL RULES:
+1. You MUST return at least 1 video. NEVER return 0 videos.
+2. If no segments have isPresenter=true, treat ALL segments as presenter segments.
+3. Use the actual transcript timestamps to plan cuts - do NOT invent timestamps.
+4. Every cut must reference real start/end times from the provided segments.
+5. If the transcript has multiple speakers, prefer the speaker identified as main presenter: ${transcript.mainSpeaker || 'not specified - use speaker with most on-camera time'}.
+
 VALIDATION before returning:
 1. Sum all (keep_end - keep_start) for cuts = must match the target duration for each video ± 3
 2. All relative timestamps must be within 0 to total_duration
@@ -3241,6 +3290,29 @@ Create precise technical edit plan.`
     if (!content) return res.status(500).json({ message: 'ChatGPT לא החזיר technical plan' })
 
     const plan = JSON.parse(content)
+
+    // Ensure at least 1 video exists - fallback if GPT returned 0
+    if (!plan.videos || plan.videos.length === 0) {
+      console.warn('[TECH PLAN] GPT returned 0 videos! Creating fallback video from transcript segments.')
+      const totalDur = transcript.total_duration || transcript.totalDuration || 60
+      const vidTargetDur = aiChoosesDuration ? Math.min(totalDur * 0.7, 60) : targetDuration
+      plan.videos = [{
+        video_index: 1,
+        title: 'סרטון ראשי',
+        total_duration: vidTargetDur,
+        cuts: [{ keep_start: 0, keep_end: Math.min(vidTargetDur, totalDur), reason: 'fallback - full content' }],
+        transitions: [{ between: [0, 0], type: 'fadeblack', duration: 0.5 }],
+        camera_angles: [{ relative_start: 0, relative_end: vidTargetDur, camera: 'wide', reason: 'default' }],
+        zooms: [{ relative_time: 0, scale: 1.05, duration: 2, direction: 'in', reason: 'intro' }],
+        broll: [],
+        subtitles: [],
+        graphics: [],
+        speakers: [],
+        color_grade: 'cinematic',
+        framing: 'blur_background',
+        music_dynamics: [{ relative_time: 0, volume: 0.2, reason: 'background' }],
+      }]
+    }
 
     // VALIDATE and fix the plan
     for (const video of plan.videos || []) {
@@ -3305,18 +3377,21 @@ Create precise technical edit plan.`
         messages: [
           {
             role: 'system',
-            content: `אתה מומחה לשיפור פרומפטים לתכנון טכני של עריכת וידאו.
+            content: `Based on the technical plan you just created for THIS SPECIFIC VIDEO, suggest 3 improvements.
 
-קיבלת את התוצאה של תכנון טכני. מה אפשר לשפר בפרומפט כדי שבפעם הבאה התכנון יהיה מדויק יותר?
+Focus on the actual editing decisions:
+- Is there a better cut point at a specific timestamp?
+- Should a zoom happen at a different moment?
+- Is a B-Roll placement covering important content?
 
-חשוב על:
-- דיוק בזמנים של חיתוכים
-- מעברים טבעיים יותר
-- זומים שמתאימים לתוכן
-- B-Roll שמשתלב טוב יותר
-- כתוביות מדויקות יותר
+BAD example: "הוסף הנחיה שאם אין סגמנטים..." (meta/process advice)
+GOOD example: "הקאט בשנייה 22 חותך באמצע המילה 'אוטומציה' - תזיז ל-22.5 שזה סוף המשפט"
 
-מקסימום 3 שיפורים. כל אחד = משפט אחד.
+Return exactly 3 suggestions. Each suggestion must be:
+- ONE sentence only
+- Reference a specific timestamp or frame number from THIS video
+- About VIDEO EDITING, not marketing strategy
+- Actionable for the next edit of a similar video
 
 החזר JSON:
 {
