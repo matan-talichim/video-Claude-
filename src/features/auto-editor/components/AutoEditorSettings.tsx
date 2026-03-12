@@ -170,6 +170,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(
     new Set(['tiktok', 'reels', 'shorts'])
   )
+  const [includeSubtitles, setIncludeSubtitles] = useState(true)
+  const [includeBackground, setIncludeBackground] = useState(true)
 
   const closeHandler = onClose || onBack
 
@@ -204,6 +206,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       numberOfVideos,
       brollGenerator,
       platforms: Array.from(selectedPlatforms),
+      includeSubtitles,
+      includeBackground,
     })
   }
 
@@ -400,6 +404,37 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Additional options */}
+          <div className="space-y-3">
+            <h4 className="text-sm font-medium text-text-primary">אפשרויות נוספות:</h4>
+
+            <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition">
+              <div>
+                <span className="text-white text-sm">כתוביות</span>
+                <span className="text-gray-500 text-xs block">הוסף כתוביות אוטומטיות לסרטון</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={includeSubtitles}
+                onChange={e => setIncludeSubtitles(e.target.checked)}
+                className="accent-purple-500 w-5 h-5"
+              />
+            </label>
+
+            <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition">
+              <div>
+                <span className="text-white text-sm">תמונת רקע</span>
+                <span className="text-gray-500 text-xs block">צור תמונת רקע ב-AI לסרטון (ל-9:16 ו-1:1)</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={includeBackground}
+                onChange={e => setIncludeBackground(e.target.checked)}
+                className="accent-purple-500 w-5 h-5"
+              />
+            </label>
           </div>
 
           {/* Personalization indicator */}

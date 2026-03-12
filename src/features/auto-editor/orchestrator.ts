@@ -343,6 +343,8 @@ async function processVideosWithPlan(
         musicUrl: musicUrl || null,
         backgroundImage: backgroundImage || null,
         captionStyle: 'modern',
+        includeSubtitles: finalInput.includeSubtitles ?? true,
+        includeBackground: finalInput.includeBackground ?? true,
       }),
     })
 
@@ -659,8 +661,16 @@ export async function continueAfterEnrichment(
       musicUrl = cachedAssets.music
     } else {
       setStep('generating_assets')
+
+      const shouldGenerateBackground = finalInput.includeBackground !== false
+      if (!shouldGenerateBackground) {
+        addLog('מדלג על תמונת רקע (כובה בהגדרות)')
+      }
+
       const assetResults = await Promise.allSettled([
-        generateBackgroundSafe(editingPlanA.prompts.backgroundImage, apis.gemini),
+        shouldGenerateBackground
+          ? generateBackgroundSafe(editingPlanA.prompts.backgroundImage, apis.gemini)
+          : Promise.resolve(''),
         generateAllBroll(editingPlanA.prompts.broll, finalInput.brollGenerator, apis),
         findMusicSafe(
           enrichment?.style?.music_search || editingPlanA.prompts.musicSearch,

@@ -3710,6 +3710,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
       musicUrl,
       backgroundImage,
       captionStyle,
+      includeSubtitles = true,
+      includeBackground = true,
     } = req.body
 
     const ffmpegPath = getFFmpeg()
@@ -3738,6 +3740,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     }
 
     console.log('[PROCESS] Source file:', sourceFile)
+    console.log('[PROCESS] Options:', { includeSubtitles, includeBackground })
     console.log('[PROCESS] Plan features:', {
       transitions: videoPlan?.transitions?.length || 0,
       zooms: videoPlan?.zooms?.length || 0,
@@ -3930,7 +3933,9 @@ app.post('/api/auto-editor/process', async (req, res) => {
     const segments = videoPlan?.subtitles || videoPlan?.source_segments || videoPlan?.sourceSegments || []
     let assFilePath: string | null = null
 
-    if (segments.length > 0) {
+    if (!includeSubtitles) {
+      console.log('[PROCESS] Step 5: Skipping subtitles (disabled by user)')
+    } else if (segments.length > 0) {
       console.log('[PROCESS] Step 5: Generating styled subtitles (ASS)...')
       const subStyle = captionStyle || 'modern'
       const assContent = generateStyledSubtitles(segments, cuts, subStyle)
