@@ -349,8 +349,8 @@ function normalizeTechnicalPlan(
   }
 
   // Build broll prompts array from video brollMoments
-  for (const video of plan.videos) {
-    video.brollMoments.forEach((b, idx) => {
+  for (const video of (plan?.videos || [])) {
+    (video?.brollMoments || []).forEach((b, idx) => {
       if (b.prompt) {
         plan.prompts.broll.push({
           videoIndex: video.videoIndex,
@@ -365,7 +365,7 @@ function normalizeTechnicalPlan(
   // Filter out non-presenter cuts if presenter info is available
   const presenterSegments = transcript.segments.filter((s: any) => s.isPresenter !== false)
   if (transcript.mainSpeaker && presenterSegments.length < transcript.segments.length) {
-    for (const video of plan.videos) {
+    for (const video of (plan?.videos || [])) {
       const beforeCount = video.cuts.length
       video.cuts = video.cuts.filter(cut => {
         // Check if this cut timerange overlaps with presenter segments
@@ -384,7 +384,7 @@ function normalizeTechnicalPlan(
   }
 
   // Validate cuts sum to approximately target duration
-  for (const video of plan.videos) {
+  for (const video of (plan?.videos || [])) {
     const videoTarget = input.targetDuration === -1 ? (video.optimalDuration || 60) : input.targetDuration
     const totalCutDuration = video.cuts.reduce((sum, c) => sum + (c.keepEnd - c.keepStart), 0)
     log(`סרטון ${video.videoIndex}: סך חיתוכים = ${totalCutDuration.toFixed(1)}s (יעד: ${videoTarget}s), ${video.brollMoments.length} B-Roll, ${video.subtitles.length} כתוביות`)
@@ -427,10 +427,10 @@ export async function planWithChatGPT(
   // Normalize to EditingPlan format
   const plan = normalizeTechnicalPlan(technicalPlan, transcript, input, creativeBrief)
 
-  log(`תכנון דו-שלבי הושלם: ${plan.videos.length} סרטונים עם אפקטים מקצועיים`)
+  log(`תכנון דו-שלבי הושלם: ${plan?.videos?.length || 0} סרטונים עם אפקטים מקצועיים`)
 
   // Verify plan quality
-  for (const video of plan.videos) {
+  for (const video of (plan?.videos || [])) {
     const cutsDuration = video.cuts.reduce((sum, c) => sum + (c.keepEnd - c.keepStart), 0)
     log(`[אימות] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${input.targetDuration}s), ${video.brollMoments.length} B-Roll, ${video.subtitles.length} כתוביות, ${video.zooms.length} זומים`)
   }

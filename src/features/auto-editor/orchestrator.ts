@@ -235,7 +235,7 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
 
   // Check 2: Has B-Roll (check actual assets, not just plan)
   const brollCount = hasBrollAssets ? storeState.cachedAssets!.brollClips.length : 0
-  const planBrollCount = plan.brollMoments?.length || plan.broll?.length || 0
+  const planBrollCount = plan?.brollMoments?.length || plan?.broll?.length || 0
   const expectedBRoll = Math.floor(targetDuration / 15)
   if (brollCount >= expectedBRoll) {
     report.passed.push(`B-Roll: ${brollCount} קטעים (הוכנסו לסרטון)`)
@@ -251,7 +251,7 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
   }
 
   // Check 3: Has subtitles (check if transcript segments exist for subtitle generation)
-  const subtitleCount = plan.subtitles?.length || 0
+  const subtitleCount = plan?.subtitles?.length || 0
   const transcriptCount = hasTranscript ? storeState.transcript.segments.length : 0
   if (subtitleCount > 0 || transcriptCount > 0) {
     const count = subtitleCount || transcriptCount
@@ -262,15 +262,15 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
   }
 
   // Check 4: Has transitions
-  if (plan.transitions?.length > 0) {
-    report.passed.push(`מעברים: ${plan.transitions.length}`)
+  if (plan?.transitions?.length > 0) {
+    report.passed.push(`מעברים: ${plan?.transitions?.length}`)
   } else {
     report.score -= 5
     report.issues.push({ severity: 'info', message: 'אין מעברים - חיתוכים ישירים בלבד' })
   }
 
   // Check 5: Has CTA at end
-  if (plan.outro) {
+  if (plan?.outro) {
     report.passed.push('CTA בסיום')
   } else {
     report.score -= 5
@@ -278,13 +278,13 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
   }
 
   // Check 6: Color grade applied
-  if (plan.colorGrade && plan.colorGrade !== 'none') {
-    report.passed.push(`Color grade: ${plan.colorGrade}`)
+  if (plan?.colorGrade && plan?.colorGrade !== 'none') {
+    report.passed.push(`Color grade: ${plan?.colorGrade}`)
   }
 
   // Check 7: Has zooms
-  if (plan.zooms?.length > 0) {
-    report.passed.push(`זומים: ${plan.zooms.length}`)
+  if (plan?.zooms?.length > 0) {
+    report.passed.push(`זומים: ${plan?.zooms?.length}`)
   } else {
     report.score -= 5
     report.issues.push({ severity: 'info', message: 'אין זומים' })
@@ -293,7 +293,7 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
   // Check 8: Music (check actual asset, not just plan)
   if (hasMusicAsset) {
     report.passed.push('מוזיקת רקע')
-  } else if (plan.musicMoments?.length > 0 || plan.music_moments?.length > 0) {
+  } else if (plan?.musicMoments?.length > 0 || plan?.music_moments?.length > 0) {
     report.score -= 5
     report.issues.push({ severity: 'info', message: 'מוזיקת רקע תוכננה אך לא נמצאה' })
   }
@@ -324,17 +324,18 @@ async function processVideosWithPlan(
   const addLog = useAutoEditorStore.getState().addLog
   const processedVideos: VideoResult[] = []
 
-  for (let i = 0; i < editingPlan.videos.length; i++) {
-    const videoPlan = editingPlan.videos[i]
-    const sourceIndex = videoPlan.sourceSegments?.[0]?.sourceFile || 0
+  const videos = editingPlan?.videos || []
+  for (let i = 0; i < videos.length; i++) {
+    const videoPlan = videos[i]
+    const sourceIndex = videoPlan?.sourceSegments?.[0]?.sourceFile || 0
     const sourceUrl = finalInput.videoUrls[sourceIndex] || finalInput.videoUrls[0]
 
     addLog(`[${versionLabel}] מעבד סרטון ${i + 1}: שולח לשרת...`)
 
     const fullPlan = {
-      cuts: videoPlan.cuts.map((c: any) => ({ keepStart: c.keepStart, keepEnd: c.keepEnd })),
-      transitions: videoPlan.transitions || ['fade'],
-      zooms: videoPlan.zooms || [],
+      cuts: (videoPlan?.cuts || []).map((c: any) => ({ keepStart: c.keepStart, keepEnd: c.keepEnd })),
+      transitions: videoPlan?.transitions || ['fade'],
+      zooms: videoPlan?.zooms || [],
       camera_angles: (videoPlan.cameraAngles || []).map((ca: any) => ({
         start: ca.start, end: ca.end, camera: ca.camera,
       })),
@@ -363,7 +364,7 @@ async function processVideosWithPlan(
     const storedMainPresenter = storeState.mainPresenter || storeState.detectedPresenter
 
     // Build B-Roll assets from brollClips URLs + plan timing info
-    const planBroll = videoPlan.brollMoments || videoPlan.broll || editingPlan.prompts?.broll || []
+    const planBroll = videoPlan?.brollMoments || videoPlan?.broll || editingPlan?.prompts?.broll || []
     const brollAssets = brollClips.map((url: string, idx: number) => ({
       url,
       insertAt: planBroll[idx]?.time || planBroll[idx]?.insert_at || planBroll[idx]?.atTime || (idx * 15),
@@ -748,15 +749,15 @@ export async function continueAfterEnrichment(
     }
 
     // If AI chooses duration, log it
-    if (finalInput.targetDuration === -1 && editingPlanA.videos) {
-      const durationSummary = editingPlanA.videos
+    if (finalInput.targetDuration === -1 && editingPlanA?.videos) {
+      const durationSummary = (editingPlanA?.videos || [])
         .map((v: any) => `סרטון ${v.videoIndex} = ${v.optimalDuration || '?'}שנ`)
         .join(', ')
       addLog(`AI בחר אורך (A): ${durationSummary}`)
     }
 
     // Verify plan quality for both
-    for (const video of editingPlanA.videos) {
+    for (const video of (editingPlanA?.videos || [])) {
       const cutsDuration = video.cuts.reduce((sum: number, c: any) => sum + (c.keepEnd - c.keepStart), 0)
       const videoTarget = finalInput.targetDuration === -1 ? (video.optimalDuration || '?') : finalInput.targetDuration
       addLog(`[אימות A] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${videoTarget}s)`)
@@ -814,7 +815,7 @@ export async function continueAfterEnrichment(
     }
 
     // === IMPROVEMENT 5: Quality metrics ===
-    const videoPlanA = editingPlanA.videos[0]
+    const videoPlanA = editingPlanA?.videos?.[0]
     const videoTargetDur = finalInput.targetDuration === -1 ? (videoPlanA?.optimalDuration || 60) : finalInput.targetDuration
     const cutsDurA = videoPlanA?.cuts?.reduce((sum: number, c: any) => sum + (c.keepEnd - c.keepStart), 0) || 0
     const qualityReport = evaluateEditQuality(videoPlanA, cutsDurA, videoTargetDur)
