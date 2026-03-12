@@ -1,7 +1,6 @@
 import { useAutoEditorStore, type AutoEditorInput, type VideoResult, type QualityReport } from './store/autoEditorStore'
 import { useUserProfileStore } from '../../stores/userProfileStore'
 import { usePromptEvolutionStore } from '../../stores/promptEvolutionStore'
-import { useSocialLearningStore } from '../../stores/socialLearningStore'
 import { transcribeVideos } from './services/whisperService'
 import { planWithChatGPT } from './services/chatgptService'
 import { generateBackground } from './services/nanoBananaService'
@@ -504,7 +503,14 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     // Get evolved prompt for enrichment
     const evolvedEnrichPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('enrichment', BASE_ENRICH_PROMPT)
 
-    const socialRules = useSocialLearningStore.getState().getEditingRulesForPrompt(enrichedInput.userPrompt || 'all')
+    let socialRules = ''
+    try {
+      const rulesRes = await fetch('http://localhost:3001/api/learning/rules')
+      if (rulesRes.ok) {
+        const data = await rulesRes.json()
+        socialRules = data.rules || ''
+      }
+    } catch {}
 
     const enrichRes = await fetch(`${API_BASE}/auto-editor/enrich-prompt`, {
       method: 'POST',

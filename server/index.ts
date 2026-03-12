@@ -4224,366 +4224,61 @@ app.post('/api/detach-audio', upload.single('file'), async (req, res) => {
 })
 
 // ============================================
-// SOCIAL LEARNING AGENT
+// SOCIAL LEARNING AGENT (SERVER-SIDE)
 // ============================================
 
 import { google } from 'googleapis'
 
-// ENDPOINT: Fetch trending videos
-app.post('/api/learning/fetch-trends', async (req, res) => {
+const LEARNING_STATE_FILE = path.join(__dirname, 'learning-state.json')
+
+function loadLearningState(): any {
   try {
-    const apiKey = process.env.YOUTUBE_API_KEY
-    if (!apiKey) return res.status(400).json({ message: 'YouTube API key not configured' })
-
-    const youtube = google.youtube({ version: 'v3', auth: apiKey })
-    const { category, maxResults, currentDailyUnits } = req.body
-
-    const searchCost = 100
-    if (currentDailyUnits && currentDailyUnits + searchCost > 5000) {
-      return res.status(429).json({ message: 'YouTube daily limit reached', unitsUsed: currentDailyUnits })
+    if (fs.existsSync(LEARNING_STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, 'utf-8'))
     }
-
-    const searchQueries: Record<string, string> = {
-      'viral_editing': 'viral video editing techniques 2026',
-      'hooks': 'best video hooks first 3 seconds',
-      'transitions': 'creative video transitions trending',
-      'subtitles': 'best subtitle styles social media viral',
-      'pacing': 'fast cut editing rhythm viral',
-      'broll': 'B-Roll techniques effective videos',
-      'color_grading': 'cinematic color grading social media',
-      'marketing': 'best product video ads viral 2026',
-    }
-
-    const query = searchQueries[category] || searchQueries['viral_editing']
-
-    console.log(`[TRENDS] Searching: "${query}" (cost: ${searchCost} units)`)
-
-    const searchRes = await youtube.search.list({
-      part: ['snippet'],
-      q: query,
-      type: ['video'],
-      order: 'viewCount',
-      maxResults: Math.min(maxResults || 5, 10),
-      relevanceLanguage: 'en',
-      publishedAfter: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString(),
-    })
-
-    let unitsUsed = searchCost
-
-    const videoIds = (searchRes.data.items || []).map((item: any) => item.id?.videoId).filter(Boolean)
-
-    if (videoIds.length === 0) {
-      return res.json({ category, videos: [], unitsUsed })
-    }
-
-    const statsRes = await youtube.videos.list({
-      part: ['statistics', 'contentDetails', 'snippet'],
-      id: videoIds,
-    })
-    unitsUsed += videoIds.length
-
-    const videos = (statsRes.data.items || [])
-      .map((video: any) => {
-        const views = parseInt(video.statistics?.viewCount || '0')
-        const likes = parseInt(video.statistics?.likeCount || '0')
-        const comments = parseInt(video.statistics?.commentCount || '0')
-        const engagementRate = views > 0 ? (likes + comments) / views : 0
-
-        return {
-          id: video.id,
-          title: video.snippet?.title,
-          description: video.snippet?.description?.substring(0, 300),
-          channelTitle: video.snippet?.channelTitle,
-          publishedAt: video.snippet?.publishedAt,
-          duration: video.contentDetails?.duration,
-          views, likes, comments,
-          engagementRate: Math.round(engagementRate * 10000) / 100,
-          tags: video.snippet?.tags?.slice(0, 10) || [],
-          thumbnailUrl: video.snippet?.thumbnails?.high?.url,
-          url: `https://www.youtube.com/watch?v=${video.id}`,
-        }
-      })
-      .filter((v: any) => v.views >= 10000)
-      .sort((a: any, b: any) => b.engagementRate - a.engagementRate)
-
-    console.log(`[TRENDS] Found ${videos.length} videos, used ${unitsUsed} units`)
-
-    res.json({ category, videos: videos.slice(0, 10), unitsUsed })
-
-  } catch (error: any) {
-    console.error('[TRENDS ERROR]', error.message)
-    res.status(500).json({ message: error.message })
+  } catch {}
+  return {
+    lastLearnDate: 0,
+    totalVideosAnalyzed: 0,
+    learnedPatterns: {},
+    missingFeatures: [],
+    dailyYoutubeUnits: 0,
+    dailyGptCalls: 0,
+    dailyDate: '',
+    monthlyGptCost: 0,
+    monthlyDate: '',
   }
-})
+}
 
-// ENDPOINT: Analyze viral video visually (GPT-5.4 Vision)
-app.post('/api/learning/analyze-viral-video', async (req, res) => {
+function saveLearningState(state: any) {
   try {
-    const ai = await getOpenAI()
-    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
-
-    const { videoId, videoTitle, videoCategory } = req.body
-    const ytdlpPath = fs.existsSync('/opt/homebrew/bin/yt-dlp') ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp'
-    const ffmpegPath = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'
-
-    const tmpDir = path.join(__dirname, 'uploads', `viral_${Date.now()}`)
-    fs.mkdirSync(tmpDir, { recursive: true })
-    const videoPath = path.join(tmpDir, 'video.mp4')
-    const framesDir = path.join(tmpDir, 'frames')
-    fs.mkdirSync(framesDir, { recursive: true })
-
-    console.log(`[VIRAL] Downloading first 60s: ${videoTitle}`)
-
-    try {
-      execSync(
-        `"${ytdlpPath}" --format "worst[ext=mp4]" --download-sections "*0:00-1:00" --max-filesize 15M -o "${videoPath}" "https://www.youtube.com/watch?v=${videoId}"`,
-        { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] }
-      )
-    } catch {
-      execSync(
-        `"${ytdlpPath}" --format "worst[ext=mp4]" --max-filesize 15M -o "${videoPath}" "https://www.youtube.com/watch?v=${videoId}"`,
-        { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] }
-      )
-    }
-
-    if (!fs.existsSync(videoPath)) {
-      throw new Error('Download failed')
-    }
-
-    execSync(
-      `"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/5,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`,
-      { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
-    )
-
-    const frameFiles = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort()
-
-    const selected = frameFiles.length > 10
-      ? frameFiles.filter((_: string, i: number) => i % Math.ceil(frameFiles.length / 10) === 0).slice(0, 10)
-      : frameFiles
-
-    const frameImages = selected.map((file: string, i: number) => ({
-      time: i * 5,
-      base64: fs.readFileSync(path.join(framesDir, file)).toString('base64'),
-    }))
-
-    console.log(`[VIRAL] Analyzing ${frameImages.length} frames with GPT-5.4 Vision`)
-
-    const response = await ai.chat.completions.create({
-      model: 'gpt-5.4',
-      messages: [
-        {
-          role: 'system',
-          content: `נתח סרטון ויראלי. החזר JSON בלבד:
-{
-  "structure": {
-    "hook_seconds": 1.5,
-    "hook_type": "text/question/visual/face",
-    "overall": "hook_content_cta/problem_solution/story/listicle"
-  },
-  "pacing": {
-    "cuts_per_minute": 15,
-    "avg_clip_seconds": 2.5,
-    "rhythm": "constant/accelerating/variable"
-  },
-  "subtitles": {
-    "present": true,
-    "style": "classic/karaoke/animated/box",
-    "position": "center/bottom/top",
-    "size": "small/medium/large/xl"
-  },
-  "broll_percent": 35,
-  "color_tone": "warm/cold/vibrant/cinematic",
-  "aspect_ratio": "9:16/16:9/1:1",
-  "special": ["zoom_effects","emoji_overlays","split_screen"],
-  "virality_reasons": ["reason1","reason2"],
-  "lessons": ["lesson1","lesson2","lesson3"]
-}`
-        },
-        {
-          role: 'user',
-          content: [
-            { type: 'text' as const, text: `סרטון: "${videoTitle}" | קטגוריה: ${videoCategory} | ${frameImages.length} פריימים:` },
-            ...frameImages.map((f: { base64: string }) => ({
-              type: 'image_url' as const,
-              image_url: { url: `data:image/jpeg;base64,${f.base64}`, detail: 'low' as const }
-            }))
-          ]
-        }
-      ],
-      response_format: { type: 'json_object' },
-      max_tokens: 1500,
-    })
-
-    const analysis = JSON.parse(response.choices[0]?.message?.content || '{}')
-
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-
-    console.log('[VIRAL] Analysis complete')
-
-    res.json({
-      videoId, videoTitle, category: videoCategory,
-      analysis,
-      estimatedCost: 0.02,
-    })
-
-  } catch (error: any) {
-    console.error('[VIRAL ERROR]', error.message)
-    res.status(500).json({ message: error.message })
+    fs.writeFileSync(LEARNING_STATE_FILE, JSON.stringify(state, null, 2))
+  } catch (e: any) {
+    console.error('[LEARN] Failed to save state:', e.message)
   }
-})
+}
 
-// ENDPOINT: Synthesize patterns (ONE GPT call for all analyses)
-app.post('/api/learning/synthesize-patterns', async (req, res) => {
-  try {
-    const ai = await getOpenAI()
-    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
-
-    const { analyses, category } = req.body
-
-    console.log(`[SYNTH] Processing ${analyses.length} analyses for "${category}"`)
-
-    const response = await ai.chat.completions.create({
-      model: 'gpt-5.4',
-      messages: [
-        {
-          role: 'system',
-          content: `נתח patterns מסרטונים ויראליים. החזר JSON בלבד:
-{
-  "patterns": {
-    "hook": { "avg_seconds": 1.5, "best_type": "text_overlay", "rule": "כלל עריכה" },
-    "pacing": { "avg_cuts_per_min": 18, "avg_clip_sec": 2.5, "rule": "כלל" },
-    "subtitles": { "most_common_style": "karaoke", "position": "center", "rule": "כלל" },
-    "broll": { "avg_percent": 35, "rule": "כלל" },
-    "color": { "most_common": "warm_vibrant", "rule": "כלל" }
-  },
-  "editing_rules": [
-    { "rule": "כלל בעברית", "applies_to": "all/social/marketing", "confidence": 0.9 }
-  ],
-  "sop_update": "SOP מעודכן בעברית"
-}`
-        },
-        {
-          role: 'user',
-          content: `${analyses.length} ניתוחים ל-"${category}":\n${JSON.stringify(analyses).substring(0, 8000)}`
-        }
-      ],
-      response_format: { type: 'json_object' },
-      max_tokens: 2000,
-    })
-
-    const patterns = JSON.parse(response.choices[0]?.message?.content || '{}')
-    res.json(patterns)
-
-  } catch (error: any) {
-    console.error('[SYNTH ERROR]', error.message)
-    res.status(500).json({ message: error.message })
-  }
-})
-
-// ENDPOINT: Detect missing features
-app.post('/api/learning/detect-missing-features', async (req, res) => {
-  try {
-    const ai = await getOpenAI()
-    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
-
-    const { learnedPatterns } = req.body
-
-    const currentFeatures = [
-      'trim','split','speed','reverse','drag_drop','multi_track','undo_redo',
-      'filters','brightness','contrast','saturation','blur','opacity','crop','resize',
-      'color_grading','ken_burns_zoom','text_overlays','lower_thirds','subtitles_6_styles',
-      'karaoke_subs','multi_lang_captions','inline_word_styling',
-      'volume','mute','clean_audio','music_pixabay','ducking','tts_elevenlabs',
-      'voice_cloning','detach_audio','eq','fade',
-      'auto_transcription_diarize','filler_removal','silence_removal','ai_chat',
-      'auto_editor','visual_analysis','energy_analysis','ab_testing',
-      'eye_contact','center_speaker','find_scenes','suggest_clips','smart_cut',
-      'nano_banana_image','dalle3','seedance_video','veo_video',
-      'multi_platform_export','learning_profile','prompt_evolution','social_learning',
-    ]
-
-    const response = await ai.chat.completions.create({
-      model: 'gpt-5.4',
-      messages: [
-        {
-          role: 'system',
-          content: `השווה בין מה שנלמד מסרטונים ויראליים לפיצ'רים הקיימים.
-מצא כלים חסרים. מקסימום 8. רק דברים שבאמת ראית בסרטונים.
-
-החזר JSON:
-{
-  "missing_features": [
-    {
-      "name": "שם בעברית",
-      "name_en": "English name",
-      "description": "מה זה עושה",
-      "why_important": "למה - מבוסס דאטה",
-      "viral_evidence": "בX% מהסרטונים",
-      "difficulty": "easy/medium/hard",
-      "needs_new_api": false,
-      "suggested_api": "FFmpeg/CSS או שם API",
-      "priority": "critical/important/nice_to_have",
-      "implementation_hint": "רמז קצר"
-    }
-  ],
-  "summary": "סיכום קצר",
-  "biggest_gap": "הפער הכי גדול"
-}`
-        },
-        {
-          role: 'user',
-          content: `נלמד:\n${JSON.stringify(learnedPatterns).substring(0, 6000)}\n\nקיים: ${currentFeatures.join(', ')}`
-        }
-      ],
-      response_format: { type: 'json_object' },
-      max_tokens: 2000,
-    })
-
-    const result = JSON.parse(response.choices[0]?.message?.content || '{}')
-    res.json(result)
-
-  } catch (error: any) {
-    console.error('[MISSING ERROR]', error.message)
-    res.status(500).json({ message: error.message })
-  }
-})
-
-// ENDPOINT: Send Telegram notification
-app.post('/api/notify/telegram', async (req, res) => {
+async function sendTelegram(message: string) {
   try {
     const token = process.env.TELEGRAM_BOT_TOKEN
     const chatId = process.env.TELEGRAM_CHAT_ID
-
-    if (!token || !chatId) {
-      return res.status(400).json({ message: 'Telegram not configured' })
-    }
-
-    const { message } = req.body
+    if (!token || !chatId) return
 
     const chunks: string[] = []
-    if (message.length > 4000) {
-      let remaining = message
-      while (remaining.length > 0) {
-        chunks.push(remaining.substring(0, 4000))
-        remaining = remaining.substring(4000)
-      }
-    } else {
-      chunks.push(message)
+    let remaining = message
+    while (remaining.length > 0) {
+      chunks.push(remaining.substring(0, 4000))
+      remaining = remaining.substring(4000)
     }
 
     for (const chunk of chunks) {
-      const telegramRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: chunk,
-          parse_mode: 'HTML',
-        }),
-      })
-
-      const result: any = await telegramRes.json()
-      if (!result.ok) {
+      try {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, text: chunk, parse_mode: 'HTML' }),
+        })
+      } catch {
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -4591,14 +4286,318 @@ app.post('/api/notify/telegram', async (req, res) => {
         })
       }
     }
-
-    console.log('[TELEGRAM] Sent', chunks.length, 'message(s)')
-    res.json({ sent: true })
-
-  } catch (error: any) {
-    console.error('[TELEGRAM ERROR]', error.message)
-    res.status(500).json({ message: error.message })
+  } catch (e: any) {
+    console.error('[TELEGRAM]', e.message)
   }
+}
+
+async function runServerLearning() {
+  const state = loadLearningState()
+  const today = new Date().toISOString().split('T')[0]
+  const thisMonth = new Date().toISOString().substring(0, 7)
+
+  // Reset daily counters if new day
+  if (state.dailyDate !== today) {
+    state.dailyYoutubeUnits = 0
+    state.dailyGptCalls = 0
+    state.dailyDate = today
+  }
+
+  // Reset monthly cost if new month
+  if (state.monthlyDate !== thisMonth) {
+    state.monthlyGptCost = 0
+    state.monthlyDate = thisMonth
+  }
+
+  // Check: already learned today?
+  const lastLearnDay = state.lastLearnDate ? new Date(state.lastLearnDate).toISOString().split('T')[0] : ''
+  if (lastLearnDay === today) {
+    console.log('[LEARN] Already learned today, skipping')
+    return
+  }
+
+  // Check monthly cost
+  if (state.monthlyGptCost >= 5) {
+    console.log('[LEARN] Monthly $5 limit reached, skipping')
+    return
+  }
+
+  console.log('[LEARN] Starting daily learning session...')
+
+  const allCategories = ['viral_editing', 'hooks', 'pacing', 'subtitles', 'broll', 'marketing', 'transitions', 'color_grading']
+  const dayNumber = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
+  const startIndex = (dayNumber * 3) % allCategories.length
+  const todayCategories: string[] = []
+  for (let i = 0; i < 3; i++) {
+    todayCategories.push(allCategories[(startIndex + i) % allCategories.length])
+  }
+
+  console.log('[LEARN] Categories today:', todayCategories)
+
+  const ai = await getOpenAI()
+  if (!ai) {
+    console.log('[LEARN] OpenAI not configured, skipping')
+    return
+  }
+
+  if (!process.env.YOUTUBE_API_KEY) {
+    console.log('[LEARN] YouTube API not configured, skipping')
+    return
+  }
+  const youtube = google.youtube({ version: 'v3', auth: process.env.YOUTUBE_API_KEY })
+
+  const results: any = { categories: {}, errors: [], totalCost: 0 }
+
+  for (const category of todayCategories) {
+    // Check limits before each category
+    if (state.dailyYoutubeUnits >= 5000 || state.dailyGptCalls >= 15) {
+      console.log('[LEARN] Daily limit reached, stopping')
+      break
+    }
+
+    try {
+      // --- STEP 1: Search YouTube (100 units) ---
+      const searchQueries: Record<string, string> = {
+        'viral_editing': 'viral video editing techniques 2026',
+        'hooks': 'best video hooks first 3 seconds',
+        'transitions': 'creative video transitions trending',
+        'subtitles': 'best subtitle styles social media viral',
+        'pacing': 'fast cut editing rhythm viral',
+        'broll': 'B-Roll techniques effective videos',
+        'color_grading': 'cinematic color grading social media',
+        'marketing': 'best product video ads viral 2026',
+      }
+
+      const searchRes = await youtube.search.list({
+        part: ['snippet'],
+        q: searchQueries[category] || 'viral video editing',
+        type: ['video'],
+        order: 'viewCount',
+        maxResults: 5,
+        relevanceLanguage: 'en',
+        publishedAfter: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString(),
+      })
+      state.dailyYoutubeUnits += 100
+
+      const videoIds = (searchRes.data.items || []).map((item: any) => item.id?.videoId).filter(Boolean)
+      if (videoIds.length === 0) continue
+
+      // --- STEP 2: Get video details (1 unit per video) ---
+      const statsRes = await youtube.videos.list({
+        part: ['statistics', 'contentDetails', 'snippet'],
+        id: videoIds,
+      })
+      state.dailyYoutubeUnits += videoIds.length
+
+      const videos = (statsRes.data.items || [])
+        .map((video: any) => ({
+          id: video.id,
+          title: video.snippet?.title,
+          views: parseInt(video.statistics?.viewCount || '0'),
+          likes: parseInt(video.statistics?.likeCount || '0'),
+          tags: video.snippet?.tags?.slice(0, 10) || [],
+        }))
+        .filter((v: any) => v.views >= 10000)
+        .sort((a: any, b: any) => b.likes - a.likes)
+
+      if (videos.length === 0) continue
+
+      // --- STEP 3: Analyze top 2 videos with Vision ---
+      const ytdlpPath = fs.existsSync('/opt/homebrew/bin/yt-dlp') ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp'
+      const ffmpegPath = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'
+      const analyses: any[] = []
+
+      for (const video of videos.slice(0, 2)) {
+        if (state.dailyGptCalls >= 15) break
+
+        const tmpDir = path.join(__dirname, 'uploads', `viral_${Date.now()}`)
+        try {
+          fs.mkdirSync(tmpDir, { recursive: true })
+          const videoPath = path.join(tmpDir, 'video.mp4')
+          const framesDir = path.join(tmpDir, 'frames')
+          fs.mkdirSync(framesDir, { recursive: true })
+
+          // Download first 60 sec, lowest quality
+          try {
+            execSync(`"${ytdlpPath}" --format "worst[ext=mp4]" --download-sections "*0:00-1:00" --max-filesize 15M -o "${videoPath}" "https://www.youtube.com/watch?v=${video.id}"`, { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] })
+          } catch {
+            execSync(`"${ytdlpPath}" --format "worst[ext=mp4]" --max-filesize 10M -o "${videoPath}" "https://www.youtube.com/watch?v=${video.id}"`, { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] })
+          }
+
+          if (!fs.existsSync(videoPath)) continue
+
+          // Extract frames every 5 sec, low res
+          execSync(`"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/5,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`, { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] })
+
+          const frameFiles = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort().slice(0, 10)
+          const frameImages = frameFiles.map((file: string) => ({
+            base64: fs.readFileSync(path.join(framesDir, file)).toString('base64'),
+          }))
+
+          // GPT Vision analysis
+          const analysisRes = await ai.chat.completions.create({
+            model: 'gpt-5.4',
+            messages: [
+              { role: 'system', content: 'נתח סרטון ויראלי. החזר JSON בלבד: {"hook_seconds":1.5,"hook_type":"text/question/visual","cuts_per_minute":15,"avg_clip_sec":2.5,"subtitle_style":"classic/karaoke/animated","subtitle_position":"center/bottom","broll_percent":35,"color_tone":"warm/cold/vibrant","special":["zoom","emoji"],"virality_reasons":["reason1"],"lessons":["lesson1"]}' },
+              { role: 'user', content: [
+                { type: 'text' as const, text: `"${video.title}" | ${category} | ${frameImages.length} frames:` },
+                ...frameImages.map((f: any) => ({
+                  type: 'image_url' as const,
+                  image_url: { url: `data:image/jpeg;base64,${f.base64}`, detail: 'low' as const }
+                }))
+              ]}
+            ],
+            response_format: { type: 'json_object' },
+            max_tokens: 1000,
+          })
+
+          const analysis = JSON.parse(analysisRes.choices[0]?.message?.content || '{}')
+          analyses.push(analysis)
+          state.dailyGptCalls++
+          state.monthlyGptCost += 0.02
+          results.totalCost += 0.02
+          state.totalVideosAnalyzed++
+        } catch (e: any) {
+          console.warn(`[LEARN] Video analysis failed: ${e.message}`)
+        } finally {
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
+        }
+      }
+
+      if (analyses.length === 0) continue
+
+      // --- STEP 4: Synthesize patterns (1 GPT call) ---
+      if (state.dailyGptCalls < 15) {
+        const synthRes = await ai.chat.completions.create({
+          model: 'gpt-5.4',
+          messages: [
+            { role: 'system', content: 'נתח patterns מסרטונים ויראליים. החזר JSON: {"editing_rules":[{"rule":"כלל בעברית","applies_to":"all/social/marketing","confidence":0.9}],"sop_update":"SOP מעודכן","patterns":{"hook":{"avg_seconds":1.5,"rule":"כלל"},"pacing":{"avg_cuts":15,"rule":"כלל"},"subtitles":{"style":"karaoke","rule":"כלל"}}}' },
+            { role: 'user', content: `${analyses.length} ניתוחים ל-"${category}":\n${JSON.stringify(analyses).substring(0, 6000)}` }
+          ],
+          response_format: { type: 'json_object' },
+          max_tokens: 1500,
+        })
+
+        const patterns = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
+        state.learnedPatterns[category] = { ...patterns, learnedAt: Date.now() }
+        state.dailyGptCalls++
+        state.monthlyGptCost += 0.02
+        results.totalCost += 0.02
+
+        results.categories[category] = {
+          videosAnalyzed: analyses.length,
+          rulesLearned: patterns.editing_rules?.length || 0,
+        }
+      }
+
+    } catch (e: any) {
+      results.errors.push(`${category}: ${e.message}`)
+    }
+  }
+
+  // --- STEP 5: Detect missing features (1 GPT call) ---
+  if (state.dailyGptCalls < 15 && Object.keys(state.learnedPatterns).length > 0) {
+    try {
+      const currentFeatures = 'trim,split,speed,reverse,filters,crop,resize,subtitles,karaoke,tts,voice_clone,clean_audio,ducking,auto_transcribe,filler_removal,silence_removal,ai_chat,auto_editor,broll_generation,multi_platform_export'
+
+      const missingRes = await ai.chat.completions.create({
+        model: 'gpt-5.4',
+        messages: [
+          { role: 'system', content: 'השווה בין מה שנלמד מסרטונים ויראליים לפיצ\'רים קיימים. מצא כלים חסרים (מקסימום 8). החזר JSON: {"missing_features":[{"name":"שם","description":"מה","why_important":"למה","viral_evidence":"בX%","difficulty":"easy/medium/hard","needs_new_api":false,"suggested_api":"FFmpeg/CSS","priority":"critical/important/nice_to_have"}],"summary":"סיכום","biggest_gap":"הפער"}' },
+          { role: 'user', content: `נלמד:\n${JSON.stringify(state.learnedPatterns).substring(0, 6000)}\n\nקיים: ${currentFeatures}` }
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 1500,
+      })
+
+      const missing = JSON.parse(missingRes.choices[0]?.message?.content || '{}')
+      state.missingFeatures = missing.missing_features || []
+      state.dailyGptCalls++
+      state.monthlyGptCost += 0.02
+      results.totalCost += 0.02
+      results.missingFeatures = state.missingFeatures.length
+
+      // Send Telegram: Missing features
+      if (state.missingFeatures.length > 0 && process.env.TELEGRAM_BOT_TOKEN) {
+        const pEmoji: Record<string, string> = { critical: '🔴', important: '🟡', nice_to_have: '🟢' }
+        let msg = `🔧 <b>כלים חסרים (${state.missingFeatures.length})</b>\n\n`
+        msg += `📊 ${missing.summary || ''}\n⚠️ ${missing.biggest_gap || ''}\n\n`
+        state.missingFeatures.forEach((f: any, i: number) => {
+          msg += `${pEmoji[f.priority] || '⚪'} <b>${i + 1}. ${f.name}</b>\n`
+          msg += `   ${f.description}\n   📈 ${f.viral_evidence}\n`
+          msg += `   ${f.needs_new_api ? '🔌 ' + f.suggested_api : '✅ אפשרי'} | ${f.difficulty}\n\n`
+        })
+        await sendTelegram(msg)
+      }
+    } catch (e: any) {
+      console.warn('[LEARN] Missing features failed:', e.message)
+    }
+  }
+
+  // --- STEP 6: Save state ---
+  state.lastLearnDate = Date.now()
+  saveLearningState(state)
+
+  // --- STEP 7: Send Telegram summary ---
+  if (process.env.TELEGRAM_BOT_TOKEN) {
+    const now = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })
+    let msg = `📡 <b>סיכום למידה יומית</b>\n📅 ${now}\n\n`
+
+    Object.entries(results.categories).forEach(([cat, data]: [string, any]) => {
+      msg += `✅ ${cat}: ${data.videosAnalyzed} סרטונים → ${data.rulesLearned} כללים\n`
+    })
+
+    if (results.errors.length > 0) {
+      msg += `\n⚠️ שגיאות: ${results.errors.join(', ')}\n`
+    }
+
+    // All learned rules
+    const allRules: string[] = []
+    Object.entries(state.learnedPatterns).forEach(([_cat, p]: [string, any]) => {
+      ;(p.editing_rules || []).forEach((r: any) => {
+        allRules.push(`${Math.round(r.confidence * 100)}% ${r.rule}`)
+      })
+    })
+    if (allRules.length > 0) {
+      msg += `\n📋 <b>כל הכללים (${allRules.length}):</b>\n`
+      allRules.forEach(r => { msg += `• ${r}\n` })
+    }
+
+    msg += `\n💰 עלות היום: $${results.totalCost.toFixed(2)}`
+    msg += `\n💵 עלות החודש: $${state.monthlyGptCost.toFixed(2)} / $5.00`
+    msg += `\n📊 YouTube היום: ${state.dailyYoutubeUnits} / 5,000`
+    msg += `\n🤖 GPT היום: ${state.dailyGptCalls} / 15`
+    msg += `\n📹 סה"כ סרטונים שנותחו: ${state.totalVideosAnalyzed}`
+
+    if (results.missingFeatures > 0) {
+      msg += `\n\n🔧 ${results.missingFeatures} כלים חסרים (ראה הודעה נפרדת)`
+    }
+
+    await sendTelegram(msg)
+  }
+
+  console.log('[LEARN] Daily learning complete:', JSON.stringify(results.categories))
+}
+
+// ENDPOINT: Get learned rules (called by frontend auto-editor silently)
+app.get('/api/learning/rules', (_req, res) => {
+  const state = loadLearningState()
+  const rules: string[] = []
+  Object.values(state.learnedPatterns || {}).forEach((pattern: any) => {
+    ;(pattern.editing_rules || []).forEach((rule: any) => {
+      if (rule.confidence >= 0.6) {
+        rules.push(`- ${rule.rule} (${Math.round(rule.confidence * 100)}%)`)
+      }
+    })
+  })
+  res.json({
+    rules: rules.length > 0
+      ? `\n=== כללים שנלמדו מסרטונים ויראליים ===\n${rules.join('\n')}\n===`
+      : '',
+    totalVideos: state.totalVideosAnalyzed || 0,
+    totalRules: rules.length,
+    lastLearned: state.lastLearnDate || 0,
+  })
 })
 
 // ==================== START SERVER ====================
@@ -4625,4 +4624,13 @@ app.listen(PORT, () => {
   } catch {
     console.error('FFmpeg NOT FOUND - transcription will fail!')
   }
+
+  // Schedule daily learning: run 30 seconds after server starts, then every 24 hours
+  console.log('[LEARN] Scheduling daily learning...')
+  setTimeout(() => {
+    runServerLearning().catch(e => console.error('[LEARN] Failed:', e.message))
+  }, 30000)
+  setInterval(() => {
+    runServerLearning().catch(e => console.error('[LEARN] Failed:', e.message))
+  }, 24 * 60 * 60 * 1000)
 })

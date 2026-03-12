@@ -1,7 +1,6 @@
 import { useAutoEditorStore, type AutoEditorInput } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
 import { usePromptEvolutionStore } from '../../../stores/promptEvolutionStore'
-import { useSocialLearningStore } from '../../../stores/socialLearningStore'
 import type { FullTranscript } from './whisperService'
 import { BASE_CREATIVE_BRIEF_PROMPT, BASE_TECHNICAL_PLAN_PROMPT } from '../constants/basePrompts'
 
@@ -113,7 +112,14 @@ async function getCreativeBrief(
   // Get evolved prompt for creative brief
   const evolvedBriefPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('creative_brief', BASE_CREATIVE_BRIEF_PROMPT)
 
-  const socialRules = useSocialLearningStore.getState().getEditingRulesForPrompt(detectedType || 'all')
+  let socialRules = ''
+  try {
+    const rulesRes = await fetch('http://localhost:3001/api/learning/rules')
+    if (rulesRes.ok) {
+      const data = await rulesRes.json()
+      socialRules = data.rules || ''
+    }
+  } catch {}
 
   const response = await fetch(`${API_BASE}/auto-editor/creative-brief`, {
     method: 'POST',
@@ -176,7 +182,14 @@ async function getTechnicalPlan(
   // Get evolved prompt for technical plan
   const evolvedPlanPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('technical_plan', BASE_TECHNICAL_PLAN_PROMPT)
 
-  const techSocialRules = useSocialLearningStore.getState().getEditingRulesForPrompt('all')
+  let techSocialRules = ''
+  try {
+    const rulesRes = await fetch('http://localhost:3001/api/learning/rules')
+    if (rulesRes.ok) {
+      const data = await rulesRes.json()
+      techSocialRules = data.rules || ''
+    }
+  } catch {}
 
   const response = await fetch(`${API_BASE}/auto-editor/technical-plan`, {
     method: 'POST',

@@ -12,7 +12,6 @@ import BrandStudio from './pages/BrandStudio'
 import Settings from './pages/Settings'
 import Uploads from './pages/Uploads'
 import { useApiStatusStore } from './stores/apiStatusStore'
-import { useSilentLearning } from './hooks/useSilentLearning'
 
 export default function App() {
   const checkStatus = useApiStatusStore((s) => s.checkStatus)
@@ -20,8 +19,6 @@ export default function App() {
   useEffect(() => {
     checkStatus()
   }, [checkStatus])
-
-  useSilentLearning()
 
   return (
     <Routes>
