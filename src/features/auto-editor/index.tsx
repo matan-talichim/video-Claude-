@@ -81,6 +81,7 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
     // If user selected a different presenter, update transcript segments
     if (mainPresenter) {
       const store = useAutoEditorStore.getState()
+      store.setMainPresenter(mainPresenter)
       const transcript = store.transcript
       if (transcript?.segments) {
         transcript.segments.forEach((seg: any) => {

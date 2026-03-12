@@ -331,8 +331,9 @@ async function processVideosWithPlan(
       })),
     }
 
-    // Get transcript segments from store for subtitle generation
+    // Get transcript segments and presenter from store for subtitle generation
     const storedTranscript = useAutoEditorStore.getState().transcript
+    const storedMainPresenter = useAutoEditorStore.getState().mainPresenter
 
     const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
       method: 'POST',
@@ -352,6 +353,7 @@ async function processVideosWithPlan(
         animatedSubtitles: finalInput.animatedSubtitles ?? false,
         animationStyle: finalInput.animationStyle || 'karaoke',
         skipPlatformExport,
+        mainPresenter: storedMainPresenter || storedTranscript?.mainSpeaker || undefined,
         // Send transcript segments for subtitle generation when plan doesn't include them
         transcript: storedTranscript?.segments ? {
           segments: storedTranscript.segments,
