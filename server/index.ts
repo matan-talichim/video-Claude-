@@ -64,7 +64,18 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 * 1024 } })
 app.use('/api/audio', express.static(uploadsDir))
 
 // Serve uploaded files statically (for auto-editor local mode)
-app.use('/uploads', express.static(uploadsDir))
+app.use('/uploads', express.static(uploadsDir, {
+  setHeaders: (res, filePath) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (filePath.endsWith('.mp4')) {
+      res.setHeader('Content-Type', 'video/mp4');
+    } else if (filePath.endsWith('.webm')) {
+      res.setHeader('Content-Type', 'video/webm');
+    } else if (filePath.endsWith('.mov') || filePath.endsWith('.MOV')) {
+      res.setHeader('Content-Type', 'video/quicktime');
+    }
+  }
+}))
 
 // ==================== API STATUS ====================
 
@@ -2200,7 +2211,7 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
       model: 'gpt-5.4',
       messages,
       response_format: { type: 'json_object' },
-      max_tokens: 4000,
+      max_completion_tokens: 4000,
     })
 
     const analysis = JSON.parse(response.choices[0]?.message?.content || '{}')
@@ -2251,7 +2262,7 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
           }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 500,
+        max_completion_tokens: 500,
       })
       const reflection = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}')
       promptImprovements = reflection.improvements || []
@@ -2472,7 +2483,7 @@ ${(transcript.segments || []).map((s: any) => `[${(s.start || 0).toFixed(1)}s] $
           }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 500,
+        max_completion_tokens: 500,
       })
       promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
       if (promptImprovements.length > 0) {
@@ -2693,7 +2704,7 @@ ${aiChoosesDuration ? 'אורך יעד: AI בוחר - קבע אורך אופטי
           }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 500,
+        max_completion_tokens: 500,
       })
       promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
       if (promptImprovements.length > 0) {
@@ -3001,7 +3012,7 @@ Create precise technical edit plan.`
           }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 500,
+        max_completion_tokens: 500,
       })
       promptImprovements = JSON.parse(reflectionResponse.choices[0]?.message?.content || '{}').improvements || []
       if (promptImprovements.length > 0) {
@@ -3029,15 +3040,49 @@ app.post('/api/generate-background', async (req, res) => {
 
     console.log('[NANO BANANA] Generating image with Gemini...')
 
-    const response = await ai.models.generateImages({
-      model: 'imagen-3.0-generate-002',
-      prompt,
-      config: { numberOfImages: 1, aspectRatio },
-    })
+    let imageData: any = null
 
-    const imageData = response.generatedImages?.[0]?.image
+    // Try multiple Imagen model names (API may use different versions)
+    const modelNames = ['imagen-3.0-generate-002', 'imagen-3.0-generate-001', 'imagen-3.0']
+    for (const modelName of modelNames) {
+      try {
+        const response = await ai.models.generateImages({
+          model: modelName,
+          prompt,
+          config: { numberOfImages: 1, aspectRatio },
+        })
+        imageData = response.generatedImages?.[0]?.image
+        if (imageData) {
+          console.log('[NANO BANANA] Success with model:', modelName)
+          break
+        }
+      } catch (modelErr: any) {
+        console.warn(`[NANO BANANA] Model ${modelName} failed:`, modelErr.message?.slice(0, 100))
+      }
+    }
+
+    // Fallback to DALL-E 3 if Gemini Imagen fails
     if (!imageData) {
-      return res.status(500).json({ message: 'Nano Banana לא החזיר תמונה' })
+      console.log('[NANO BANANA] Gemini Imagen failed, trying DALL-E 3 fallback...')
+      const dalleAi = await getOpenAI()
+      if (dalleAi) {
+        try {
+          const dalleRes = await dalleAi.images.generate({
+            model: 'dall-e-3',
+            prompt,
+            n: 1,
+            size: aspectRatio === '9:16' ? '1024x1792' : aspectRatio === '1:1' ? '1024x1024' : '1792x1024',
+          })
+          const dalleUrl = dalleRes.data?.[0]?.url
+          if (dalleUrl) {
+            console.log('[NANO BANANA] DALL-E 3 fallback succeeded')
+            return res.json({ url: dalleUrl, imageUrl: dalleUrl })
+          }
+        } catch (dalleErr: any) {
+          console.warn('[NANO BANANA] DALL-E 3 fallback also failed:', dalleErr.message?.slice(0, 100))
+        }
+      }
+      return res.status(500).json({ message: 'Nano Banana לא החזיר תמונה (כל המודלים נכשלו)' })
     }
 
     // Save image to uploads and return URL
@@ -3107,10 +3152,12 @@ app.post('/api/generate-broll', async (req, res) => {
       }
 
       const taskData = await createRes.json()
-      const taskId = taskData.data?.task_id || taskData.task_id
+      console.log('[SEEDANCE] Full response:', JSON.stringify(taskData))
+      const taskId = taskData.data?.task_id || taskData.task_id || taskData.id || taskData.data?.id
       console.log('[SEEDANCE] Task created:', taskId)
 
       if (!taskId) {
+        console.error('[SEEDANCE] No task ID in response:', JSON.stringify(taskData))
         return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai' })
       }
 
@@ -3929,7 +3976,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
             fs.writeFileSync(srtFile, srtContent, 'utf8')
             const escapedSrt = srtFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
             execSync(
-              `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontSize=18,Bold=1,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
+              `"${ffmpegPath}" -i "${currentFile}" -vf "subtitles='${escapedSrt}':force_style='FontName=Arial,FontSize=22,Bold=1,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=40'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subFile}" -y`,
               { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
             )
             currentFile = subFile
@@ -3953,7 +4000,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
       try {
         // Remap speaker timestamps to cut video
-        const lowerThirdParts = speakers.map((s: any) => {
+        const lowerThirdParts = speakers.map((s: any, idx: number) => {
           const name = s.name || 'דובר'
           const firstAppear = s.first_appearance ?? s.firstAppearance ?? 0
           const displayDur = s.display_duration ?? s.displayDuration ?? 4
@@ -3970,7 +4017,13 @@ app.post('/api/auto-editor/process', async (req, res) => {
             cutOffset += cutDuration
           }
 
-          return `drawtext=text='${name.replace(/'/g, "\\'")}':fontsize=28:fontcolor=white:x=w-text_w-40:y=h-80:enable='between(t,${relativeStart},${relativeStart + displayDur})':box=1:boxcolor=0x7C5CFF@0.7:boxborderw=10`
+          // Write Hebrew text to temp file to avoid FFmpeg encoding issues
+          const tmpTextFile = path.join(uploadsDir, `speaker_${timestamp}_${idx}.txt`)
+          fs.writeFileSync(tmpTextFile, name, 'utf-8')
+          filesToCleanup.push(tmpTextFile)
+
+          const escapedTextFile = tmpTextFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+          return `drawtext=textfile='${escapedTextFile}':fontsize=28:fontcolor=white:x=w-text_w-40:y=h-80:enable='between(t,${relativeStart},${relativeStart + displayDur})':box=1:boxcolor=0x7C5CFF@0.7:boxborderw=10`
         })
 
         const lowerThirdFilter = lowerThirdParts.join(',')
@@ -3999,8 +4052,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
       try {
         // Map graphics to cut video time
-        const gfxParts = graphics.map((g: any) => {
-          const text = (g.text || '').replace(/'/g, "\\'")
+        const gfxParts = graphics.map((g: any, idx: number) => {
+          const text = g.text || ''
           const atTime = g.at_time ?? g.atTime ?? 0
           const duration = g.duration ?? 3
 
@@ -4017,8 +4070,15 @@ app.post('/api/auto-editor/process', async (req, res) => {
           }
 
           const end = relativeStart + duration
+
+          // Write Hebrew text to temp file to avoid FFmpeg encoding issues
+          const tmpTextFile = path.join(uploadsDir, `gfx_${timestamp}_${idx}.txt`)
+          fs.writeFileSync(tmpTextFile, text, 'utf-8')
+          filesToCleanup.push(tmpTextFile)
+
+          const escapedTextFile = tmpTextFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
           // Slide in from right (RTL friendly)
-          return `drawtext=text='${text}':fontsize=36:fontcolor=white:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
+          return `drawtext=textfile='${escapedTextFile}':fontsize=36:fontcolor=white:x='if(lt(t-${relativeStart},0.5),w-(w+text_w)*(t-${relativeStart})/0.5,w-text_w-40)':y=h*0.15:enable='between(t,${relativeStart},${end})':box=1:boxcolor=0x7C5CFF@0.8:boxborderw=15`
         })
 
         const gfxFilter = gfxParts.join(',')
@@ -4430,7 +4490,7 @@ async function runServerLearning() {
               { role: 'user', content: `קטגוריה: ${category}\nסרטונים (מטא-דאטה בלבד):\n${videos.slice(0, 5).map((v: any) => `- "${v.title}" (${v.views} צפיות, ${v.likes} לייקים, תגיות: ${v.tags?.join(', ')})`).join('\n')}` }
             ],
             response_format: { type: 'json_object' },
-            max_tokens: 1000,
+            max_completion_tokens: 1000,
           })
           state.dailyGptCalls++
           state.monthlyGptCost += 0.01
@@ -4487,7 +4547,7 @@ async function runServerLearning() {
               ]}
             ],
             response_format: { type: 'json_object' },
-            max_tokens: 1000,
+            max_completion_tokens: 1000,
           })
 
           const analysis = JSON.parse(analysisRes.choices[0]?.message?.content || '{}')
@@ -4514,7 +4574,7 @@ async function runServerLearning() {
             { role: 'user', content: `${analyses.length} ניתוחים ל-"${category}":\n${JSON.stringify(analyses).substring(0, 6000)}` }
           ],
           response_format: { type: 'json_object' },
-          max_tokens: 1500,
+          max_completion_tokens: 1500,
         })
 
         const patterns = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
@@ -4546,7 +4606,7 @@ async function runServerLearning() {
           { role: 'user', content: `נלמד:\n${JSON.stringify(state.learnedPatterns).substring(0, 6000)}\n\nקיים: ${currentFeatures}` }
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 1500,
+        max_completion_tokens: 1500,
       })
 
       const missing = JSON.parse(missingRes.choices[0]?.message?.content || '{}')

@@ -2,6 +2,13 @@ import { useState } from 'react'
 import { useAutoEditorStore, type QualityReport } from '../store/autoEditorStore'
 import { selectABVersion } from '../orchestrator'
 
+function ensureFullUrl(url: string): string {
+  if (!url) return ''
+  if (url.startsWith('http')) return url
+  if (url.startsWith('/')) return `http://localhost:3001${url}`
+  return `http://localhost:3001/uploads/${url}`
+}
+
 export default function CompareVersions() {
   const versionA = useAutoEditorStore((s) => s.versionA)
   const versionB = useAutoEditorStore((s) => s.versionB)
@@ -17,6 +24,12 @@ export default function CompareVersions() {
     if (!selected) return
     selectABVersion(selected)
   }
+
+  const versionAUrl = versionA[0]?.files[0]?.url ? ensureFullUrl(versionA[0].files[0].url) : ''
+  const versionBUrl = versionB[0]?.files[0]?.url ? ensureFullUrl(versionB[0].files[0].url) : ''
+
+  console.log('[COMPARE] Version A URL:', versionAUrl)
+  console.log('[COMPARE] Version B URL:', versionBUrl)
 
   return (
     <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm overflow-y-auto">
@@ -38,12 +51,15 @@ export default function CompareVersions() {
           >
             <h3 className="text-white font-medium mb-2">גרסה A</h3>
             <p className="text-gray-400 text-xs mb-3">{versionAApproach}</p>
-            {versionA[0]?.files[0] && (
+            {versionAUrl && (
               <video
-                src={versionA[0].files[0].url}
+                src={versionAUrl}
                 className="w-full rounded-lg mb-3"
                 controls
-                preload="metadata"
+                playsInline
+                preload="auto"
+                crossOrigin="anonymous"
+                onError={(e) => console.error('[COMPARE] Version A video error:', versionAUrl, e)}
               />
             )}
             <button
@@ -65,12 +81,15 @@ export default function CompareVersions() {
           >
             <h3 className="text-white font-medium mb-2">גרסה B</h3>
             <p className="text-gray-400 text-xs mb-3">{versionBApproach}</p>
-            {versionB[0]?.files[0] && (
+            {versionBUrl && (
               <video
-                src={versionB[0].files[0].url}
+                src={versionBUrl}
                 className="w-full rounded-lg mb-3"
                 controls
-                preload="metadata"
+                playsInline
+                preload="auto"
+                crossOrigin="anonymous"
+                onError={(e) => console.error('[COMPARE] Version B video error:', versionBUrl, e)}
               />
             )}
             <button
