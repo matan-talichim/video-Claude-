@@ -1,6 +1,7 @@
 import { useAutoEditorStore, type AutoEditorInput, type VideoResult, type QualityReport } from './store/autoEditorStore'
 import { useUserProfileStore } from '../../stores/userProfileStore'
 import { usePromptEvolutionStore } from '../../stores/promptEvolutionStore'
+import { useSocialLearningStore } from '../../stores/socialLearningStore'
 import { transcribeVideos } from './services/whisperService'
 import { planWithChatGPT } from './services/chatgptService'
 import { generateBackground } from './services/nanoBananaService'
@@ -503,6 +504,8 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     // Get evolved prompt for enrichment
     const evolvedEnrichPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('enrichment', BASE_ENRICH_PROMPT)
 
+    const socialRules = useSocialLearningStore.getState().getEditingRulesForPrompt(enrichedInput.userPrompt || 'all')
+
     const enrichRes = await fetch(`${API_BASE}/auto-editor/enrich-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -519,6 +522,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         energyAnalysis,
         userProfile: profile.getProfileForPrompt(),
         promptEvolution: evolvedEnrichPrompt !== BASE_ENRICH_PROMPT ? evolvedEnrichPrompt : undefined,
+        socialLearningRules: socialRules,
       }),
     })
 

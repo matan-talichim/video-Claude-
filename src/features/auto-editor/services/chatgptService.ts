@@ -1,6 +1,7 @@
 import { useAutoEditorStore, type AutoEditorInput } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
 import { usePromptEvolutionStore } from '../../../stores/promptEvolutionStore'
+import { useSocialLearningStore } from '../../../stores/socialLearningStore'
 import type { FullTranscript } from './whisperService'
 import { BASE_CREATIVE_BRIEF_PROMPT, BASE_TECHNICAL_PLAN_PROMPT } from '../constants/basePrompts'
 
@@ -112,6 +113,8 @@ async function getCreativeBrief(
   // Get evolved prompt for creative brief
   const evolvedBriefPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('creative_brief', BASE_CREATIVE_BRIEF_PROMPT)
 
+  const socialRules = useSocialLearningStore.getState().getEditingRulesForPrompt(detectedType || 'all')
+
   const response = await fetch(`${API_BASE}/auto-editor/creative-brief`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -133,6 +136,7 @@ async function getCreativeBrief(
       visualAnalysis: visualAnalysis || null,
       energyAnalysis: energyAnalysis || null,
       promptEvolution: evolvedBriefPrompt !== BASE_CREATIVE_BRIEF_PROMPT ? evolvedBriefPrompt : undefined,
+      socialLearningRules: socialRules,
     }),
   })
 
@@ -172,6 +176,8 @@ async function getTechnicalPlan(
   // Get evolved prompt for technical plan
   const evolvedPlanPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('technical_plan', BASE_TECHNICAL_PLAN_PROMPT)
 
+  const techSocialRules = useSocialLearningStore.getState().getEditingRulesForPrompt('all')
+
   const response = await fetch(`${API_BASE}/auto-editor/technical-plan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -190,6 +196,7 @@ async function getTechnicalPlan(
       targetDuration: input.targetDuration,
       platforms: input.platforms,
       promptEvolution: evolvedPlanPrompt !== BASE_TECHNICAL_PLAN_PROMPT ? evolvedPlanPrompt : undefined,
+      socialLearningRules: techSocialRules,
     }),
   })
 

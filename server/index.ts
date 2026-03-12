@@ -76,6 +76,8 @@ app.get('/api/status', async (_req, res) => {
     gemini: { connected: !!process.env.GEMINI_API_KEY, features: ['Nano Banana', 'Veo 3.1'] },
     seedance: { connected: !!process.env.KIE_API_KEY, provider: 'kie.ai', model: 'seedance-1.5-pro' },
     pixabay: { connected: !!process.env.PIXABAY_API_KEY },
+    youtube: { connected: !!process.env.YOUTUBE_API_KEY },
+    telegram: { connected: !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID },
   }
   res.json(status)
 })
@@ -2274,7 +2276,7 @@ app.post('/api/auto-editor/enrich-prompt', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
-    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, visualAnalysis, energyAnalysis, promptEvolution } = req.body
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, visualAnalysis, energyAnalysis, promptEvolution, socialLearningRules } = req.body
 
     const fullText = (transcript.segments || []).map((s: any) => s.text).join(' ')
     const speakers = [...new Set((transcript.segments || []).map((s: any) => s.speaker))]
@@ -2366,6 +2368,7 @@ ${(visualAnalysis.scene_analysis || []).map((s: any) =>
 ${visualContext}
 ${energyContext}
 ${userProfile || ''}
+${socialLearningRules || ''}
 
 בהתבסס על התמלול, זהה:
 1. מה סוג הסרטון (שיווק/תדמית/פודקאסט/הדרכה/פרסומת/אחר)
@@ -2492,7 +2495,7 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
-    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, platforms, detectedType, visualAnalysis, energyAnalysis, promptEvolution } = req.body
+    const { transcript, userPrompt, targetDuration, numberOfVideos, userProfile, platforms, detectedType, visualAnalysis, energyAnalysis, promptEvolution, socialLearningRules } = req.body
     if (!transcript) return res.status(400).json({ message: 'חסר transcript' })
 
     const aiChoosesDuration = targetDuration === -1
@@ -2557,6 +2560,7 @@ ${durationInstructions}
 - האם הקצב אחיד? אם כן - תגוון עם B-Roll והחלפות זווית
 
 ${userProfile || ''}
+${socialLearningRules || ''}
 
 החזר JSON:
 {
@@ -2712,7 +2716,7 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
-    const { creativeBrief, transcript, targetDuration, platforms, promptEvolution } = req.body
+    const { creativeBrief, transcript, targetDuration, platforms, promptEvolution, socialLearningRules } = req.body
     if (!creativeBrief || !transcript) return res.status(400).json({ message: 'חסר creativeBrief או transcript' })
 
     const aiChoosesDuration = targetDuration === -1
@@ -2734,6 +2738,7 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
 התפקיד שלך: להפוך את ה-brief היצירתי לפקודות עריכה מדויקות.
 
 ${perVideoDurationInfo}
+${socialLearningRules || ''}
 
 כללי דיוק:
 1. cuts: זמנים מדויקים עד 0.1 שנייה
@@ -4218,6 +4223,384 @@ app.post('/api/detach-audio', upload.single('file'), async (req, res) => {
   }
 })
 
+// ============================================
+// SOCIAL LEARNING AGENT
+// ============================================
+
+import { google } from 'googleapis'
+
+// ENDPOINT: Fetch trending videos
+app.post('/api/learning/fetch-trends', async (req, res) => {
+  try {
+    const apiKey = process.env.YOUTUBE_API_KEY
+    if (!apiKey) return res.status(400).json({ message: 'YouTube API key not configured' })
+
+    const youtube = google.youtube({ version: 'v3', auth: apiKey })
+    const { category, maxResults, currentDailyUnits } = req.body
+
+    const searchCost = 100
+    if (currentDailyUnits && currentDailyUnits + searchCost > 5000) {
+      return res.status(429).json({ message: 'YouTube daily limit reached', unitsUsed: currentDailyUnits })
+    }
+
+    const searchQueries: Record<string, string> = {
+      'viral_editing': 'viral video editing techniques 2026',
+      'hooks': 'best video hooks first 3 seconds',
+      'transitions': 'creative video transitions trending',
+      'subtitles': 'best subtitle styles social media viral',
+      'pacing': 'fast cut editing rhythm viral',
+      'broll': 'B-Roll techniques effective videos',
+      'color_grading': 'cinematic color grading social media',
+      'marketing': 'best product video ads viral 2026',
+    }
+
+    const query = searchQueries[category] || searchQueries['viral_editing']
+
+    console.log(`[TRENDS] Searching: "${query}" (cost: ${searchCost} units)`)
+
+    const searchRes = await youtube.search.list({
+      part: ['snippet'],
+      q: query,
+      type: ['video'],
+      order: 'viewCount',
+      maxResults: Math.min(maxResults || 5, 10),
+      relevanceLanguage: 'en',
+      publishedAfter: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+
+    let unitsUsed = searchCost
+
+    const videoIds = (searchRes.data.items || []).map((item: any) => item.id?.videoId).filter(Boolean)
+
+    if (videoIds.length === 0) {
+      return res.json({ category, videos: [], unitsUsed })
+    }
+
+    const statsRes = await youtube.videos.list({
+      part: ['statistics', 'contentDetails', 'snippet'],
+      id: videoIds,
+    })
+    unitsUsed += videoIds.length
+
+    const videos = (statsRes.data.items || [])
+      .map((video: any) => {
+        const views = parseInt(video.statistics?.viewCount || '0')
+        const likes = parseInt(video.statistics?.likeCount || '0')
+        const comments = parseInt(video.statistics?.commentCount || '0')
+        const engagementRate = views > 0 ? (likes + comments) / views : 0
+
+        return {
+          id: video.id,
+          title: video.snippet?.title,
+          description: video.snippet?.description?.substring(0, 300),
+          channelTitle: video.snippet?.channelTitle,
+          publishedAt: video.snippet?.publishedAt,
+          duration: video.contentDetails?.duration,
+          views, likes, comments,
+          engagementRate: Math.round(engagementRate * 10000) / 100,
+          tags: video.snippet?.tags?.slice(0, 10) || [],
+          thumbnailUrl: video.snippet?.thumbnails?.high?.url,
+          url: `https://www.youtube.com/watch?v=${video.id}`,
+        }
+      })
+      .filter((v: any) => v.views >= 10000)
+      .sort((a: any, b: any) => b.engagementRate - a.engagementRate)
+
+    console.log(`[TRENDS] Found ${videos.length} videos, used ${unitsUsed} units`)
+
+    res.json({ category, videos: videos.slice(0, 10), unitsUsed })
+
+  } catch (error: any) {
+    console.error('[TRENDS ERROR]', error.message)
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// ENDPOINT: Analyze viral video visually (GPT-5.4 Vision)
+app.post('/api/learning/analyze-viral-video', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+
+    const { videoId, videoTitle, videoCategory } = req.body
+    const ytdlpPath = fs.existsSync('/opt/homebrew/bin/yt-dlp') ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp'
+    const ffmpegPath = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'
+
+    const tmpDir = path.join(__dirname, 'uploads', `viral_${Date.now()}`)
+    fs.mkdirSync(tmpDir, { recursive: true })
+    const videoPath = path.join(tmpDir, 'video.mp4')
+    const framesDir = path.join(tmpDir, 'frames')
+    fs.mkdirSync(framesDir, { recursive: true })
+
+    console.log(`[VIRAL] Downloading first 60s: ${videoTitle}`)
+
+    try {
+      execSync(
+        `"${ytdlpPath}" --format "worst[ext=mp4]" --download-sections "*0:00-1:00" --max-filesize 15M -o "${videoPath}" "https://www.youtube.com/watch?v=${videoId}"`,
+        { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+    } catch {
+      execSync(
+        `"${ytdlpPath}" --format "worst[ext=mp4]" --max-filesize 15M -o "${videoPath}" "https://www.youtube.com/watch?v=${videoId}"`,
+        { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+    }
+
+    if (!fs.existsSync(videoPath)) {
+      throw new Error('Download failed')
+    }
+
+    execSync(
+      `"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/5,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`,
+      { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+
+    const frameFiles = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort()
+
+    const selected = frameFiles.length > 10
+      ? frameFiles.filter((_: string, i: number) => i % Math.ceil(frameFiles.length / 10) === 0).slice(0, 10)
+      : frameFiles
+
+    const frameImages = selected.map((file: string, i: number) => ({
+      time: i * 5,
+      base64: fs.readFileSync(path.join(framesDir, file)).toString('base64'),
+    }))
+
+    console.log(`[VIRAL] Analyzing ${frameImages.length} frames with GPT-5.4 Vision`)
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      messages: [
+        {
+          role: 'system',
+          content: `נתח סרטון ויראלי. החזר JSON בלבד:
+{
+  "structure": {
+    "hook_seconds": 1.5,
+    "hook_type": "text/question/visual/face",
+    "overall": "hook_content_cta/problem_solution/story/listicle"
+  },
+  "pacing": {
+    "cuts_per_minute": 15,
+    "avg_clip_seconds": 2.5,
+    "rhythm": "constant/accelerating/variable"
+  },
+  "subtitles": {
+    "present": true,
+    "style": "classic/karaoke/animated/box",
+    "position": "center/bottom/top",
+    "size": "small/medium/large/xl"
+  },
+  "broll_percent": 35,
+  "color_tone": "warm/cold/vibrant/cinematic",
+  "aspect_ratio": "9:16/16:9/1:1",
+  "special": ["zoom_effects","emoji_overlays","split_screen"],
+  "virality_reasons": ["reason1","reason2"],
+  "lessons": ["lesson1","lesson2","lesson3"]
+}`
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text' as const, text: `סרטון: "${videoTitle}" | קטגוריה: ${videoCategory} | ${frameImages.length} פריימים:` },
+            ...frameImages.map((f: { base64: string }) => ({
+              type: 'image_url' as const,
+              image_url: { url: `data:image/jpeg;base64,${f.base64}`, detail: 'low' as const }
+            }))
+          ]
+        }
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 1500,
+    })
+
+    const analysis = JSON.parse(response.choices[0]?.message?.content || '{}')
+
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
+
+    console.log('[VIRAL] Analysis complete')
+
+    res.json({
+      videoId, videoTitle, category: videoCategory,
+      analysis,
+      estimatedCost: 0.02,
+    })
+
+  } catch (error: any) {
+    console.error('[VIRAL ERROR]', error.message)
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// ENDPOINT: Synthesize patterns (ONE GPT call for all analyses)
+app.post('/api/learning/synthesize-patterns', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+
+    const { analyses, category } = req.body
+
+    console.log(`[SYNTH] Processing ${analyses.length} analyses for "${category}"`)
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      messages: [
+        {
+          role: 'system',
+          content: `נתח patterns מסרטונים ויראליים. החזר JSON בלבד:
+{
+  "patterns": {
+    "hook": { "avg_seconds": 1.5, "best_type": "text_overlay", "rule": "כלל עריכה" },
+    "pacing": { "avg_cuts_per_min": 18, "avg_clip_sec": 2.5, "rule": "כלל" },
+    "subtitles": { "most_common_style": "karaoke", "position": "center", "rule": "כלל" },
+    "broll": { "avg_percent": 35, "rule": "כלל" },
+    "color": { "most_common": "warm_vibrant", "rule": "כלל" }
+  },
+  "editing_rules": [
+    { "rule": "כלל בעברית", "applies_to": "all/social/marketing", "confidence": 0.9 }
+  ],
+  "sop_update": "SOP מעודכן בעברית"
+}`
+        },
+        {
+          role: 'user',
+          content: `${analyses.length} ניתוחים ל-"${category}":\n${JSON.stringify(analyses).substring(0, 8000)}`
+        }
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 2000,
+    })
+
+    const patterns = JSON.parse(response.choices[0]?.message?.content || '{}')
+    res.json(patterns)
+
+  } catch (error: any) {
+    console.error('[SYNTH ERROR]', error.message)
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// ENDPOINT: Detect missing features
+app.post('/api/learning/detect-missing-features', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'OpenAI not configured' })
+
+    const { learnedPatterns } = req.body
+
+    const currentFeatures = [
+      'trim','split','speed','reverse','drag_drop','multi_track','undo_redo',
+      'filters','brightness','contrast','saturation','blur','opacity','crop','resize',
+      'color_grading','ken_burns_zoom','text_overlays','lower_thirds','subtitles_6_styles',
+      'karaoke_subs','multi_lang_captions','inline_word_styling',
+      'volume','mute','clean_audio','music_pixabay','ducking','tts_elevenlabs',
+      'voice_cloning','detach_audio','eq','fade',
+      'auto_transcription_diarize','filler_removal','silence_removal','ai_chat',
+      'auto_editor','visual_analysis','energy_analysis','ab_testing',
+      'eye_contact','center_speaker','find_scenes','suggest_clips','smart_cut',
+      'nano_banana_image','dalle3','seedance_video','veo_video',
+      'multi_platform_export','learning_profile','prompt_evolution','social_learning',
+    ]
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      messages: [
+        {
+          role: 'system',
+          content: `השווה בין מה שנלמד מסרטונים ויראליים לפיצ'רים הקיימים.
+מצא כלים חסרים. מקסימום 8. רק דברים שבאמת ראית בסרטונים.
+
+החזר JSON:
+{
+  "missing_features": [
+    {
+      "name": "שם בעברית",
+      "name_en": "English name",
+      "description": "מה זה עושה",
+      "why_important": "למה - מבוסס דאטה",
+      "viral_evidence": "בX% מהסרטונים",
+      "difficulty": "easy/medium/hard",
+      "needs_new_api": false,
+      "suggested_api": "FFmpeg/CSS או שם API",
+      "priority": "critical/important/nice_to_have",
+      "implementation_hint": "רמז קצר"
+    }
+  ],
+  "summary": "סיכום קצר",
+  "biggest_gap": "הפער הכי גדול"
+}`
+        },
+        {
+          role: 'user',
+          content: `נלמד:\n${JSON.stringify(learnedPatterns).substring(0, 6000)}\n\nקיים: ${currentFeatures.join(', ')}`
+        }
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 2000,
+    })
+
+    const result = JSON.parse(response.choices[0]?.message?.content || '{}')
+    res.json(result)
+
+  } catch (error: any) {
+    console.error('[MISSING ERROR]', error.message)
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// ENDPOINT: Send Telegram notification
+app.post('/api/notify/telegram', async (req, res) => {
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN
+    const chatId = process.env.TELEGRAM_CHAT_ID
+
+    if (!token || !chatId) {
+      return res.status(400).json({ message: 'Telegram not configured' })
+    }
+
+    const { message } = req.body
+
+    const chunks: string[] = []
+    if (message.length > 4000) {
+      let remaining = message
+      while (remaining.length > 0) {
+        chunks.push(remaining.substring(0, 4000))
+        remaining = remaining.substring(4000)
+      }
+    } else {
+      chunks.push(message)
+    }
+
+    for (const chunk of chunks) {
+      const telegramRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: chunk,
+          parse_mode: 'HTML',
+        }),
+      })
+
+      const result: any = await telegramRes.json()
+      if (!result.ok) {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, text: chunk }),
+        })
+      }
+    }
+
+    console.log('[TELEGRAM] Sent', chunks.length, 'message(s)')
+    res.json({ sent: true })
+
+  } catch (error: any) {
+    console.error('[TELEGRAM ERROR]', error.message)
+    res.status(500).json({ message: error.message })
+  }
+})
+
 // ==================== START SERVER ====================
 
 app.listen(PORT, () => {
@@ -4230,6 +4613,8 @@ app.listen(PORT, () => {
   console.log(`   Gemini (Nano Banana + Veo): ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Seedance (kie.ai): ${process.env.KIE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Pixabay:     ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   YouTube API: ${process.env.YOUTUBE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
+  console.log(`   Telegram:    ${process.env.TELEGRAM_BOT_TOKEN ? '✅ Connected' : '❌ Not configured'}`)
 
   // Check FFmpeg availability
   console.log('Checking FFmpeg...')
