@@ -1242,14 +1242,34 @@ app.post('/api/suggest-broll', async (req, res) => {
       messages: [
         {
           role: 'system',
-          content: `You are a professional video editor. Analyze this Hebrew transcript and suggest 5-8 B-Roll images that would enhance the video. For each suggestion provide:
+          content: `You are a professional video editor. Analyze this Hebrew transcript and suggest 5-8 B-Roll clips that would enhance the video.
+
+For each B-Roll moment, create a detailed prompt that:
+1. DIRECTLY illustrates what the presenter says at that EXACT moment
+2. Matches the video's visual style and lighting
+3. Is cinematically descriptive (camera angle, movement, lighting, mood)
+4. Is in ENGLISH
+5. Is 1-2 sentences, very specific
+
+BAD B-Roll prompts:
+- "modern office" (too vague)
+- "business meeting" (not specific to content)
+- "person working on laptop" (generic)
+
+GOOD B-Roll prompts:
+- "close-up of hands toggling between 5 browser tabs: CRM, WhatsApp Web, Gmail, Google Sheets, calendar app, screen reflecting on reading glasses, fast-paced tab switching, overhead camera angle, cool blue monitor light on face, documentary style"
+- "overwhelmed small business owner at desk, multiple phone screens showing customer messages piling up, stressed expression, warm tungsten lighting, handheld camera slight movement, cinematic shallow depth of field"
+
+For each suggestion provide:
 - timestamp: when to show the B-Roll (in seconds)
-- prompt: DALL-E prompt in English for generating the image
+- prompt: Detailed cinematic English prompt for AI image/video generation (NOT generic)
+- what_presenter_says: the exact quote being said at this moment
 - duration: how long to show (3-8 seconds)
 - position: "fullscreen" or "pip"
 - reason: explanation in Hebrew why this B-Roll is needed
+- why: how this visual supports what's being said
 
-Return ONLY valid JSON: {"suggestions": [{"timestamp": 5, "prompt": "...", "duration": 5, "position": "fullscreen", "reason": "..."}]}`,
+Return ONLY valid JSON: {"suggestions": [{"timestamp": 5, "prompt": "...", "what_presenter_says": "...", "duration": 5, "position": "fullscreen", "reason": "...", "why": "..."}]}`,
         },
         { role: 'user', content: `Transcript:\n${transcript}\n\nSegments:\n${JSON.stringify(segments || [])}` },
       ],
@@ -1748,13 +1768,16 @@ app.post('/api/generate-image-gemini', async (req, res) => {
 
     const { prompt, aspectRatio = '16:9', model = 'nano-banana-2' } = req.body
 
-    const modelMap: Record<string, string> = {
+    const IMAGE_MODELS: Record<string, string> = {
       'nano-banana': 'gemini-3-pro-image-preview',
       'nano-banana-2': 'gemini-3-pro-image-preview',
       'nano-banana-pro': 'gemini-3-pro-image-preview',
+      'background': 'gemini-3-pro-image-preview',   // Deep/Pro - highest quality
+      'broll': 'gemini-3-pro-image-preview',          // Also Pro for B-Roll quality
+      'quick': 'gemini-3.1-flash-image',              // Flash - only for non-critical images
     }
 
-    const modelId = modelMap[model] || 'gemini-3-pro-image-preview'
+    const modelId = IMAGE_MODELS[model] || 'gemini-3-pro-image-preview'
 
     console.log('[NANO BANANA] Generating image with', modelId)
     console.log('[NANO BANANA] Prompt:', prompt)
@@ -2689,6 +2712,50 @@ ${socialLearningRules || ''}
 - B-Roll prompts חייבים להיות מפורטים (לא "אנשים" אלא "close-up of hands typing on laptop keyboard, soft warm lighting, shallow depth of field")
 - ה-enhanced_prompt לא צריך להיות ארוך. 2-3 משפטים ממוקדים.
 
+BACKGROUND IMAGE:
+Based on the video content and transcript, describe a background image that:
+1. Directly represents the TOPIC of this specific video
+2. Matches the visual style of the video (corporate, casual, tech, etc.)
+3. Would look good as a blurred/dimmed background behind the video frame
+4. Is NOT a generic stock photo
+Return a field "backgroundImagePrompt" with a detailed image generation prompt.
+Example for a video about business automation:
+BAD: "modern office with computers" (too generic)
+GOOD: "clean minimal workspace with a laptop showing automation dashboard, flowchart diagrams floating around the screen, soft blue and purple gradient lighting, professional corporate atmosphere, the desk has a coffee cup and notebook, shallow depth of field, photorealistic"
+The prompt must mention:
+- Specific objects related to the video topic
+- Lighting style that matches the video mood
+- Color palette that complements the video
+- Camera angle and depth of field
+- Style reference (photorealistic, cinematic, etc.)
+
+B-ROLL VIDEO PROMPTS:
+For each B-Roll moment, create a Seedance video generation prompt that:
+1. DIRECTLY illustrates what the presenter says at that EXACT moment
+2. Matches the video's visual style and lighting
+3. Is cinematically descriptive (camera angle, movement, lighting, mood)
+4. Is in ENGLISH (Seedance works best with English prompts)
+5. Is 1-2 sentences, very specific
+
+For each B-Roll, also provide:
+- "what_presenter_says": the exact quote being said at this moment
+- "why": why this visual supports what's being said
+
+RULES:
+- B-Roll must SUPPORT the presenter's words, not distract from them
+- Never place B-Roll over the presenter's most powerful statements
+- B-Roll should cover transitions, pauses, or supporting examples
+- Each B-Roll should show a DIFFERENT scene (no repetition)
+
+BAD B-Roll prompts:
+- "modern office" (too vague)
+- "business meeting" (not specific to content)
+- "person working on laptop" (generic)
+
+GOOD B-Roll prompts:
+- "close-up of hands toggling between 5 browser tabs: CRM, WhatsApp Web, Gmail, Google Sheets, calendar app, screen reflecting on reading glasses, fast-paced tab switching, overhead camera angle, cool blue monitor light on face, documentary style"
+- "split-screen time-lapse: left side shows employee manually copying data between systems for hours, right side shows automated workflow completing same task in seconds with green checkmarks appearing, clean modern UI, cinematic lighting transition from warm to cool"
+
 החזר JSON:
 {
   "detected_type": "marketing_product / corporate / podcast / tutorial / ad / vlog / other",
@@ -2696,6 +2763,7 @@ ${socialLearningRules || ''}
   "target_audience": "קהל יעד משוער",
   "enhanced_prompt": "פרומפט מפורט ומדויק לעריכה",
   "video_summary": "במשפט אחד - על מה הסרטון",
+  "backgroundImagePrompt": "Detailed English prompt for background image generation that is SPECIFIC to the video topic - not generic",
   "best_hook": {
     "text": "המשפט הכי חזק",
     "start": 15.2,
@@ -2708,9 +2776,10 @@ ${socialLearningRules || ''}
       "at_text": "הטקסט שמצדיק B-Roll",
       "at_time": 12.0,
       "duration": 4,
-      "prompt_en": "Specific, detailed English prompt for AI generation",
+      "prompt_en": "Specific, detailed English prompt for Seedance AI video generation - must describe camera angle, movement, lighting, mood, and specific objects related to what presenter says at this moment",
+      "what_presenter_says": "exact quote the presenter says at this moment",
       "description_he": "מה הצופה יראה",
-      "why": "למה B-Roll כאן חשוב"
+      "why": "למה B-Roll כאן חשוב - how it supports the presenter's words"
     }
   ],
   "editing_notes": [
@@ -2882,7 +2951,8 @@ ${socialLearningRules || ''}
     "pacing": "fast/medium/slow",
     "music_mood": "אנרגטי/רגוע/דרמטי/משעשע/מעורר השראה",
     "color_mood": "cinematic/warm/cold/vibrant/moody",
-    "overall_vibe": "תיאור קצר של האווירה"
+    "overall_vibe": "תיאור קצר של האווירה",
+    "backgroundImagePrompt": "Detailed English prompt for generating a background image that is SPECIFIC to this video's topic - must mention specific objects, lighting style, color palette, camera angle, depth of field. NOT generic. Example for automation video: 'clean minimal workspace with laptop showing automation dashboard, flowchart diagrams floating, soft blue-purple gradient lighting, shallow depth of field, photorealistic'"
   },
   "content_analysis": {
     "best_quotes": [
@@ -2919,8 +2989,8 @@ ${socialLearningRules || ''}
         { "role": "cta", "segments": [{ "start": 55, "end": 58 }], "duration": 3 }
       ],
       "broll_placements": [
-        { "after_segment": 1, "duration": 3, "prompt": "detailed English prompt for AI image/video generation", "type": "product_shot" },
-        { "after_segment": 3, "duration": 4, "prompt": "happy customers using product in modern office", "type": "lifestyle" }
+        { "after_segment": 1, "duration": 3, "prompt": "Detailed Seedance prompt: camera angle, movement, lighting, specific objects from video topic, cinematic style", "what_presenter_says": "exact quote being said", "type": "product_shot", "why": "how this B-Roll supports the presenter's words" },
+        { "after_segment": 3, "duration": 4, "prompt": "Detailed Seedance prompt: NOT generic - must illustrate the specific concept the presenter discusses at this moment", "what_presenter_says": "exact quote being said", "type": "lifestyle", "why": "visual evidence for the claim being made" }
       ],
       "graphic_moments": [
         { "at_time_relative": 12, "type": "number", "text": "85%", "label": "שביעות רצון לקוחות" },
@@ -2943,7 +3013,12 @@ ${socialLearningRules || ''}
 - hook: תמיד תפתח עם המשפט הכי חזק, לא עם ההתחלה
 ${aiChoosesDuration ? '- optimal_duration: חובה! קבע אורך אופטימלי לכל סרטון בנפרד. כל סרטון יכול להיות באורך שונה.\n- duration_reasoning: חובה! הסבר קצר בעברית למה בחרת את האורך הזה' : `- estimated_duration: חייב להיות קרוב ל-${targetDuration} שניות (± 3 שניות)`}
 - broll_placements: MUST include at least 2 B-Roll moments per 30 seconds
-- B-Roll prompts: כתוב באנגלית, מפורט, סינמטי, עם תיאור תאורה וזווית${promptEvolution ? `\n\n${promptEvolution}` : ''}`
+- B-Roll prompts: כתוב באנגלית, מפורט, סינמטי, עם תיאור תאורה וזווית
+- B-Roll prompts MUST directly illustrate what the presenter says at that EXACT moment
+- Each B-Roll prompt must include: camera angle, movement, lighting, mood, and specific objects related to the video topic
+- BAD: "modern office" / "business meeting" / "person working" (too generic)
+- GOOD: "close-up of hands toggling between CRM tabs, cool blue monitor light, documentary style" (specific to content)
+- backgroundImagePrompt: MUST be specific to this video's topic, not a generic image${promptEvolution ? `\n\n${promptEvolution}` : ''}`
         },
         {
           role: 'user' as const,
@@ -3197,18 +3272,22 @@ Color grade:
         {
           "relative_start": 6.5,
           "relative_end": 10.0,
-          "prompt": "Close up of modern SaaS dashboard on laptop screen, clean UI, soft natural lighting, shallow depth of field, 4K cinematic",
+          "prompt": "MUST directly illustrate what presenter says at this moment - include camera angle, movement, lighting, specific objects, cinematic style - NOT generic",
+          "what_presenter_says": "exact quote being said at this timestamp",
           "transition_in": "fade",
           "transition_out": "fade",
-          "animation": "slow_zoom_in"
+          "animation": "slow_zoom_in",
+          "why": "how this B-Roll supports the presenter's words"
         },
         {
           "relative_start": 18.0,
           "relative_end": 22.0,
-          "prompt": "Happy diverse team celebrating in modern office, high fiving, warm lighting, cinematic slow motion",
+          "prompt": "SPECIFIC to content being discussed - describe camera angle, movement type, lighting mood, and objects that represent the topic",
+          "what_presenter_says": "exact quote being said at this timestamp",
           "transition_in": "dissolve",
           "transition_out": "dissolve",
-          "animation": "pan_right"
+          "animation": "pan_right",
+          "why": "visual evidence for the claim being made"
         }
       ],
       "subtitles": [
@@ -3258,6 +3337,15 @@ CRITICAL RULES:
 3. Use the actual transcript timestamps to plan cuts - do NOT invent timestamps.
 4. Every cut must reference real start/end times from the provided segments.
 5. If the transcript has multiple speakers, prefer the speaker identified as main presenter: ${transcript.mainSpeaker || 'not specified - use speaker with most on-camera time'}.
+6. NEVER cut mid-word. Cut ONLY on natural pauses, end of sentences, or breaths.
+7. Keep at least 0.2s padding before/after cuts.
+8. B-Roll prompts MUST directly illustrate what the presenter says at that EXACT moment - NOT generic.
+9. B-Roll prompts must include: camera angle, movement, lighting, mood, specific objects from the video topic.
+10. BAD B-Roll: "modern office" / "business meeting" / "person working on laptop" (too generic).
+11. GOOD B-Roll: "close-up of hands toggling between 5 browser tabs: CRM, WhatsApp, Gmail, overhead angle, cool blue light, documentary style" (specific).
+12. Zoom ONLY on the 2-3 most important statements per 30 seconds. Zoom must start when key word begins.
+13. Camera angles: change every 4-8 seconds for dynamic feel. Use closeup on emotional/important statements, wide for transitions.
+14. Graphics: ONLY for numbers, percentages, or key terms mentioned by presenter. Max 3 per 30 seconds.
 
 VALIDATION before returning:
 1. Sum all (keep_end - keep_start) for cuts = must match the target duration for each video ± 3
@@ -3266,7 +3354,9 @@ VALIDATION before returning:
 4. At least 2 B-Roll placements per 30 seconds
 5. At least 1 zoom every 7 seconds
 6. camera_angles must cover entire duration with no gaps
-7. transitions between every pair of cuts${promptEvolution ? `\n\n${promptEvolution}` : ''}`
+7. transitions between every pair of cuts
+8. Every B-Roll prompt references specific content from the transcript (not generic)
+9. All timestamps come from the provided transcript - no invented timestamps${promptEvolution ? `\n\n${promptEvolution}` : ''}`
         },
         {
           role: 'user' as const,
@@ -3430,22 +3520,46 @@ app.post('/api/generate-background', async (req, res) => {
     const ai = getGemini()
     if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
 
-    const { prompt, aspectRatio = '9:16' } = req.body
+    const { prompt, aspectRatio = '9:16', transcript } = req.body
     if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
-    console.log('[NANO BANANA] Generating background image...')
+    // If prompt looks generic, try to enrich from transcript
+    let bgPrompt = prompt
+    const genericPatterns = /^(modern|professional|abstract|background|office|business)\s/i
+    if (genericPatterns.test(prompt) && transcript) {
+      const topicSummary = typeof transcript === 'string'
+        ? transcript.substring(0, 200)
+        : (transcript.segments || []).slice(0, 5).map((s: any) => s.text).join(' ').substring(0, 200)
+      bgPrompt = `Professional background image related to: ${topicSummary}. Photorealistic, shallow depth of field, soft lighting, suitable as blurred background. ${prompt}`
+      console.log('[NANO BANANA] Enriched generic prompt with transcript context')
+    }
+
+    console.log('[NANO BANANA] Generating background in DEEP mode (gemini-3-pro-image-preview)')
+    console.log('[NANO BANANA] Using content-specific prompt:', bgPrompt.substring(0, 100))
+
+    // Enhanced prompt for higher quality background images
+    const enhancedPrompt = `Create a high-quality, photorealistic image with the following description.
+Make it extremely detailed, with professional lighting, perfect composition, and cinematic quality.
+The image should look like it was taken by a professional photographer with a high-end camera.
+Description: ${bgPrompt}
+Style requirements:
+- Ultra high detail and sharpness
+- Professional color grading
+- Cinematic depth of field
+- Natural, realistic lighting
+- ${aspectRatio === '9:16' ? '9:16 vertical' : aspectRatio === '16:9' ? '16:9 horizontal' : aspectRatio} aspect ratio composition`
 
     let imageData: any = null
 
-    // Use correct Gemini image generation models
+    // ONLY use Pro model for backgrounds (highest quality) - Flash only as last resort
     const modelNames = ['gemini-3-pro-image-preview', 'gemini-3.1-flash-image']
 
     for (const modelName of modelNames) {
       try {
-        console.log(`[NANO BANANA] Trying model: ${modelName}`)
+        console.log(`[NANO BANANA] Trying model: ${modelName}${modelName.includes('pro') ? ' (DEEP mode)' : ' (fallback)'}`)
         const response = await ai.models.generateContent({
           model: modelName,
-          contents: `Generate an image: ${prompt}`,
+          contents: enhancedPrompt,
           config: {
             responseModalities: ['IMAGE'],
             imageGenerationConfig: {
@@ -3463,7 +3577,7 @@ app.post('/api/generate-background', async (req, res) => {
             imageBytes: imagePart.inlineData.data,
             mimeType: imagePart.inlineData.mimeType,
           }
-          console.log('[NANO BANANA] Success with model:', modelName)
+          console.log(`[NANO BANANA] Background generated (${modelName.includes('pro') ? 'Pro/deep mode' : 'Flash fallback'})`)
           nanoBananaFailedAll = false
           break
         }
@@ -4542,12 +4656,17 @@ app.post('/api/auto-editor/process', async (req, res) => {
     console.log('[PROCESS] B-Roll assets:', brollAssets.length)
 
     // Extract features from videoPlan with multiple field name fallbacks
-    const planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
-    const planCameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles || videoPlan?.angles || []
+    const planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects ||
+      videoPlan?.zoom || []
+    const planCameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles ||
+      videoPlan?.angles || videoPlan?.multicam || []
     const planColorGrade = videoPlan?.color_grade || videoPlan?.colorGrade || 'clean'
     const planSpeakers = videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds || []
-    const planGraphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays || []
+    const planGraphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays ||
+      videoPlan?.textOverlays || []
     const planTransitions = videoPlan?.transitions || ['fade']
+    const planBrollPlacements = videoPlan?.broll_placements || videoPlan?.brollPlacements ||
+      videoPlan?.brollMoments || videoPlan?.broll || []
 
     // Subtitles: use plan subtitles first, then transcript segments
     const planSubtitles = videoPlan?.subtitles || []
@@ -4566,13 +4685,17 @@ app.post('/api/auto-editor/process', async (req, res) => {
         ? filteredTranscriptSegments
         : transcriptSegments
 
-    console.log('[PROCESS] Extracted features:', {
-      zooms: planZooms.length,
+    console.log('[PROCESS] Plan parsed:', {
+      segments: (videoPlan?.cuts || []).length,
       cameraAngles: planCameraAngles.length,
-      colorGrade: planColorGrade,
+      zooms: planZooms.length,
       speakers: planSpeakers.length,
       graphics: planGraphics.length,
+      brollPlacements: planBrollPlacements.length,
       transitions: planTransitions.length,
+      colorGrade: planColorGrade,
+    })
+    console.log('[PROCESS] Extracted features:', {
       planSubtitles: planSubtitles.length,
       transcriptSegments: transcriptSegments.length,
       filteredTranscriptSegments: filteredTranscriptSegments.length,
