@@ -1,4 +1,4 @@
-import { useAutoEditorStore, type AutoEditorInput, type VideoResult, type QualityReport, type ABVersionResult } from './store/autoEditorStore'
+import { useAutoEditorStore, type AutoEditorInput, type VideoResult, type QualityReport } from './store/autoEditorStore'
 import { useUserProfileStore } from '../../stores/userProfileStore'
 import { usePromptEvolutionStore } from '../../stores/promptEvolutionStore'
 import { transcribeVideos } from './services/whisperService'

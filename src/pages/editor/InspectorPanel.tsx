@@ -124,11 +124,11 @@ function ProjectInspector() {
         </div>
       </div>
 
-      {/* Safe Zones */}
+      {/* אזורים בטוחים */}
       <div>
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={showSafeZones} onChange={(e) => setShowSafeZones(e.target.checked)} />
-          <span className="text-xs text-gray-300">📱 הצג Safe Zones (TikTok/Reels)</span>
+          <span className="text-xs text-gray-300">📱 הצג אזורים בטוחים (TikTok/Reels)</span>
         </label>
       </div>
 

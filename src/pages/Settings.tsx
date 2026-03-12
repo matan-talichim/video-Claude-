@@ -619,7 +619,7 @@ ${aiResponse}`,
             <div className="bg-gradient-to-br from-accent-blue to-bg-panel rounded-xl p-6 border border-white/[0.06]">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-lg font-bold">Creator</h3>
+                  <h3 className="text-lg font-bold">יוצר</h3>
                   <p className="text-text-secondary text-sm">$24/חודש</p>
                 </div>
                 <span className="px-3 py-1 bg-green-500/20 text-green-300 rounded-full text-xs">פעיל</span>
@@ -709,8 +709,8 @@ ${aiResponse}`,
             <div className="flex gap-2">
               <input placeholder="אימייל להזמנה" className="flex-1 px-4 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none focus:border-accent-purple/30" />
               <select className="px-3 py-2.5 bg-white/5 rounded-xl border border-white/[0.06] text-sm focus:outline-none cursor-pointer">
-                <option>Editor</option>
-                <option>Viewer</option>
+                <option>עורך</option>
+                <option>צופה</option>
               </select>
               <button onClick={() => addToast('ההזמנה נשלחה!', 'success')} className="px-4 py-2.5 bg-accent-purple hover:bg-accent-purple/80 rounded-xl text-sm transition-colors">הזמן</button>
             </div>
