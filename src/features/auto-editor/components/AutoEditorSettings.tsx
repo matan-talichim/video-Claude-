@@ -1,8 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { Video, Music, Sparkles, Film, ArrowRight, X } from 'lucide-react'
 import type { AutoEditorInput } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
-import { usePromptEvolutionStore } from '../../../stores/promptEvolutionStore'
 
 interface LocalFile {
   id: string
@@ -77,28 +76,8 @@ const PRESET_CATEGORIES = [
 ]
 
 function EvolutionBadge() {
-  // Select the raw evolutions object (stable reference from Zustand)
-  const evolutions = usePromptEvolutionStore(s => s.evolutions)
-
-  // Derive values with useMemo to avoid creating new references each render
-  const { totalLearnings, totalVersions } = useMemo(() => {
-    const entries = Object.values(evolutions)
-    return {
-      totalLearnings: entries.reduce((sum, e) => sum + (e.additions?.length || 0), 0),
-      totalVersions: entries.reduce((sum, e) => sum + (e.version || 0), 0),
-    }
-  }, [evolutions])
-
-  if (totalLearnings === 0) return null
-
-  return (
-    <div className="flex items-center gap-2 bg-purple-500/10 rounded-full px-3 py-1 mb-4" dir="rtl">
-      <span className="text-purple-400 text-xs">&#x1F9EC;</span>
-      <span className="text-purple-300 text-xs">
-        AI למד {totalLearnings} תובנות מ-{totalVersions} עריכות
-      </span>
-    </div>
-  )
+  // Learning insights are sent only via Telegram - hidden from user UI
+  return null
 }
 
 function PromptBuilder({ prompt, setPrompt }: { prompt: string; setPrompt: (p: string) => void }) {

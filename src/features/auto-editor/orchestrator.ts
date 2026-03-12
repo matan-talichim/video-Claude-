@@ -333,7 +333,7 @@ async function processVideosWithPlan(
     addLog(`[${versionLabel}] מעבד סרטון ${i + 1}: שולח לשרת...`)
 
     const fullPlan = {
-      cuts: (videoPlan?.cuts || []).map((c: any) => ({ keepStart: c.keepStart, keepEnd: c.keepEnd })),
+      cuts: (videoPlan?.cuts || []).map((c: any) => ({ keepStart: parseFloat(String(c.keepStart ?? 0)), keepEnd: parseFloat(String(c.keepEnd ?? 0)) })),
       transitions: videoPlan?.transitions || ['fade'],
       zooms: videoPlan?.zooms || [],
       camera_angles: (videoPlan.cameraAngles || []).map((ca: any) => ({
@@ -361,7 +361,10 @@ async function processVideosWithPlan(
     // Get transcript segments and presenter from store for subtitle generation
     const storeState = useAutoEditorStore.getState()
     const storedTranscript = storeState.transcript || storeState.cachedTranscript
-    const storedMainPresenter = storeState.mainPresenter || storeState.detectedPresenter
+    let storedMainPresenter = storeState.mainPresenter || storeState.detectedPresenter
+    if (!storedMainPresenter || storedMainPresenter === 'undefined' || storedMainPresenter === 'unknown') {
+      storedMainPresenter = null
+    }
 
     // Build B-Roll assets from brollClips URLs + plan timing info
     const planBroll = videoPlan?.brollMoments || videoPlan?.broll || editingPlan?.prompts?.broll || []
@@ -563,7 +566,17 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         })
         if (presenterRes.ok) {
           const presenterData = await presenterRes.json()
-          const { mainPresenter: detectedPresenter, confidence, presenterDescription, method } = presenterData
+          let { mainPresenter: detectedPresenter, confidence, presenterDescription, method } = presenterData
+
+          // Validate presenter is not undefined/invalid
+          if (!detectedPresenter || detectedPresenter === 'undefined' || detectedPresenter === 'null' || detectedPresenter === 'unknown') {
+            // Fallback: use speaker with most time from transcript
+            const speakers = transcript.sortedSpeakers || []
+            const validSpeaker = speakers.find((s: any) => s.speaker && s.speaker !== 'undefined')
+            detectedPresenter = validSpeaker?.speaker || 'דובר 1'
+            confidence = 'low'
+            addLog(`[פרזנטור] שם לא תקין מהשרת, נופל לברירת מחדל: ${detectedPresenter}`)
+          }
 
           // Update store with detected presenter
           store.setDetectedPresenter(detectedPresenter, confidence, presenterDescription)
@@ -758,7 +771,7 @@ export async function continueAfterEnrichment(
 
     // Verify plan quality for both
     for (const video of (editingPlanA?.videos || [])) {
-      const cutsDuration = video.cuts.reduce((sum: number, c: any) => sum + (c.keepEnd - c.keepStart), 0)
+      const cutsDuration = video.cuts.reduce((sum: number, c: any) => sum + (parseFloat(String(c.keepEnd ?? 0)) - parseFloat(String(c.keepStart ?? 0))), 0)
       const videoTarget = finalInput.targetDuration === -1 ? (video.optimalDuration || '?') : finalInput.targetDuration
       addLog(`[אימות A] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${videoTarget}s)`)
     }
@@ -817,7 +830,7 @@ export async function continueAfterEnrichment(
     // === IMPROVEMENT 5: Quality metrics ===
     const videoPlanA = editingPlanA?.videos?.[0]
     const videoTargetDur = finalInput.targetDuration === -1 ? (videoPlanA?.optimalDuration || 60) : finalInput.targetDuration
-    const cutsDurA = videoPlanA?.cuts?.reduce((sum: number, c: any) => sum + (c.keepEnd - c.keepStart), 0) || 0
+    const cutsDurA = videoPlanA?.cuts?.reduce((sum: number, c: any) => sum + (parseFloat(String(c.keepEnd ?? 0)) - parseFloat(String(c.keepStart ?? 0))), 0) || 0
     const qualityReport = evaluateEditQuality(videoPlanA, cutsDurA, videoTargetDur)
     setQualityReport(qualityReport)
     addLog(`דוח איכות: ${qualityReport.score}/100 (${qualityReport.passed.length} עברו, ${qualityReport.issues.length} בעיות)`)
