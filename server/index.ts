@@ -3057,69 +3057,59 @@ Create precise technical edit plan.`
 })
 
 // POST /api/generate-background — Nano Banana (Gemini) image generation
-let imagenFailCount = 0
+let nanoBananaFailedAll = false
 
 app.post('/api/generate-background', async (req, res) => {
   try {
     const ai = getGemini()
+    if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
 
     const { prompt, aspectRatio = '9:16' } = req.body
     if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
-    console.log('[NANO BANANA] Generating image...')
+    console.log('[NANO BANANA] Generating background image...')
 
     let imageData: any = null
 
-    // Only try Gemini Imagen if it hasn't failed too many times and API is configured
-    if (ai && imagenFailCount < 3) {
-      // Try multiple Imagen model names (API may use different versions)
-      const modelNames = ['imagen-3.0-generate-002', 'imagen-3.0-generate-001', 'imagen-3.0']
-      for (const modelName of modelNames) {
-        try {
-          const response = await ai.models.generateImages({
-            model: modelName,
-            prompt,
-            config: { numberOfImages: 1, aspectRatio },
-          })
-          imageData = response.generatedImages?.[0]?.image
-          if (imageData) {
-            console.log('[NANO BANANA] Success with model:', modelName)
-            imagenFailCount = 0 // Reset on success
-            break
+    // Use correct Gemini image generation models
+    const modelNames = ['gemini-2.0-flash-exp', 'gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview']
+
+    for (const modelName of modelNames) {
+      try {
+        console.log(`[NANO BANANA] Trying model: ${modelName}`)
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: `Generate an image: ${prompt}`,
+          config: {
+            responseModalities: ['IMAGE'],
+            imageGenerationConfig: {
+              aspectRatio: aspectRatio,
+            },
+          },
+        })
+
+        const imagePart = response.candidates?.[0]?.content?.parts?.find(
+          (p: any) => p.inlineData?.mimeType?.startsWith('image/')
+        )
+
+        if (imagePart?.inlineData) {
+          imageData = {
+            imageBytes: imagePart.inlineData.data,
+            mimeType: imagePart.inlineData.mimeType,
           }
-        } catch (modelErr: any) {
-          console.warn(`[NANO BANANA] Model ${modelName} failed:`, modelErr.message?.slice(0, 100))
+          console.log('[NANO BANANA] Success with model:', modelName)
+          nanoBananaFailedAll = false
+          break
         }
+        throw new Error('No image in response')
+      } catch (modelErr: any) {
+        console.warn(`[NANO BANANA] Model ${modelName} failed:`, modelErr.message?.slice(0, 100))
       }
-      if (!imageData) {
-        imagenFailCount++
-        console.log(`[NANO BANANA] Imagen failed (count: ${imagenFailCount}/3), trying DALL-E fallback`)
-      }
-    } else if (imagenFailCount >= 3) {
-      console.log('[NANO BANANA] Skipping Imagen (failed 3+ times), going directly to DALL-E')
     }
 
-    // Fallback to DALL-E 3 if Gemini Imagen fails or not configured
     if (!imageData) {
-      console.log('[NANO BANANA] Gemini Imagen failed, trying DALL-E 3 fallback...')
-      const dalleAi = await getOpenAI()
-      if (dalleAi) {
-        try {
-          const dalleRes = await dalleAi.images.generate({
-            model: 'dall-e-3',
-            prompt,
-            n: 1,
-            size: aspectRatio === '9:16' ? '1024x1792' : aspectRatio === '1:1' ? '1024x1024' : '1792x1024',
-          })
-          const dalleUrl = dalleRes.data?.[0]?.url
-          if (dalleUrl) {
-            console.log('[NANO BANANA] DALL-E 3 fallback succeeded')
-            return res.json({ url: dalleUrl, imageUrl: dalleUrl })
-          }
-        } catch (dalleErr: any) {
-          console.warn('[NANO BANANA] DALL-E 3 fallback also failed:', dalleErr.message?.slice(0, 100))
-        }
-      }
+      nanoBananaFailedAll = true
+      console.error('[NANO BANANA] All models failed - skipping background image')
       return res.status(500).json({ message: 'Nano Banana לא החזיר תמונה (כל המודלים נכשלו)' })
     }
 
@@ -3202,20 +3192,30 @@ app.post('/api/generate-broll', async (req, res) => {
       // Step 2: Poll for result
       let videoUrl = null
       let attempts = 0
-      const maxAttempts = 120 // 10 minutes max (5 sec intervals)
+      const maxAttempts = 10 // Max 10 polls at 10-second intervals
 
       while (!videoUrl && attempts < maxAttempts) {
-        await new Promise(r => setTimeout(r, 5000))
+        await new Promise(r => setTimeout(r, 10000))
         attempts++
 
-        const statusRes = await fetch(`https://api.kie.ai/api/v1/jobs/getTaskDetails?task_id=${taskId}`, {
-          headers: { 'Authorization': `Bearer ${kieKey}` },
+        const pollUrl = `https://api.kie.ai/api/v1/jobs/getTaskDetails?taskId=${taskId}`
+        console.log('[SEEDANCE] Polling URL:', pollUrl)
+
+        const statusRes = await fetch(pollUrl, {
+          headers: {
+            'Authorization': `Bearer ${kieKey}`,
+            'Content-Type': 'application/json',
+          },
         })
 
+        console.log('[SEEDANCE] Poll status:', statusRes.status)
+
         const statusData = await statusRes.json()
+        console.log('[SEEDANCE] Poll response:', JSON.stringify(statusData).substring(0, 500))
+
         const status = statusData.data?.status || statusData.status
 
-        console.log(`[SEEDANCE] Poll ${attempts}: status=${status}`)
+        console.log(`[SEEDANCE] Poll ${attempts}/${maxAttempts}: status=${status}`)
 
         if (status === 'completed' || status === 'success') {
           videoUrl = statusData.data?.output?.video_url ||
@@ -3231,6 +3231,7 @@ app.post('/api/generate-broll', async (req, res) => {
       }
 
       if (!videoUrl) {
+        console.log('[SEEDANCE] Gave up after', attempts, 'polls - skipping B-Roll for this clip')
         return res.status(408).json({ message: 'יצירת הסרטון לקחה יותר מדי זמן. נסה שוב.' })
       }
 
