@@ -6046,99 +6046,154 @@ async function sendTelegram(message: string) {
   }
 }
 
-function hasLearnedToday(): boolean {
+function hasLearnedThisSessionGlobal(): boolean {
   try {
     const state = loadLearningState()
     if (!state.lastLearnDate) return false
-
-    // Compare dates in Israel timezone
-    const lastLearn = new Date(state.lastLearnDate)
-    const todayIsrael = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }) // YYYY-MM-DD
-    const lastLearnIsrael = lastLearn.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
-
-    return todayIsrael === lastLearnIsrael
+    const hoursSince = (Date.now() - new Date(state.lastLearnDate).getTime()) / (1000 * 60 * 60)
+    return hoursSince < 6
   } catch {
     return false
   }
 }
 
+// Deduplication: add rules to a category, skipping exact and similar duplicates
+function addRulesToCategory(state: any, category: string, newRules: any[]): number {
+  if (!state.learnedPatterns) state.learnedPatterns = {}
+  if (!state.learnedPatterns[category]) {
+    state.learnedPatterns[category] = { editing_rules: [] }
+  }
+
+  const existing = state.learnedPatterns[category].editing_rules || []
+  const existingTexts = new Set(existing.map((r: any) => r.rule.trim().toLowerCase()))
+
+  let addedCount = 0
+
+  newRules.forEach((rule: any) => {
+    const ruleText = (rule.rule || rule).trim().toLowerCase()
+
+    // Skip exact duplicates
+    if (existingTexts.has(ruleText)) {
+      console.log(`[LEARN] Skipping duplicate rule: ${ruleText.substring(0, 50)}...`)
+      return
+    }
+
+    // Skip very similar rules (>80% word overlap)
+    const ruleWords = new Set(ruleText.split(/\s+/))
+    let isDuplicate = false
+
+    for (const existingRule of existingTexts) {
+      const existingWords = new Set(existingRule.split(/\s+/))
+      const overlap = [...ruleWords].filter(w => existingWords.has(w)).length
+      const similarity = overlap / Math.max(ruleWords.size, existingWords.size)
+
+      if (similarity > 0.8) {
+        console.log(`[LEARN] Skipping similar rule (${Math.round(similarity * 100)}% overlap): ${ruleText.substring(0, 50)}...`)
+        isDuplicate = true
+        break
+      }
+    }
+
+    if (!isDuplicate) {
+      existing.push(typeof rule === 'string' ? { rule, confidence: 0.8, applies_to: 'all' } : rule)
+      existingTexts.add(ruleText)
+      addedCount++
+    }
+  })
+
+  state.learnedPatterns[category].editing_rules = existing
+  console.log(`[LEARN] Category ${category}: added ${addedCount} new rules, ${existing.length} total`)
+
+  return addedCount
+}
+
 async function sendLearningReport(state: any, results: any) {
+  const israelHour = parseInt(new Date().toLocaleString('en-US', {
+    timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false
+  }))
+  const sessionLabel = israelHour < 12 ? '🌅 בוקר' : '🌆 ערב'
+
   const now = new Date().toLocaleString('he-IL', {
     timeZone: 'Asia/Jerusalem',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit'
   })
 
-  let message = `📚 דוח למידה יומי - ${now}\n`
-  message += `${'─'.repeat(30)}\n\n`
+  let message = `📚 דוח למידה ${sessionLabel} - ${now}\n`
+  message += '─'.repeat(30) + '\n\n'
 
-  // Categories learned
-  const categoryEntries = Object.entries(results.categories || {})
-  if (categoryEntries.length > 0) {
-    message += `🏷️ קטגוריות:\n`
-    categoryEntries.forEach(([cat, data]: [string, any]) => {
-      message += `  ✅ ${cat}: ${data.videosAnalyzed || 0} סרטונים → ${data.rulesLearned || 0} כללים\n`
+  // Session stats
+  message += `📊 סטטיסטיקות:\n`
+  message += `  🎬 סרטונים שנותחו הפעם: ${results.videosThisSession}\n`
+  message += `  🎬 סה"כ סרטונים (כל הזמן): ${results.totalVideosAllTime}\n`
+  message += `  💡 תובנות חדשות הפעם: ${results.newRulesCount}\n`
+  message += `  💡 סה"כ תובנות (כל הזמן): ${results.totalRulesCount}\n`
+  message += `  🏷️ קטגוריות: ${results.categories.join(', ')}\n\n`
+
+  // NEW rules only
+  if (results.newRules.length > 0) {
+    message += `✨ תובנות חדשות (${results.newRules.length}):\n\n`
+
+    // Group by category
+    const byCategory: Record<string, any[]> = {}
+    results.newRules.forEach((r: any) => {
+      if (!byCategory[r.category]) byCategory[r.category] = []
+      byCategory[r.category].push(r)
     })
-    message += '\n'
+
+    Object.entries(byCategory).forEach(([cat, rules]) => {
+      message += `🏷️ ${cat}:\n`
+      rules.forEach((r: any, i: number) => {
+        const confidence = Math.round((r.confidence || 0) * 100)
+        message += `  ${i + 1}. ${r.rule}\n`
+        message += `     (ביטחון: ${confidence}%)\n`
+      })
+      message += '\n'
+    })
   }
 
-  // All learned rules
-  const allRules: string[] = []
-  Object.entries(state.learnedPatterns || {}).forEach(([_cat, p]: [string, any]) => {
-    ;(p.editing_rules || []).forEach((r: any) => {
-      allRules.push(`${Math.round(r.confidence * 100)}% ${r.rule}`)
-    })
-  })
-  if (allRules.length > 0) {
-    message += `📏 כללים שנלמדו (${allRules.length}):\n`
-    allRules.forEach((r, i) => {
-      message += `  ${i + 1}. ${r}\n`
-    })
-    message += '\n'
-  }
-
-  // Subtitle animation insights
-  const subPatterns = state.learnedPatterns?.subtitles?.patterns?.subtitles?.animation_insights ||
-                      state.learnedPatterns?.animated_captions?.patterns?.subtitles?.animation_insights
-  if (subPatterns) {
-    message += `💬 תובנות כתוביות:\n`
-    message += `  סגנון פופולרי: ${subPatterns.most_popular_animation || '?'}\n`
-    message += `  צבע הדגשה: ${subPatterns.most_popular_highlight_color || '?'}\n`
-    message += `  מילה-מילה: ${subPatterns.word_by_word_percentage || '?'}%\n`
-    message += `  גודל: ${subPatterns.best_font_size || '?'}\n\n`
-  }
-
-  // Missing features
-  if (state.missingFeatures?.length > 0) {
-    message += `⚠️ פיצ'רים חסרים (${state.missingFeatures.length}):\n`
-    const pEmoji: Record<string, string> = { critical: '🔴', important: '🟡', high: '🔴', medium: '🟡', nice_to_have: '🟢', low: '🟢' }
-    state.missingFeatures.forEach((f: any) => {
-      const emoji = pEmoji[f.priority] || '⚪'
-      message += `  ${emoji} ${f.name}: ${f.description || ''}\n`
-    })
-    message += '\n'
-  }
-
-  // Errors
-  if (results.errors?.length > 0) {
-    message += `❌ שגיאות: ${results.errors.join(', ')}\n\n`
+  // Missing features (only critical ones)
+  if (results.missingFeatures?.length > 0) {
+    const criticalFeatures = results.missingFeatures.filter((f: any) => f.priority === 'critical')
+    if (criticalFeatures.length > 0) {
+      message += `🔴 פיצ'רים חסרים (קריטיים):\n`
+      criticalFeatures.forEach((f: any) => {
+        message += `  • ${f.name}\n`
+      })
+      message += '\n'
+    }
   }
 
   // Costs
   message += `💰 עלויות:\n`
-  message += `  YouTube API: ${state.dailyYoutubeUnits || 0} / 5,000 יחידות\n`
-  message += `  GPT calls: ${state.dailyGptCalls || 0} / 15\n`
-  message += `  עלות היום: $${(results.totalCost || 0).toFixed(2)}\n`
-  message += `  עלות החודש: $${(state.monthlyGptCost || 0).toFixed(2)} / $5.00\n`
-  message += `  סה"כ סרטונים: ${state.totalVideosAnalyzed || 0}\n`
+  message += `  YouTube API: ${state.dailyYoutubeUnits || 0} יחידות (היום)\n`
+  message += `  GPT: ${state.dailyGptCalls || 0} קריאות (היום)\n`
+  message += `  עלות חודשית: $${(state.monthlyGptCost || 0).toFixed(2)}\n`
 
-  message += `\n${'─'.repeat(30)}\n`
-  message += `✅ הלמידה הבאה: מחר ב-07:00`
+  // Next session
+  message += '\n' + '─'.repeat(30) + '\n'
+  message += israelHour < 12
+    ? '✅ הלמידה הבאה: היום ב-19:00'
+    : '✅ הלמידה הבאה: מחר ב-07:00'
 
   await sendTelegram(message)
 }
 
 async function runServerLearning() {
+  // Snapshot BEFORE learning
+  const stateBefore = loadLearningState()
+  const rulesBefore: Record<string, Set<string>> = {}
+  let totalRulesBefore = 0
+
+  Object.entries(stateBefore.learnedPatterns || {}).forEach(([cat, data]: [string, any]) => {
+    rulesBefore[cat] = new Set((data.editing_rules || []).map((r: any) => r.rule))
+    totalRulesBefore += rulesBefore[cat].size
+  })
+
+  const videosBeforeTotal = stateBefore.totalVideosAnalyzed || 0
+
+  console.log(`[LEARN] Before: ${totalRulesBefore} total rules across ${Object.keys(rulesBefore).length} categories`)
+
   const state = loadLearningState()
   const todayIsrael = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
   const thisMonth = todayIsrael.substring(0, 7)
@@ -6156,9 +6211,9 @@ async function runServerLearning() {
     state.monthlyDate = thisMonth
   }
 
-  // Check: already learned today? (Israel timezone)
-  if (hasLearnedToday()) {
-    console.log('[LEARN] Already learned today (Israel time), skipping')
+  // Check if already learned this session (within 6 hours)
+  if (hasLearnedThisSessionGlobal()) {
+    console.log('[LEARN] Already learned this session (within 6 hours), skipping')
     return
   }
 
@@ -6168,7 +6223,7 @@ async function runServerLearning() {
     return
   }
 
-  console.log('[LEARN] Starting daily learning session...')
+  console.log('[LEARN] Starting learning session...')
 
   const allCategories = ['viral_editing', 'hooks', 'pacing', 'subtitles', 'broll', 'marketing', 'transitions', 'color_grading', 'animated_captions']
   const dayNumber = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
@@ -6192,7 +6247,7 @@ async function runServerLearning() {
   }
   const youtube = google.youtube({ version: 'v3', auth: process.env.YOUTUBE_API_KEY })
 
-  const results: any = { categories: {}, errors: [], totalCost: 0 }
+  const results: any = { categories: {}, errors: [], totalCost: 0, rulesLearned: 0 }
 
   for (const category of todayCategories) {
     // Check limits before each category
@@ -6285,8 +6340,18 @@ async function runServerLearning() {
           try {
             const synthesis = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
             if (synthesis.editing_rules) {
-              results.rulesLearned += synthesis.editing_rules.length
-              results.categories.push(category)
+              // Preserve non-rule data
+              if (!state.learnedPatterns[category]) state.learnedPatterns[category] = {}
+              state.learnedPatterns[category].patterns = synthesis.patterns
+              state.learnedPatterns[category].sop_update = synthesis.sop_update
+              state.learnedPatterns[category].learnedAt = Date.now()
+              // Use dedup function for rules
+              const added = addRulesToCategory(state, category, synthesis.editing_rules)
+              results.rulesLearned += added
+              results.categories[category] = {
+                videosAnalyzed: 0,
+                rulesLearned: added,
+              }
             }
           } catch {}
         }
@@ -6365,14 +6430,20 @@ async function runServerLearning() {
         })
 
         const patterns = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
-        state.learnedPatterns[category] = { ...patterns, learnedAt: Date.now() }
+        // Preserve non-rule data (patterns, sop_update, etc.)
+        if (!state.learnedPatterns[category]) state.learnedPatterns[category] = {}
+        state.learnedPatterns[category].patterns = patterns.patterns
+        state.learnedPatterns[category].sop_update = patterns.sop_update
+        state.learnedPatterns[category].learnedAt = Date.now()
+        // Use dedup function for rules
+        const rulesAdded = addRulesToCategory(state, category, patterns.editing_rules || [])
         state.dailyGptCalls++
         state.monthlyGptCost += 0.02
         results.totalCost += 0.02
 
         results.categories[category] = {
           videosAnalyzed: analyses.length,
-          rulesLearned: patterns.editing_rules?.length || 0,
+          rulesLearned: rulesAdded,
         }
       }
 
@@ -6420,15 +6491,64 @@ async function runServerLearning() {
     }
   }
 
-  // --- STEP 6: Save state ---
+  // --- STEP 6: Save state first ---
   state.lastLearnDate = Date.now()
   state.lastLearnDateIsrael = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
   saveLearningState(state)
 
-  // --- STEP 7: Send comprehensive Telegram report ---
-  await sendLearningReport(state, results)
+  // --- STEP 7: Find what's NEW by comparing before/after ---
+  const stateAfter = loadLearningState()
 
-  console.log('[LEARN] Daily learning complete, saved state')
+  const newRules: Array<{category: string; rule: string; confidence: number}> = []
+  let totalRulesAfter = 0
+
+  Object.entries(stateAfter.learnedPatterns || {}).forEach(([cat, data]: [string, any]) => {
+    const rules = data.editing_rules || []
+    totalRulesAfter += rules.length
+
+    rules.forEach((r: any) => {
+      if (!rulesBefore[cat] || !rulesBefore[cat].has(r.rule)) {
+        newRules.push({ category: cat, rule: r.rule, confidence: r.confidence || 0 })
+      }
+    })
+  })
+
+  const videosThisSession = (stateAfter.totalVideosAnalyzed || 0) - videosBeforeTotal
+
+  const learningResults = {
+    videosThisSession,
+    totalVideosAllTime: stateAfter.totalVideosAnalyzed || 0,
+    newRulesCount: newRules.length,
+    totalRulesCount: totalRulesAfter,
+    newRules,
+    categories: Object.keys(stateAfter.learnedPatterns || {}),
+    missingFeatures: stateAfter.missingFeatures || [],
+  }
+
+  console.log(`[LEARN] After: ${totalRulesAfter} total rules (+${newRules.length} new)`)
+
+  // --- STEP 8: Send Telegram - ONLY if there are NEW insights ---
+  if (newRules.length > 0) {
+    await sendLearningReport(stateAfter, learningResults)
+  } else {
+    console.log('[LEARN] No new insights learned, skipping detailed Telegram notification')
+    // Still send a short status update
+    const israelTime = new Date().toLocaleString('he-IL', {
+      timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit'
+    })
+    await sendTelegram(
+      `📚 למידה ${israelTime} - לא נמצאו תובנות חדשות.\n` +
+      `📊 סה"כ: ${totalRulesAfter} תובנות מ-${stateAfter.totalVideosAnalyzed || 0} סרטונים.`
+    )
+  }
+
+  // Save session info
+  stateAfter.lastLearnDate = Date.now()
+  stateAfter.lastLearnDateIsrael = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
+  stateAfter.lastSessionNewRules = newRules.length
+  saveLearningState(stateAfter)
+
+  console.log('[LEARN] Learning session complete, saved state')
 }
 
 // ENDPOINT: Get learned rules (called by frontend auto-editor silently)
@@ -6485,55 +6605,205 @@ app.get('/api/learning/rules', (_req, res) => {
 
 function scheduleDailyLearning() {
   const ISRAEL_TIMEZONE = 'Asia/Jerusalem'
-  const TARGET_HOUR = 7 // 7:00 AM Israel time
-  const TARGET_MINUTE = 0
+  const RUN_TIMES = [
+    { hour: 7, minute: 0, label: 'בוקר' },
+    { hour: 19, minute: 0, label: 'ערב' },
+  ]
 
-  function getNextRunTime(): number {
+  function getNextRunTime(): { ms: number; label: string; timeStr: string } {
     const now = new Date()
+    const israelNow = new Date(now.toLocaleString('en-US', { timeZone: ISRAEL_TIMEZONE }))
 
-    // Get current time in Israel
-    const israelNowStr = now.toLocaleString('en-US', { timeZone: ISRAEL_TIMEZONE })
-    const israelNow = new Date(israelNowStr)
+    let closest = { ms: Infinity, label: '', timeStr: '' }
 
-    // Create target time for today at 7:00 AM Israel time
-    const targetToday = new Date(israelNow)
-    targetToday.setHours(TARGET_HOUR, TARGET_MINUTE, 0, 0)
+    for (const runTime of RUN_TIMES) {
+      const target = new Date(israelNow)
+      target.setHours(runTime.hour, runTime.minute, 0, 0)
 
-    // If 7:00 AM already passed today, schedule for tomorrow
-    if (israelNow >= targetToday) {
-      targetToday.setDate(targetToday.getDate() + 1)
+      let msUntil = target.getTime() - israelNow.getTime()
+      if (msUntil <= 0) msUntil += 24 * 60 * 60 * 1000
+
+      if (msUntil < closest.ms) {
+        closest = {
+          ms: msUntil,
+          label: runTime.label,
+          timeStr: `${String(runTime.hour).padStart(2, '0')}:${String(runTime.minute).padStart(2, '0')}`,
+        }
+      }
     }
 
-    const msUntilTarget = targetToday.getTime() - israelNow.getTime()
-    return msUntilTarget > 0 ? msUntilTarget : msUntilTarget + 24 * 60 * 60 * 1000
+    return closest
+  }
+
+  function hasLearnedThisSession(): boolean {
+    try {
+      const state = JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, 'utf-8'))
+      if (!state.lastLearnDate) return false
+      const hoursSince = (Date.now() - new Date(state.lastLearnDate).getTime()) / (1000 * 60 * 60)
+      return hoursSince < 6
+    } catch {
+      return false
+    }
   }
 
   function scheduleNext() {
-    const msUntilRun = getNextRunTime()
-    const hoursUntil = (msUntilRun / (1000 * 60 * 60)).toFixed(1)
-
-    const nextRunIsrael = new Date(Date.now() + msUntilRun)
-      .toLocaleString('he-IL', { timeZone: ISRAEL_TIMEZONE, hour: '2-digit', minute: '2-digit' })
-
-    console.log(`[LEARN] Next learning session scheduled in ${hoursUntil} hours (${nextRunIsrael} Israel time)`)
+    const next = getNextRunTime()
+    const hoursUntil = (next.ms / (1000 * 60 * 60)).toFixed(1)
+    console.log(`[LEARN] Next session: ${next.timeStr} Israel time (${next.label}) - in ${hoursUntil} hours`)
 
     setTimeout(async () => {
-      console.log('[LEARN] Starting daily learning session (scheduled)...')
+      if (hasLearnedThisSession()) {
+        console.log('[LEARN] Already learned this session, skipping')
+        scheduleNext()
+        return
+      }
+
+      console.log(`[LEARN] Starting ${next.label} learning session...`)
       try {
         await runServerLearning()
       } catch (err: any) {
-        console.error('[LEARN] Daily learning failed:', err.message)
-        // Send error notification to Telegram
+        console.error('[LEARN] Learning failed:', err.message)
         try {
-          await sendTelegram(`❌ שגיאה בלמידה יומית:\n${err.message?.substring(0, 500)}`)
+          await sendTelegram(`❌ שגיאה בלמידה (${next.label}):\n${err.message?.substring(0, 500)}`)
         } catch {}
       }
-      // Schedule next run (tomorrow at 7:00 AM)
       scheduleNext()
-    }, msUntilRun)
+    }, next.ms)
   }
 
   scheduleNext()
+}
+
+// ==================== TELEGRAM BOT LISTENER ====================
+
+function startTelegramBotListener() {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN
+  const chatId = process.env.TELEGRAM_CHAT_ID
+
+  if (!botToken || !chatId) {
+    console.log('[TELEGRAM BOT] Not configured, skipping listener')
+    return
+  }
+
+  let lastUpdateId = 0
+
+  async function pollUpdates() {
+    try {
+      const res = await fetch(
+        `https://api.telegram.org/bot${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`
+      )
+      const data = await res.json() as any
+
+      if (data.ok && data.result?.length > 0) {
+        for (const update of data.result) {
+          lastUpdateId = update.update_id
+
+          const msg = update.message
+          if (!msg?.text || String(msg.chat.id) !== String(chatId)) continue
+
+          const text = msg.text.trim().toLowerCase()
+
+          if (text === 'דוח' || text === 'report' || text === 'סטטוס' || text === 'status') {
+            console.log('[TELEGRAM BOT] Report requested')
+            await sendFullReport()
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('[TELEGRAM BOT] Poll error:', e.message)
+    }
+
+    // Poll again
+    setTimeout(pollUpdates, 5000)
+  }
+
+  console.log('[TELEGRAM BOT] Listening for commands (דוח/סטטוס)')
+  pollUpdates()
+}
+
+async function sendFullReport() {
+  try {
+    const state = loadLearningState()
+
+    const now = new Date().toLocaleString('he-IL', {
+      timeZone: 'Asia/Jerusalem',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    })
+
+    // Count all rules
+    let totalRules = 0
+    const categoryCounts: Record<string, number> = {}
+
+    Object.entries(state.learnedPatterns || {}).forEach(([cat, data]: [string, any]) => {
+      const count = (data.editing_rules || []).length
+      categoryCounts[cat] = count
+      totalRules += count
+    })
+
+    const categories = Object.keys(state.learnedPatterns || {})
+
+    let message = `📊 דוח סטטוס מלא - ${now}\n`
+    message += '═'.repeat(30) + '\n\n'
+
+    // General stats
+    message += `📈 סטטיסטיקות כלליות:\n`
+    message += `  🎬 סרטונים שנותחו: ${state.totalVideosAnalyzed || 0}\n`
+    message += `  💡 סה"כ תובנות: ${totalRules}\n`
+    message += `  🏷️ קטגוריות: ${categories.length}\n`
+    message += `  📅 למידה אחרונה: ${state.lastLearnDateIsrael || 'לא ידוע'}\n`
+    message += `  🆕 תובנות חדשות בפעם האחרונה: ${state.lastSessionNewRules || 0}\n\n`
+
+    // Per category breakdown
+    message += `📂 תובנות לפי קטגוריה:\n`
+    Object.entries(categoryCounts)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([cat, count]) => {
+        message += `  • ${cat}: ${count} תובנות\n`
+      })
+    message += '\n'
+
+    // Cost report
+    message += `💰 דוח עלויות:\n`
+    message += `  📅 היום (${state.dailyDate || '?'}):\n`
+    message += `    YouTube API: ${state.dailyYoutubeUnits || 0} / 2,500 יחידות\n`
+    message += `    GPT קריאות: ${state.dailyGptCalls || 0} / 15\n\n`
+    message += `  📅 החודש (${state.monthlyDate || '?'}):\n`
+    message += `    עלות GPT: $${(state.monthlyGptCost || 0).toFixed(2)} / $5.00\n`
+    message += `    YouTube API: ${state.dailyYoutubeUnits || 0} יחידות (היום)\n\n`
+
+    // Missing features summary
+    const missing = state.missingFeatures || []
+    if (missing.length > 0) {
+      const critical = missing.filter((f: any) => f.priority === 'critical').length
+      const important = missing.filter((f: any) => f.priority === 'important').length
+      const nice = missing.filter((f: any) => f.priority === 'nice_to_have').length
+
+      message += `⚠️ פיצ'רים חסרים: ${missing.length}\n`
+      message += `  🔴 קריטי: ${critical}\n`
+      message += `  🟡 חשוב: ${important}\n`
+      message += `  🟢 נחמד: ${nice}\n\n`
+    }
+
+    // Next learning session
+    const israelHour = parseInt(new Date().toLocaleString('en-US', {
+      timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false
+    }))
+
+    message += '═'.repeat(30) + '\n'
+    if (israelHour < 7) {
+      message += '⏰ למידה הבאה: היום 07:00'
+    } else if (israelHour < 19) {
+      message += '⏰ למידה הבאה: היום 19:00'
+    } else {
+      message += '⏰ למידה הבאה: מחר 07:00'
+    }
+
+    await sendTelegram(message)
+
+  } catch (e: any) {
+    await sendTelegram(`❌ שגיאה ביצירת דוח: ${e.message}`)
+  }
 }
 
 // ==================== START SERVER ====================
@@ -6563,35 +6833,40 @@ app.listen(PORT, () => {
     console.error('FFmpeg NOT FOUND - transcription will fail!')
   }
 
-  // Social Learning Agent - Daily at 07:00 Israel time
+  // Social Learning Agent
   console.log('[LEARN] Social Learning Agent configured:')
-  console.log('[LEARN]   Schedule: Daily at 07:00 Israel time (Asia/Jerusalem)')
-  console.log(`[LEARN]   Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? '✅ Enabled' : '❌ Not configured'}`)
+  console.log('[LEARN]   Schedule: 07:00 + 19:00 Israel time')
+  console.log('[LEARN]   Telegram: ' + (process.env.TELEGRAM_BOT_TOKEN ? '✅ Enabled' : '❌ Not configured'))
+  console.log('[LEARN]   Chat ID: ' + (process.env.TELEGRAM_CHAT_ID || 'NOT SET'))
   console.log('[LEARN]   Categories: viral_editing, hooks, pacing, subtitles, broll, marketing, transitions, color_grading, animated_captions')
 
-  // Check if we missed today's run
-  console.log('[LEARN] Checking if daily learning was missed...')
-  if (!hasLearnedToday()) {
+  // Check if we missed a session
+  console.log('[LEARN] Checking if learning session was missed...')
+  if (!hasLearnedThisSessionGlobal()) {
     const israelHour = parseInt(new Date().toLocaleString('en-US', {
       timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false
     }))
 
-    // If it's past 7 AM Israel time and we haven't learned today, run now
+    // If it's past 7 AM or past 7 PM Israel time and we haven't learned recently, run now
     if (israelHour >= 7) {
-      console.log('[LEARN] Missed today\'s 7:00 AM session, running now (30s delay)...')
+      console.log('[LEARN] Missed session, running now (30s delay)...')
       setTimeout(() => {
         runServerLearning().catch(e => {
           console.error('[LEARN] Failed:', e.message)
-          sendTelegram(`❌ שגיאה בלמידה יומית:\n${e.message?.substring(0, 500)}`).catch(() => {})
+          sendTelegram(`❌ שגיאה בלמידה:\n${e.message?.substring(0, 500)}`).catch(() => {})
         })
       }, 30000)
     } else {
       console.log('[LEARN] Before 7:00 AM Israel time, will wait for scheduled time')
     }
   } else {
-    console.log('[LEARN] Already learned today (Israel time)')
+    console.log('[LEARN] Already learned this session (within 6 hours)')
   }
 
-  // Schedule daily learning at 7:00 AM Israel time
+  // Schedule learning at 7:00 + 19:00 Israel time
   scheduleDailyLearning()
+
+  // Start Telegram bot listener for commands
+  console.log('[TELEGRAM BOT] Commands: דוח / סטטוס / report')
+  startTelegramBotListener()
 })
