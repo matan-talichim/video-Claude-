@@ -2357,11 +2357,8 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
     console.log('[VISUAL] Analysis complete:', analysis.scene_analysis?.length, 'scenes,',
       analysis.overall?.scene_changes?.length, 'scene changes')
 
-    // Cleanup frames
-    try {
-      frameFiles.forEach((f: string) => fs.unlinkSync(path.join(framesDir, f)))
-      fs.rmdirSync(framesDir)
-    } catch {}
+    // Keep frames for presenter identification (will be cleaned up after processing)
+    console.log(`[VISUAL] Keeping ${frameFiles.length} frames in ${framesDir} for presenter identification`)
 
     // Phase 2: Self-reflection - ask the model to improve its own prompt
     let promptImprovements: string[] = []
@@ -2415,7 +2412,7 @@ Return exactly 3 suggestions. Each suggestion must be:
       console.warn('[VISUAL] Self-reflection failed (non-critical):', reflErr.message)
     }
 
-    res.json({ ...analysis, _promptImprovements: promptImprovements })
+    res.json({ ...analysis, _promptImprovements: promptImprovements, framesDir, frameCount: frameFiles.length, frameInterval: 5 })
 
   } catch (error: any) {
     console.error('[VISUAL ERROR]', error.message)
@@ -2423,13 +2420,270 @@ Return exactly 3 suggestions. Each suggestion must be:
   }
 })
 
+// Improved GPT presenter identification with content analysis
+async function askGPTForPresenter(transcript: any, visualAnalysis: any, speakerTimes: Record<string, number>): Promise<string> {
+  const validSpeakers = Object.keys(speakerTimes).filter(s => s && s !== 'undefined' && s !== 'null')
+
+  if (validSpeakers.length === 0) return 'דובר 1'
+  if (validSpeakers.length === 1) return validSpeakers[0]
+
+  const speakerSamples: Record<string, string[]> = {}
+  validSpeakers.forEach(speaker => {
+    const segs = (transcript.segments || [])
+      .filter((s: any) => s.speaker === speaker)
+      .slice(0, 5)
+    speakerSamples[speaker] = segs.map((s: any) => `[${s.start.toFixed(1)}s] "${s.text}"`)
+  })
+
+  const prompt = `Analyze this video transcript to identify the MAIN PRESENTER.
+SPEAKERS:
+${validSpeakers.map(s => `${s}: ${Math.round(speakerTimes[s])} seconds of speaking`).join('\n')}
+SAMPLE DIALOGUE FOR EACH SPEAKER:
+${validSpeakers.map(s => `\n${s}:\n${speakerSamples[s]?.join('\n') || 'no samples'}`).join('\n')}
+RULES TO IDENTIFY THE PRESENTER:
+1. The PRESENTER delivers the MAIN CONTENT - they explain, teach, sell, or present
+2. The PRESENTER speaks in LONG sentences with a clear message
+3. An INTERVIEWER/ASSISTANT asks SHORT questions or gives directions like "ספר לי על..." or "מה אתה חושב על..."
+4. A PRODUCTION CREW member says things like "מוכן?", "עוד פעם", "יופי"
+5. The presenter usually has the MOST content-rich speech (not just the most time)
+Look at the CONTENT of what each speaker says:
+- Who is EXPLAINING something? → likely presenter
+- Who is ASKING questions? → likely interviewer
+- Who has SHORT responses? → likely crew
+Return ONLY the speaker name (e.g., "דובר 1"). Nothing else.`
+
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return validSpeakers[0]
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 50,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const result = response.choices[0].message.content?.trim() || ''
+    console.log(`[PRESENTER] GPT analysis result: "${result}"`)
+
+    // Extract speaker name
+    const match = result.match(/דובר\s*\d+/)
+    const identified = match ? match[0] : result
+
+    if (validSpeakers.some(s => matchesSpeaker(s, identified))) {
+      return identified
+    }
+
+    // Fallback
+    console.warn(`[PRESENTER] GPT returned "${result}" which doesn't match any speaker`)
+    return validSpeakers[0]
+  } catch (e: any) {
+    console.error('[PRESENTER] GPT failed:', e.message)
+    return validSpeakers[0]
+  }
+}
+
+// Video frame-based presenter identification
+async function identifyPresenterWithVideo(
+  transcript: any,
+  framesDir: string,
+  frameFiles: string[],
+  speakerTimes: Record<string, number>
+): Promise<{ presenter: string, confidence: 'high' | 'medium' | 'low' }> {
+
+  const validSpeakers = Object.keys(speakerTimes).filter(s => s && s !== 'undefined')
+
+  if (validSpeakers.length <= 1) {
+    return { presenter: validSpeakers[0] || 'דובר 1', confidence: 'high' }
+  }
+
+  // Pick 6 frames spread across the video
+  const selectedFrames: Array<{path: string, timestamp: number}> = []
+  const step = Math.max(1, Math.floor(frameFiles.length / 6))
+
+  for (let i = 0; i < frameFiles.length && selectedFrames.length < 6; i += step) {
+    const framePath = path.join(framesDir, frameFiles[i])
+    if (fs.existsSync(framePath)) {
+      selectedFrames.push({
+        path: framePath,
+        timestamp: i * 5, // frames extracted every 5 seconds
+      })
+    }
+  }
+
+  if (selectedFrames.length === 0) {
+    console.log('[PRESENTER-VIDEO] No frames available, falling back to text-only')
+    const textResult = await askGPTForPresenter(transcript, null, speakerTimes)
+    return { presenter: textResult, confidence: 'low' }
+  }
+
+  // For each frame, find which speaker is talking at that timestamp
+  const frameContext = selectedFrames.map(frame => {
+    const activeSegments = (transcript.segments || []).filter((seg: any) =>
+      seg.start <= frame.timestamp && seg.end >= frame.timestamp
+    )
+
+    const activeSpeaker = activeSegments[0]?.speaker || 'silence'
+    const activeText = activeSegments[0]?.text || ''
+
+    return {
+      timestamp: frame.timestamp,
+      speaker: activeSpeaker,
+      text: activeText,
+    }
+  })
+
+  // Build GPT Vision request with frames + transcript
+  const imageContents = selectedFrames.map((frame, i) => {
+    const imageData = fs.readFileSync(frame.path).toString('base64')
+    const context = frameContext[i]
+
+    return [
+      {
+        type: 'text' as const,
+        text: `Frame at ${context.timestamp}s - Speaker: "${context.speaker}" saying: "${context.text.substring(0, 80)}"`,
+      },
+      {
+        type: 'image_url' as const,
+        image_url: {
+          url: `data:image/jpeg;base64,${imageData}`,
+          detail: 'low' as const,
+        },
+      },
+    ]
+  }).flat()
+
+  // Speaker samples for context
+  const speakerSamplesText = validSpeakers.map(speaker => {
+    const segs = (transcript.segments || [])
+      .filter((s: any) => s.speaker === speaker)
+      .slice(0, 4)
+    return `${speaker} (${Math.round(speakerTimes[speaker])}s):\n${segs.map((s: any) => `  [${s.start.toFixed(1)}s] "${(s.text || '').substring(0, 60)}"`).join('\n')}`
+  }).join('\n\n')
+
+  const prompt = `You are analyzing a video to identify the MAIN PRESENTER.
+I'm showing you 6 frames from the video with timestamps. For each frame, I tell you which speaker the transcription says is talking.
+SPEAKERS IN THIS VIDEO:
+${speakerSamplesText}
+YOUR TASK:
+1. Look at each frame - who is VISIBLE on camera? Are they talking (mouth open, gesturing)?
+2. Cross-reference: when a speaker is talking (according to transcript), is that person ON CAMERA?
+3. The PRESENTER is the person who:
+   - Appears on camera FACING the camera
+   - Speaks TO the camera (presenting, explaining, selling)
+   - Is the main visible person in most frames
+4. Someone who SPEAKS but is NEVER or RARELY visible on camera is likely an interviewer or crew member
+Based on the frames AND the transcript:
+- Which speaker appears on camera most?
+- Which speaker is talking while ON camera?
+- Which speaker seems to be off-camera (voice only)?
+Return a JSON object:
+{
+  "presenter": "דובר X",
+  "confidence": "high" or "medium" or "low",
+  "reasoning": "brief explanation",
+  "on_camera_speaker": "דובר X - the person visible in most frames",
+  "off_camera_speakers": ["דובר Y - heard but not seen"]
+}
+Return ONLY valid JSON.`
+
+  try {
+    const ai = await getOpenAI()
+    if (!ai) {
+      return { presenter: validSpeakers[0], confidence: 'low' }
+    }
+
+    console.log(`[PRESENTER-VIDEO] Sending ${selectedFrames.length} frames to GPT Vision...`)
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          ...imageContents,
+        ],
+      }],
+    })
+
+    const content = response.choices[0].message.content?.trim() || ''
+    const cleaned = content.replace(/```json|```/g, '').trim()
+
+    try {
+      const result = JSON.parse(cleaned)
+
+      console.log(`[PRESENTER-VIDEO] Result: ${result.presenter} (${result.confidence})`)
+      console.log(`[PRESENTER-VIDEO] On camera: ${result.on_camera_speaker}`)
+      console.log(`[PRESENTER-VIDEO] Off camera: ${result.off_camera_speakers?.join(', ')}`)
+      console.log(`[PRESENTER-VIDEO] Reasoning: ${result.reasoning}`)
+
+      // Validate
+      if (result.presenter && validSpeakers.some(s => matchesSpeaker(s, result.presenter))) {
+        return {
+          presenter: result.presenter,
+          confidence: result.confidence || 'medium',
+        }
+      }
+
+      // Try on_camera_speaker as fallback
+      if (result.on_camera_speaker) {
+        const onCamMatch = result.on_camera_speaker.match(/דובר\s*\d+/)
+        if (onCamMatch && validSpeakers.some(s => matchesSpeaker(s, onCamMatch[0]))) {
+          return { presenter: onCamMatch[0], confidence: result.confidence || 'medium' }
+        }
+      }
+    } catch (parseErr) {
+      console.warn('[PRESENTER-VIDEO] Failed to parse GPT response:', content.substring(0, 200))
+    }
+
+    // Extract speaker name from raw text
+    const rawMatch = content.match(/דובר\s*\d+/)
+    if (rawMatch && validSpeakers.some(s => matchesSpeaker(s, rawMatch[0]))) {
+      return { presenter: rawMatch[0], confidence: 'medium' }
+    }
+  } catch (e: any) {
+    console.error('[PRESENTER-VIDEO] GPT Vision failed:', e.message?.substring(0, 150))
+  }
+
+  // Fallback to text-only analysis
+  console.log('[PRESENTER-VIDEO] Falling back to text-only analysis')
+  const textResult = await askGPTForPresenter(transcript, null, speakerTimes)
+  return { presenter: textResult, confidence: 'low' }
+}
+
 // POST /api/auto-editor/identify-presenter — Cross-reference visual analysis with speaker diarization
 app.post('/api/auto-editor/identify-presenter', async (req, res) => {
   try {
-    const { transcript, visualAnalysis, speakerTimes } = req.body
+    const { transcript, visualAnalysis, speakerTimes, framesDir: reqFramesDir } = req.body
 
     if (!transcript?.segments || !speakerTimes) {
       return res.status(400).json({ message: 'חסר תמלול או נתוני דוברים' })
+    }
+
+    const validSpeakers = Object.keys(speakerTimes).filter(s => s && s !== 'undefined' && s !== 'null')
+
+    // Try video frame-based identification if frames directory is available
+    const framesPath = reqFramesDir || ''
+    if (framesPath && fs.existsSync(framesPath)) {
+      const frameFiles = fs.readdirSync(framesPath)
+        .filter((f: string) => f.endsWith('.jpg') || f.endsWith('.png'))
+        .sort()
+
+      if (frameFiles.length > 0) {
+        console.log(`[PRESENTER] Using ${frameFiles.length} video frames for identification`)
+        const result = await identifyPresenterWithVideo(
+          transcript, framesPath, frameFiles, speakerTimes
+        )
+
+        return res.json({
+          mainPresenter: result.presenter,
+          confidence: result.confidence,
+          method: 'video_frames',
+          presenterDescription: visualAnalysis?.presenter_detection?.presenter_description || '',
+          reasoning: `Video frame analysis identified ${result.presenter}`,
+          speakerOverlap: {},
+        })
+      }
     }
 
     const presenterDetection = visualAnalysis?.presenter_detection
@@ -2448,10 +2702,8 @@ app.post('/api/auto-editor/identify-presenter', async (req, res) => {
 
       // For each speaker, calculate overlap with presenter visible times
       const speakerOverlap: Record<string, number> = {}
-      const speakers = [...new Set(segments.map(s => s.speaker))].filter(s => s && s !== 'undefined' && s !== 'null')
 
-      speakers.forEach(speaker => {
-        if (!speaker || speaker === 'undefined') return
+      validSpeakers.forEach(speaker => {
         const speakerSegments = segments.filter(s => s.speaker === speaker)
         let overlap = 0
 
@@ -2494,79 +2746,18 @@ app.post('/api/auto-editor/identify-presenter', async (req, res) => {
       }
     }
 
-    // Fallback: if visual analysis didn't help, use GPT to decide
-    console.log('[PRESENTER] Visual overlap inconclusive, asking GPT...')
-    const ai = await getOpenAI()
-    if (!ai) {
-      // No AI available — fall back to most speaking time
-      const fallback = Object.entries(speakerTimes).filter(([s]) => s && s !== 'undefined').sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+    // Fallback: use improved GPT analysis with content understanding
+    console.log('[PRESENTER] Visual overlap inconclusive, asking GPT with content analysis...')
+
+    const result = await askGPTForPresenter(transcript, visualAnalysis, speakerTimes)
+
+    if (result && validSpeakers.some(s => matchesSpeaker(s, result))) {
       return res.json({
-        mainPresenter: fallback?.[0] || 'דובר 1',
-        confidence: 'low',
-        method: 'speaking_time_fallback',
-        presenterDescription: '',
-        reasoning: 'No visual analysis or AI available, using most speaking time',
-        speakerOverlap: {},
-      })
-    }
-
-    const prompt = `You are analyzing a video to identify the MAIN PRESENTER.
-SPEAKER DATA:
-${Object.entries(speakerTimes).map(([s, t]) => `${s}: ${Math.round(t as number)} seconds of speaking`).join('\n')}
-
-VISUAL ANALYSIS:
-${JSON.stringify(visualAnalysis?.presenter_detection || visualAnalysis?.overall || {}, null, 2)}
-
-TRANSCRIPT SAMPLE (first 3 segments per speaker):
-${[...new Set(segments.map(s => s.speaker))].map((speaker: string) => {
-  const segs = segments.filter(s => s.speaker === speaker).slice(0, 3)
-  return `${speaker}:\n${segs.map(s => `  [${s.start.toFixed(1)}s] "${s.text}"`).join('\n')}`
-}).join('\n\n')}
-
-The MAIN PRESENTER is the person who:
-- Speaks TO THE CAMERA (not asking questions from behind camera)
-- Delivers the main content/message
-- Is the "talent" / expert / host
-
-Someone who asks questions, gives directions, or speaks from off-camera is NOT the presenter.
-They are production crew or an interviewer.
-
-CLUES:
-- The presenter usually has longer monologues (explains things)
-- Production crew usually has short sentences (questions, directions)
-- The presenter's content is the TOPIC of the video
-- The interviewer's content is questions about the topic
-
-Return ONLY the speaker name (e.g., "דובר 1"). Nothing else.`
-
-    const response = await ai.chat.completions.create({
-      model: 'gpt-5.4',
-      max_completion_tokens: 50,
-      messages: [{ role: 'user', content: prompt }],
-    })
-
-    const result = response.choices[0].message.content?.trim() || ''
-    console.log(`[PRESENTER] GPT identified: ${result}`)
-
-    // Validate it's a real speaker
-    const validSpeakers = Object.keys(speakerTimes).filter(s => s && s !== 'undefined' && s !== 'null')
-    let identified = ''
-    if (validSpeakers.includes(result)) {
-      identified = result
-    } else {
-      const match = result.match(/דובר \d+/)
-      if (match && validSpeakers.includes(match[0])) {
-        identified = match[0]
-      }
-    }
-
-    if (identified) {
-      return res.json({
-        mainPresenter: identified,
+        mainPresenter: result,
         confidence: 'medium',
-        method: 'gpt_analysis',
+        method: 'gpt_content_analysis',
         presenterDescription: presenterDetection?.presenter_description || '',
-        reasoning: `GPT identified ${identified} based on content analysis`,
+        reasoning: `GPT content analysis identified ${result} as presenter`,
         speakerOverlap: {},
       })
     }
@@ -4002,9 +4193,8 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       }
     }
 
-    // Clean up temp files
+    // Clean up mp3 temp file (keep source for speaker sample extraction below)
     if (fs.existsSync(mp3Path)) try { fs.unlinkSync(mp3Path) } catch {}
-    if (isTemp && fs.existsSync(filePath)) try { fs.unlinkSync(filePath) } catch {}
 
     // Map speaker IDs to Hebrew names
     const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
@@ -4085,6 +4275,46 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
     console.log('[AUTO-TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers,', totalDuration.toFixed(1), 'sec, model:', usedModel)
 
+    // Extract audio samples for each speaker (for UI preview)
+    const speakerSamples: Record<string, string> = {}
+    const uniqueSpeakersForSample = [...new Set(segments.map((s: any) => s.speaker))].filter(Boolean) as string[]
+    const sampleTimestamp = Date.now()
+    const ffmpegForSamples = getFFmpeg()
+
+    for (const speaker of uniqueSpeakersForSample) {
+      // Find the LONGEST segment for this speaker (best sample)
+      const speakerSegments = segments
+        .filter((s: any) => s.speaker === speaker)
+        .sort((a: any, b: any) => (b.end - b.start) - (a.end - a.start))
+
+      if (speakerSegments.length === 0) continue
+
+      // Take the longest segment, but cap at 5 seconds
+      const bestSegment = speakerSegments[0]
+      const sampleStart = bestSegment.start
+      const sampleDuration = Math.min(bestSegment.end - bestSegment.start, 5)
+
+      const sampleFile = path.join(uploadsDir, `speaker_sample_${sampleTimestamp}_${speaker.replace(/\s+/g, '_')}.mp3`)
+
+      try {
+        execSync(
+          `"${ffmpegForSamples}" -i "${filePath}" -ss ${sampleStart.toFixed(3)} -t ${sampleDuration.toFixed(3)} -vn -c:a libmp3lame -b:a 128k "${sampleFile}" -y`,
+          { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
+        )
+
+        if (fs.existsSync(sampleFile) && fs.statSync(sampleFile).size > 1000) {
+          const sampleUrl = `http://localhost:${PORT}/uploads/${path.basename(sampleFile)}`
+          speakerSamples[speaker] = sampleUrl
+          console.log(`[TRANSCRIBE] Audio sample for ${speaker}: ${sampleDuration.toFixed(1)}s from ${sampleStart.toFixed(1)}s`)
+        }
+      } catch (e: any) {
+        console.warn(`[TRANSCRIBE] Failed to extract sample for ${speaker}:`, e.message?.substring(0, 100))
+      }
+    }
+
+    // Clean up temp source file now that samples are extracted
+    if (isTemp && fs.existsSync(filePath)) try { fs.unlinkSync(filePath) } catch {}
+
     res.json({
       segments,
       duration: totalDuration,
@@ -4092,7 +4322,11 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       speakers,
       mainSpeaker,
       speakerTimes,
-      sortedSpeakers,
+      sortedSpeakers: sortedSpeakers.map(s => ({
+        ...s,
+        sampleUrl: speakerSamples[s.speaker] || null,
+        sampleText: segments.find((seg: any) => seg.speaker === s.speaker)?.text?.substring(0, 80) || '',
+      })),
       autoDetected: true,
       model: usedModel,
     })
@@ -4646,6 +4880,153 @@ function matchesSpeaker(segmentSpeaker: any, targetPresenter: string): boolean {
   return false
 }
 
+// Clean up speaker sample files after processing
+function cleanupSpeakerSamples(uploadsDirectory: string, sampleTimestamp?: number) {
+  try {
+    const files = fs.readdirSync(uploadsDirectory).filter(f =>
+      f.startsWith('speaker_sample_') && (sampleTimestamp ? f.includes(`${sampleTimestamp}`) : true)
+    )
+    files.forEach(f => {
+      try { fs.unlinkSync(path.join(uploadsDirectory, f)) } catch {}
+    })
+    if (files.length > 0) {
+      console.log(`[CLEANUP] Removed ${files.length} speaker sample files`)
+    }
+  } catch {}
+}
+
+// Schedule cleanup of old speaker samples (older than 1 hour)
+setInterval(() => {
+  try {
+    const files = fs.readdirSync(uploadsDir).filter(f => f.startsWith('speaker_sample_'))
+    const oneHourAgo = Date.now() - 3600000
+    files.forEach(f => {
+      const match = f.match(/speaker_sample_(\d+)/)
+      if (match && parseInt(match[1]) < oneHourAgo) {
+        try { fs.unlinkSync(path.join(uploadsDir, f)) } catch {}
+      }
+    })
+  } catch {}
+}, 600000) // every 10 minutes
+
+// Build cut ranges that strictly include only presenter segments
+function buildPresenterCutRanges(
+  transcript: any,
+  mainPresenter: string
+): Array<{start: number, end: number}> {
+
+  const allSegments = transcript.segments || []
+
+  // Separate presenter vs other
+  const presenterSegs = allSegments.filter((s: any) => matchesSpeaker(s.speaker, mainPresenter))
+  const otherSegs = allSegments.filter((s: any) => !matchesSpeaker(s.speaker, mainPresenter))
+
+  if (presenterSegs.length === 0) {
+    console.warn('[SPEAKER] No presenter segments found, using all')
+    return allSegments.map((s: any) => ({ start: s.start, end: s.end }))
+  }
+
+  // Sort presenter segments by time
+  presenterSegs.sort((a: any, b: any) => a.start - b.start)
+
+  // Build cut ranges with smart merging
+  const ranges: Array<{start: number, end: number}> = []
+
+  presenterSegs.forEach((seg: any) => {
+    const segStart = Math.max(0, seg.start - 0.15) // Small padding
+    const segEnd = seg.end + 0.15
+
+    const last = ranges[ranges.length - 1]
+
+    if (last) {
+      const gap = segStart - last.end
+
+      if (gap <= 0) {
+        // Overlapping - extend
+        last.end = Math.max(last.end, segEnd)
+      } else if (gap < 0.5) {
+        // Very small gap (natural pause) - merge
+        last.end = segEnd
+      } else {
+        // Check if another speaker talks in this gap
+        const otherInGap = otherSegs.some((other: any) =>
+          other.start < segStart && other.end > last.end
+        )
+
+        if (otherInGap) {
+          // Another speaker in the gap - DON'T merge, create new range
+          console.log(`[SPEAKER] Gap ${last.end.toFixed(1)}-${segStart.toFixed(1)}: other speaker detected, cutting`)
+          ranges.push({ start: segStart, end: segEnd })
+        } else if (gap < 2.0) {
+          // Silence gap under 2s - merge for smooth flow
+          last.end = segEnd
+        } else {
+          // Long gap - new range
+          ranges.push({ start: segStart, end: segEnd })
+        }
+      }
+    } else {
+      ranges.push({ start: segStart, end: segEnd })
+    }
+  })
+
+  console.log(`[SPEAKER] Built ${ranges.length} cut ranges from ${presenterSegs.length} presenter segments`)
+  console.log(`[SPEAKER] Total presenter time: ${ranges.reduce((sum, r) => sum + r.end - r.start, 0).toFixed(1)}s`)
+  console.log(`[SPEAKER] Cut ranges:`, ranges.map(r => `${r.start.toFixed(1)}-${r.end.toFixed(1)}`).join(', '))
+
+  return ranges
+}
+
+// Validate cut ranges don't overlap with non-presenter speech
+function validateCutRanges(
+  ranges: Array<{start: number, end: number}>,
+  transcript: any,
+  mainPresenter: string
+): Array<{start: number, end: number}> {
+  const otherSegs = (transcript.segments || []).filter((s: any) =>
+    !matchesSpeaker(s.speaker, mainPresenter)
+  )
+
+  let leakCount = 0
+
+  ranges.forEach((range, i) => {
+    otherSegs.forEach((other: any) => {
+      // Check overlap
+      const overlapStart = Math.max(range.start, other.start)
+      const overlapEnd = Math.min(range.end, other.end)
+
+      if (overlapEnd > overlapStart) {
+        const overlapDuration = overlapEnd - overlapStart
+        console.warn(`[SPEAKER] Warning: Range ${i} (${range.start.toFixed(1)}-${range.end.toFixed(1)}) overlaps with ${other.speaker} at ${other.start.toFixed(1)}-${other.end.toFixed(1)} by ${overlapDuration.toFixed(2)}s`)
+
+        // Trim the range to exclude the overlap
+        if (other.start <= range.start) {
+          // Other speaker at the beginning of range
+          range.start = other.end + 0.1
+        } else if (other.end >= range.end) {
+          // Other speaker at the end of range
+          range.end = other.start - 0.1
+        } else {
+          // Other speaker in the middle - trim to before the other speaker
+          console.warn(`[SPEAKER] Range ${i} has other speaker in middle, trimming`)
+          range.end = other.start - 0.1
+        }
+
+        leakCount++
+      }
+    })
+  })
+
+  // Remove any ranges that became invalid (end <= start)
+  const validRanges = ranges.filter(r => r.end - r.start > 0.3)
+
+  if (leakCount > 0) {
+    console.log(`[SPEAKER] Fixed ${leakCount} speaker overlaps, ${validRanges.length} valid ranges remain`)
+  }
+
+  return validRanges
+}
+
 // Legacy endpoint kept for backward compat
 app.post('/api/auto-editor/process-video', async (req, res) => {
   // Redirect to new process endpoint
@@ -4845,30 +5226,56 @@ app.post('/api/auto-editor/process', async (req, res) => {
     if (mainPresenter && mainPresenter !== 'none' && transcriptSegments.length > 0) {
       console.log(`[PROCESS] Step 1.5: Isolating presenter "${mainPresenter}" audio...`)
 
-      // Get time ranges where the main presenter speaks
-      const presenterRanges = transcriptSegments
-        .filter((s: any) => matchesSpeaker(s.speaker, mainPresenter))
-        .map((s: any) => ({ start: s.start, end: s.end }))
+      // === DIAGNOSTIC LOGGING ===
+      const uniqueSpeakers = [...new Set(transcriptSegments.map((s: any) => s.speaker))]
+      console.log('[SPEAKER] All unique speakers in transcript:', uniqueSpeakers)
+      console.log('[SPEAKER] Target presenter:', mainPresenter)
 
-      const nonPresenterCount = transcriptSegments.length - presenterRanges.length
-      console.log(`[PROCESS] Presenter segments: ${presenterRanges.length}, Non-presenter (cutting): ${nonPresenterCount}`)
+      // Segment count per speaker
+      const speakerCounts: Record<string, {count: number, totalTime: number}> = {}
+      transcriptSegments.forEach((seg: any) => {
+        const speaker = seg.speaker || 'unknown'
+        if (!speakerCounts[speaker]) speakerCounts[speaker] = { count: 0, totalTime: 0 }
+        speakerCounts[speaker].count++
+        speakerCounts[speaker].totalTime += (seg.end - seg.start)
+      })
+      console.log('[SPEAKER] Segments per speaker:', JSON.stringify(speakerCounts, null, 2))
 
-      if (presenterRanges.length > 0 && nonPresenterCount > 0) {
-        // Merge overlapping/adjacent ranges (within 0.5s gap)
-        const mergedRanges: Array<{ start: number; end: number }> = []
-        const sorted = [...presenterRanges].sort((a: any, b: any) => a.start - b.start)
+      // Match results for EACH speaker
+      uniqueSpeakers.forEach(speaker => {
+        const matches = matchesSpeaker(speaker, mainPresenter)
+        console.log(`[SPEAKER] matchesSpeaker("${speaker}", "${mainPresenter}") = ${matches}`)
+      })
 
-        sorted.forEach((range: any) => {
-          const last = mergedRanges[mergedRanges.length - 1]
-          if (last && range.start - last.end < 0.5) {
-            last.end = Math.max(last.end, range.end)
-          } else {
-            mergedRanges.push({ start: range.start, end: range.end })
-          }
+      // Show which segments pass the filter
+      const presenterSegsDiag = transcriptSegments.filter((seg: any) =>
+        matchesSpeaker(seg.speaker, mainPresenter)
+      )
+      const nonPresenterSegsDiag = transcriptSegments.filter((seg: any) =>
+        !matchesSpeaker(seg.speaker, mainPresenter)
+      )
+      console.log(`[SPEAKER] Presenter segments: ${presenterSegsDiag.length} (${presenterSegsDiag.reduce((sum: number, s: any) => sum + s.end - s.start, 0).toFixed(1)}s)`)
+      console.log(`[SPEAKER] Non-presenter segments being CUT: ${nonPresenterSegsDiag.length} (${nonPresenterSegsDiag.reduce((sum: number, s: any) => sum + s.end - s.start, 0).toFixed(1)}s)`)
+
+      // Show first 3 segments of EACH speaker for verification
+      uniqueSpeakers.forEach(speaker => {
+        const segs = transcriptSegments.filter((s: any) => s.speaker === speaker).slice(0, 3)
+        console.log(`[SPEAKER] "${speaker}" first 3 segments:`)
+        segs.forEach((s: any) => {
+          console.log(`  [${s.start.toFixed(1)}s-${s.end.toFixed(1)}s] "${(s.text || '').substring(0, 60)}"`)
         })
+      })
 
-        console.log(`[PROCESS] Merged into ${mergedRanges.length} continuous ranges`)
+      // === BUILD CUT RANGES using strict function ===
+      const transcriptForCutting = { segments: transcriptSegments }
+      let presenterCutRanges = buildPresenterCutRanges(transcriptForCutting, mainPresenter)
 
+      // === VALIDATE cut ranges don't overlap with non-presenter ===
+      presenterCutRanges = validateCutRanges(presenterCutRanges, transcriptForCutting, mainPresenter)
+
+      const nonPresenterCount = nonPresenterSegsDiag.length
+
+      if (presenterCutRanges.length > 0 && nonPresenterCount > 0) {
         // Remap presenter ranges from original timestamps to cut video timestamps
         const remappedRanges: Array<{ start: number; end: number }> = []
         let cutOffset = 0
@@ -4877,7 +5284,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           const cutEnd = cut.keep_end
           const cutDuration = cutEnd - cutStart
 
-          for (const range of mergedRanges) {
+          for (const range of presenterCutRanges) {
             // Check if presenter range overlaps with this cut
             const overlapStart = Math.max(range.start, cutStart)
             const overlapEnd = Math.min(range.end, cutEnd)
@@ -4891,12 +5298,12 @@ app.post('/api/auto-editor/process', async (req, res) => {
           cutOffset += cutDuration
         }
 
-        // Merge remapped ranges
+        // Merge remapped ranges (only merge very close ones to avoid leaking)
         const finalRanges: Array<{ start: number; end: number }> = []
         remappedRanges.sort((a, b) => a.start - b.start)
         remappedRanges.forEach(range => {
           const last = finalRanges[finalRanges.length - 1]
-          if (last && range.start - last.end < 0.3) {
+          if (last && range.start - last.end < 0.2) {
             last.end = Math.max(last.end, range.end)
           } else {
             finalRanges.push({ ...range })
@@ -4940,6 +5347,31 @@ app.post('/api/auto-editor/process', async (req, res) => {
               )
 
               if (fs.existsSync(presenterOutput) && fs.statSync(presenterOutput).size > 0) {
+                // === AUDIO VERIFICATION ===
+                console.log('[SPEAKER] === VERIFICATION ===')
+                try {
+                  const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+                  const inputDur = execSync(
+                    `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${currentFile}"`,
+                    { timeout: 10000, encoding: 'utf-8' }
+                  ).trim()
+                  const outDur = execSync(
+                    `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${presenterOutput}"`,
+                    { timeout: 10000, encoding: 'utf-8' }
+                  ).trim()
+                  const inputDuration = parseFloat(inputDur)
+                  const outputDuration = parseFloat(outDur)
+                  const removedTime = inputDuration - outputDuration
+
+                  console.log(`[SPEAKER] Input duration: ${inputDuration.toFixed(1)}s`)
+                  console.log(`[SPEAKER] Output duration: ${outputDuration.toFixed(1)}s`)
+                  console.log(`[SPEAKER] Removed: ${removedTime.toFixed(1)}s (${Math.round(removedTime / inputDuration * 100)}% of cut video)`)
+
+                  if (removedTime < 5) {
+                    console.warn('[SPEAKER] Warning: Less than 5s removed - presenter filter may not be working correctly')
+                  }
+                } catch {}
+
                 currentFile = presenterOutput
                 console.log(`[PROCESS] Step 1.5 done: Cut to presenter only (${segmentFiles.length} segments)`)
               }
@@ -5900,6 +6332,24 @@ ${gfxDialogueLines.join('\n')}
     for (const f of filesToCleanup) {
       try { if (fs.existsSync(f)) fs.unlinkSync(f) } catch {}
     }
+
+    // Cleanup visual analysis frames directories
+    try {
+      const frameDirs = fs.readdirSync(uploadsDir).filter(d => d.startsWith('frames_'))
+      frameDirs.forEach(d => {
+        const dirPath = path.join(uploadsDir, d)
+        try {
+          if (fs.statSync(dirPath).isDirectory()) {
+            fs.readdirSync(dirPath).forEach(f => fs.unlinkSync(path.join(dirPath, f)))
+            fs.rmdirSync(dirPath)
+          }
+        } catch {}
+      })
+      if (frameDirs.length > 0) console.log(`[CLEANUP] Removed ${frameDirs.length} frame directories`)
+    } catch {}
+
+    // Cleanup speaker samples
+    cleanupSpeakerSamples(uploadsDir)
 
     console.log('[PROCESS] Done! Created', outputFiles.length, 'files with professional effects')
 

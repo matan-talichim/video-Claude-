@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Sparkles, CheckCircle, Users } from 'lucide-react'
 import { useAutoEditorStore } from '../store/autoEditorStore'
 
@@ -212,45 +212,15 @@ export default function EnrichmentReview({ enrichment, onApprove }: EnrichmentRe
           </div>
         )}
 
-        {/* Speaker Selection (when multiple speakers detected) */}
+        {/* Speaker Selection with Audio Preview */}
         {sortedSpeakers.length > 1 && (
-          <div className="w-full bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
-            <div className="flex items-center gap-2 mb-2">
-              <Users size={16} className="text-purple-400" />
-              <h4 className="text-white text-sm font-medium">פרזנטור ראשי</h4>
-            </div>
-            {detectedPresenter && (
-              <p className="text-gray-400 text-xs">
-                המערכת זיהתה את <span className="text-purple-400 font-bold">{detectedPresenter}</span> כפרזנטור הראשי
-                {presenterConfidence === 'high'
-                  ? ' (ביטחון גבוה)'
-                  : presenterConfidence === 'medium'
-                    ? ' (ביטחון בינוני - מומלץ לאשר)'
-                    : ' (ביטחון נמוך - מומלץ לבחור ידנית)'}
-              </p>
-            )}
-            {!detectedPresenter && (
-              <p className="text-gray-400 text-xs">
-                זוהו {sortedSpeakers.length} דוברים. בחר מי הפרזנטור הראשי (רק הסגמנטים שלו ישמשו לעריכה):
-              </p>
-            )}
-            <div className="space-y-1.5 mt-2">
-              {sortedSpeakers.map((s: { speaker: string; time: number }) => (
-                <button
-                  key={s.speaker}
-                  onClick={() => setMainPresenter(s.speaker)}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition ${
-                    mainPresenter === s.speaker
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-white/10 text-gray-300 hover:bg-white/20'
-                  }`}
-                >
-                  <span>{s.speaker}</span>
-                  <span className="text-xs opacity-70">{Math.round(s.time)} שניות</span>
-                </button>
-              ))}
-            </div>
-          </div>
+          <SpeakerSelector
+            speakers={sortedSpeakers}
+            selectedPresenter={mainPresenter}
+            onSelect={setMainPresenter}
+            detectedPresenter={detectedPresenter || null}
+            confidence={presenterConfidence || ''}
+          />
         )}
 
         {/* Action button */}
@@ -264,6 +234,126 @@ export default function EnrichmentReview({ enrichment, onApprove }: EnrichmentRe
             נבחרו {selectedBRoll.size} מתוך {brollSuggestions.length} קטעי B-Roll
           </p>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function SpeakerSelector({ speakers, selectedPresenter, onSelect, detectedPresenter, confidence }: {
+  speakers: Array<{ speaker: string; time: number; sampleUrl?: string | null; sampleText?: string }>;
+  selectedPresenter: string | null;
+  onSelect: (speaker: string) => void;
+  detectedPresenter: string | null;
+  confidence: string;
+}) {
+  const [playingSpeaker, setPlayingSpeaker] = useState<string | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  function playSample(speaker: string, sampleUrl: string) {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+
+    if (playingSpeaker === speaker) {
+      setPlayingSpeaker(null)
+      return
+    }
+
+    const audio = new Audio(sampleUrl)
+    audioRef.current = audio
+    setPlayingSpeaker(speaker)
+
+    audio.play().catch(() => {})
+    audio.onended = () => {
+      setPlayingSpeaker(null)
+      audioRef.current = null
+    }
+  }
+
+  return (
+    <div className="w-full bg-white/5 border border-white/10 rounded-xl p-4 space-y-3" dir="rtl">
+      <div className="flex items-center gap-2">
+        <Users size={16} className="text-purple-400" />
+        <h4 className="text-white text-sm font-bold">פרזנטור ראשי</h4>
+      </div>
+
+      {detectedPresenter && (
+        <p className="text-gray-400 text-xs">
+          המערכת זיהתה את{' '}
+          <span className="text-purple-400 font-bold">{detectedPresenter}</span>
+          {' '}כפרזנטור
+          {confidence === 'high' ? ' (ביטחון גבוה)' : confidence === 'medium' ? ' (ביטחון בינוני)' : ' (ביטחון נמוך - מומלץ לאשר)'}
+        </p>
+      )}
+
+      <p className="text-gray-500 text-xs">
+        לחץ ▶ כדי לשמוע את הקול של כל דובר ובחר מי הפרזנטור:
+      </p>
+
+      <div className="space-y-2">
+        {[...speakers]
+          .sort((a, b) => b.time - a.time)
+          .map((s) => (
+            <div
+              key={s.speaker}
+              className={`flex items-center gap-3 p-3 rounded-lg transition cursor-pointer border-2 ${
+                selectedPresenter === s.speaker
+                  ? 'border-purple-500 bg-purple-500/10'
+                  : 'border-white/10 bg-white/5 hover:border-white/30'
+              }`}
+              onClick={() => onSelect(s.speaker)}
+            >
+              {s.sampleUrl ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    playSample(s.speaker, s.sampleUrl!)
+                  }}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition ${
+                    playingSpeaker === s.speaker
+                      ? 'bg-purple-600 text-white animate-pulse'
+                      : 'bg-white/10 text-gray-300 hover:bg-white/20'
+                  }`}
+                >
+                  {playingSpeaker === s.speaker ? '⏸' : '▶'}
+                </button>
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center flex-shrink-0">
+                  <span className="text-gray-600 text-xs">🔇</span>
+                </div>
+              )}
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-white text-sm font-medium">{s.speaker}</span>
+                  <span className="text-gray-500 text-xs">{Math.round(s.time)} שניות</span>
+
+                  {s.speaker === detectedPresenter && (
+                    <span className="text-xs bg-purple-600/50 text-purple-200 px-2 py-0.5 rounded-full">
+                      מומלץ
+                    </span>
+                  )}
+                </div>
+
+                {s.sampleText && (
+                  <p className="text-gray-500 text-xs mt-1 truncate">
+                    &quot;{s.sampleText}&quot;
+                  </p>
+                )}
+              </div>
+
+              <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                selectedPresenter === s.speaker
+                  ? 'border-purple-500 bg-purple-500'
+                  : 'border-gray-600'
+              }`}>
+                {selectedPresenter === s.speaker && (
+                  <span className="text-white text-xs">✓</span>
+                )}
+              </div>
+            </div>
+          ))}
       </div>
     </div>
   )
