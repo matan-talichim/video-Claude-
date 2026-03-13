@@ -710,6 +710,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
             transcript: { segments: transcript.segments },
             visualAnalysis,
             speakerTimes: transcript.speakerTimes,
+            framesDir: visualAnalysis?.framesDir || '',
           }),
         })
         if (presenterRes.ok) {
