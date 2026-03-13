@@ -2254,7 +2254,10 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
 8. בעיות טכניות (חושך, טשטוש, חיתוך לא טוב)
 9. זהה את הפרזנטור הראשי - האדם שמופיע מול המצלמה ומדבר אליה (לא צוות הפקה מאחורי המצלמה)`
 
-    const visualSystemPrompt = promptEvolution || baseVisualSystemPrompt
+    const brainContextVisual = getEditorBrainPrompt()
+    const visualSystemPrompt = (promptEvolution || baseVisualSystemPrompt) + brainContextVisual
+
+    logBrainStatus()
 
     // Send all frames to GPT for visual analysis
     const messages: any[] = [
@@ -2656,12 +2659,16 @@ ${(visualAnalysis.scene_analysis || []).map((s: any) =>
 - חילופי דוברים → שנה זווית מצלמה
 ` : ''
 
+    const enrichBrainContext = getEditorBrainPrompt('marketing')
+    logBrainStatus()
+
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
       messages: [
         {
           role: 'system' as const,
           content: `אתה הבמאי הראשי של סטודיו עריכת וידאו מקצועי. אתה מומחה לכל סוגי הסרטונים בכל תעשייה.
+${enrichBrainContext}
 
 קיבלת תמלול של סרטון גולמי. התפקיד שלך:
 1. להבין מה הנושא, מי קהל היעד, ומה המטרה של הסרטון
@@ -2906,12 +2913,16 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
 "duration_reasoning": "<הסבר קצר למה בחרת את האורך הזה>"
 ` : `אורך יעד: ${targetDuration} שניות לכל סרטון.`
 
+    const creativeBrainContext = getEditorBrainPrompt(contentType)
+    logBrainStatus()
+
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
       messages: [
         {
           role: 'system' as const,
           content: `אתה במאי תוכן מקצועי עם 20 שנות ניסיון בעריכת סרטונים לרשתות חברתיות.
+${creativeBrainContext}
 
 התפקיד שלך: לנתח תמלול של סרטון גולמי ולהחליט מה הסיפור, מה הקטעים הכי טובים, ואיך לבנות סרטון שיווקי מנצח.
 
@@ -3180,12 +3191,16 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
         ).join('\n')}`
       : `אורך יעד לכל סרטון: ${targetDuration} שניות`
 
+    const techBrainContext = getEditorBrainPrompt()
+    logBrainStatus()
+
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
       messages: [
         {
           role: 'system' as const,
           content: `אתה עורך וידאו טכני מדויק. אתה מקבל brief יצירתי ותמלול, ומייצר תוכנית עריכה טכנית מדויקת לפריים.
+${techBrainContext}
 
 התפקיד שלך: להפוך את ה-brief היצירתי לפקודות עריכה מדויקות.
 
@@ -6013,6 +6028,563 @@ function saveLearningState(state: any) {
   }
 }
 
+// ==================== LEARNING CATEGORIES (18+ diverse) ====================
+
+const LEARNING_CATEGORIES: Record<string, Array<{query: string, goal: string}>> = {
+  // EDITING TECHNIQUES
+  editing_techniques: [
+    { query: 'best video editing techniques 2026 reels', goal: 'learn cutting patterns and timing' },
+    { query: 'professional video editor workflow breakdown', goal: 'learn pro editing decisions' },
+    { query: 'jump cut vs smooth transition when to use', goal: 'learn transition logic' },
+    { query: 'video editing mistakes beginners make', goal: 'learn what to avoid' },
+  ],
+  // HOOKS & RETENTION
+  hooks_retention: [
+    { query: 'best hooks for reels 2026 high retention', goal: 'learn hook patterns that work' },
+    { query: 'why viewers scroll away first 3 seconds', goal: 'learn what kills retention' },
+    { query: 'viral video opening analysis breakdown', goal: 'learn exact hook structures' },
+    { query: 'pattern interrupt examples social media', goal: 'learn attention-grabbing openers' },
+  ],
+  // PACING & RHYTHM
+  pacing_rhythm: [
+    { query: 'video pacing tutorial fast vs slow editing', goal: 'learn when to speed up vs slow down' },
+    { query: 'music sync editing technique beat matching', goal: 'learn audio-visual sync' },
+    { query: 'emotional pacing documentary storytelling', goal: 'learn how pacing affects emotion' },
+  ],
+  // B-ROLL & VISUAL STORYTELLING
+  broll_storytelling: [
+    { query: 'b-roll techniques that tell a story', goal: 'learn purposeful B-Roll placement' },
+    { query: 'when to cut to b-roll talking head videos', goal: 'learn B-Roll timing decisions' },
+    { query: 'cinematic b-roll tips smartphone', goal: 'learn B-Roll visual quality' },
+  ],
+  // SUBTITLES & TEXT
+  subtitles_text: [
+    { query: 'best subtitle styles for reels tiktok 2026', goal: 'learn subtitle trends' },
+    { query: 'animated captions that increase watch time', goal: 'learn effective caption animation' },
+    { query: 'text on screen design for social media video', goal: 'learn text overlay design' },
+  ],
+  // COLOR & MOOD
+  color_mood: [
+    { query: 'color grading for different moods tutorial', goal: 'learn color-emotion mapping' },
+    { query: 'cinematic color grade before after breakdown', goal: 'learn grading techniques' },
+    { query: 'color psychology in video marketing', goal: 'learn why colors work' },
+  ],
+  // SOUND DESIGN
+  sound_design: [
+    { query: 'sound design for social media videos', goal: 'learn audio impact' },
+    { query: 'background music selection for marketing videos', goal: 'learn music-content matching' },
+    { query: 'audio mixing voice over music ratio', goal: 'learn audio balance' },
+  ],
+  // STORYTELLING STRUCTURE
+  storytelling: [
+    { query: 'storytelling structure for short form video', goal: 'learn narrative arc in 30-60s' },
+    { query: 'problem solution video framework marketing', goal: 'learn persuasion structure' },
+    { query: 'emotional storytelling techniques video', goal: 'learn emotional engagement' },
+  ],
+  // PLATFORM-SPECIFIC
+  platform_specific: [
+    { query: 'instagram reels algorithm 2026 what works', goal: 'learn platform requirements' },
+    { query: 'tiktok editing style vs youtube shorts difference', goal: 'learn platform differences' },
+    { query: 'linkedin video best practices business', goal: 'learn professional platform style' },
+  ],
+  // INDUSTRY-SPECIFIC
+  industry_content: [
+    { query: 'best marketing video for service business', goal: 'learn service business video style' },
+    { query: 'SaaS product demo video editing', goal: 'learn tech product videos' },
+    { query: 'real estate video editing techniques', goal: 'learn industry-specific editing' },
+    { query: 'coaching consulting video content that converts', goal: 'learn expert-positioning videos' },
+  ],
+  // VIRAL ANALYSIS
+  viral_analysis: [
+    { query: 'why this video went viral breakdown analysis', goal: 'learn viral mechanics' },
+    { query: 'most viewed reels 2026 editing analysis', goal: 'learn current trends' },
+    { query: 'video editing trends 2026', goal: 'learn emerging techniques' },
+  ],
+  // CTA & CONVERSION
+  cta_conversion: [
+    { query: 'best call to action video ending techniques', goal: 'learn effective CTAs' },
+    { query: 'video that converts viewers to customers', goal: 'learn conversion editing' },
+    { query: 'end screen strategy short form video', goal: 'learn video endings' },
+  ],
+  // CURRENT TRENDS
+  current_trends: [
+    { query: 'trending reels editing style this week 2026', goal: 'learn what editing style is trending now' },
+    { query: 'viral video trends march 2026', goal: 'learn current viral patterns' },
+    { query: 'tiktok trending effects and transitions 2026', goal: 'learn trending effects' },
+    { query: 'most popular editing style social media right now', goal: 'learn dominant current style' },
+  ],
+  // TRENDING FORMATS
+  trending_formats: [
+    { query: 'trending video formats reels tiktok 2026', goal: 'learn new format structures' },
+    { query: 'new content format going viral 2026', goal: 'learn emerging formats' },
+    { query: 'trending meme format video editing', goal: 'learn meme-style editing patterns' },
+    { query: 'trending before after video format 2026', goal: 'learn transformation format trends' },
+  ],
+  // TRENDING AUDIO & MUSIC
+  trending_audio: [
+    { query: 'trending sounds for reels 2026 how to use', goal: 'learn audio trend patterns' },
+    { query: 'viral sound effects editing 2026', goal: 'learn trending sound design' },
+    { query: 'how music choice affects video virality', goal: 'learn music-virality connection' },
+  ],
+  // NICHE TRENDS
+  niche_trends: [
+    { query: 'trending business content style 2026', goal: 'learn business content trends' },
+    { query: 'trending educational video format 2026', goal: 'learn edu-content trends' },
+    { query: 'trending marketing video style small business', goal: 'learn SMB marketing trends' },
+    { query: 'trending personal brand video editing', goal: 'learn personal brand trends' },
+  ],
+  // MARKETING STRATEGY
+  marketing_strategy: [
+    { query: 'video marketing strategy that converts 2026', goal: 'learn marketing video structure' },
+    { query: 'how to sell with video without being salesy', goal: 'learn soft-sell techniques' },
+    { query: 'emotional marketing video examples breakdown', goal: 'learn emotional persuasion in video' },
+    { query: 'video funnel strategy awareness consideration conversion', goal: 'learn funnel-stage video differences' },
+    { query: 'best marketing hooks for service businesses', goal: 'learn industry-specific hooks' },
+  ],
+  // PAID ADVERTISING
+  paid_ads: [
+    { query: 'meta ads video creative best practices 2026', goal: 'learn Facebook/Instagram ad video rules' },
+    { query: 'youtube ads that convert editing breakdown', goal: 'learn YouTube ad editing patterns' },
+    { query: 'tiktok spark ads creative strategy 2026', goal: 'learn TikTok ad format' },
+    { query: 'video ad hook rate optimization first 3 seconds', goal: 'learn ad-specific hooks' },
+    { query: 'UGC style ad vs polished ad performance comparison', goal: 'learn which ad style converts better' },
+    { query: 'retargeting video ad strategy what to show', goal: 'learn retargeting video content' },
+    { query: 'video ad creative fatigue how to prevent', goal: 'learn ad refresh strategies' },
+  ],
+  // SOCIAL MEDIA GROWTH
+  social_growth: [
+    { query: 'instagram algorithm 2026 what content gets pushed', goal: 'learn algorithm preferences' },
+    { query: 'how to increase saves and shares on reels', goal: 'learn engagement optimization' },
+    { query: 'content repurposing strategy one video multiple platforms', goal: 'learn multi-platform editing' },
+    { query: 'social media content calendar for businesses', goal: 'learn content planning patterns' },
+    { query: 'community building through video content', goal: 'learn engagement-driven content' },
+  ],
+  // CONVERSION PSYCHOLOGY
+  conversion_psychology: [
+    { query: 'psychological triggers in video marketing', goal: 'learn persuasion techniques for video' },
+    { query: 'social proof in video ads examples', goal: 'learn trust-building in video' },
+    { query: 'urgency and scarcity in video content', goal: 'learn conversion pressure techniques' },
+    { query: 'objection handling in marketing videos', goal: 'learn how to address doubts in video' },
+    { query: 'video testimonial editing that builds trust', goal: 'learn testimonial editing techniques' },
+  ],
+}
+
+// Daily rotation: pick 3 random categories per session
+function getSessionCategories(): Array<{category: string, query: string, goal: string}> {
+  const allCategories = Object.entries(LEARNING_CATEGORIES)
+  const shuffled = allCategories.sort(() => Math.random() - 0.5)
+  const selected = shuffled.slice(0, 3)
+  return selected.map(([catName, queries]) => {
+    const query = queries[Math.floor(Math.random() * queries.length)]
+    return { category: catName, query: query.query, goal: query.goal }
+  })
+}
+
+// Map categories to expertise domains
+const CATEGORY_TO_DOMAIN: Record<string, string> = {
+  editing_techniques: 'editing',
+  hooks_retention: 'editing',
+  pacing_rhythm: 'editing',
+  broll_storytelling: 'editing',
+  subtitles_text: 'editing',
+  color_mood: 'editing',
+  sound_design: 'editing',
+  storytelling: 'editing',
+  viral_analysis: 'social',
+  platform_specific: 'social',
+  social_growth: 'social',
+  current_trends: 'social',
+  trending_formats: 'social',
+  trending_audio: 'social',
+  niche_trends: 'social',
+  marketing_strategy: 'marketing',
+  conversion_psychology: 'marketing',
+  cta_conversion: 'marketing',
+  industry_content: 'marketing',
+  paid_ads: 'paid_ads',
+}
+
+function calculateExpertiseLevel(insightCount: number): string {
+  if (insightCount >= 100) return 'expert'
+  if (insightCount >= 50) return 'advanced'
+  if (insightCount >= 20) return 'intermediate'
+  return 'beginner'
+}
+
+function classifyInsightToDomain(state: any, category: string, rule: any) {
+  const domain = CATEGORY_TO_DOMAIN[category] || 'editing'
+  if (!state.expertise) state.expertise = {}
+  if (!state.expertise[domain]) {
+    state.expertise[domain] = { level: 'beginner', totalInsights: 0, insights: [] }
+  }
+
+  const ruleText = (rule.rule || rule).toString().trim().toLowerCase()
+  const existing = state.expertise[domain].insights.map((r: any) =>
+    (r.rule || r).toString().trim().toLowerCase()
+  )
+
+  if (!existing.some((e: string) => {
+    const words1 = new Set(ruleText.split(/\s+/))
+    const words2 = new Set(e.split(/\s+/))
+    const overlap = [...words1].filter(w => words2.has(w)).length
+    return overlap / Math.max(words1.size, words2.size) > 0.8
+  })) {
+    state.expertise[domain].insights.push({
+      rule: rule.rule || rule,
+      category,
+      confidence: rule.confidence || 0.8,
+      learnedAt: Date.now(),
+    })
+    state.expertise[domain].totalInsights = state.expertise[domain].insights.length
+    state.expertise[domain].level = calculateExpertiseLevel(state.expertise[domain].totalInsights)
+  }
+}
+
+function saveInsightWithTrendClassification(state: any, category: string, rule: any) {
+  if (!state.trendInsights) {
+    state.trendInsights = { activeTrends: [], expiredTrends: [], evergreenRules: [], lastTrendUpdate: null }
+  }
+
+  if (rule.trend_name || rule.lifecycle) {
+    const existingTrend = state.trendInsights.activeTrends.find(
+      (t: any) => t.trend_name === rule.trend_name
+    )
+    if (existingTrend) {
+      existingTrend.techniques.push(rule.technique || rule.rule)
+      existingTrend.lastSeen = Date.now()
+      existingTrend.lifecycle = rule.lifecycle
+    } else {
+      state.trendInsights.activeTrends.push({
+        trend_name: rule.trend_name,
+        techniques: [rule.technique || rule.rule],
+        lifecycle: rule.lifecycle || 'rising',
+        shelf_life_weeks: rule.shelf_life_weeks || 4,
+        first_seen: Date.now(),
+        lastSeen: Date.now(),
+        adaptation_for_business: rule.adaptation_for_business || '',
+        category,
+      })
+    }
+  } else {
+    const ruleText = (rule.rule || rule.technique || rule).toString()
+    if (!state.trendInsights.evergreenRules.includes(ruleText)) {
+      state.trendInsights.evergreenRules.push(ruleText)
+    }
+  }
+}
+
+function cleanExpiredTrends(state: any) {
+  if (!state.trendInsights) return
+  const now = Date.now()
+  const active: any[] = []
+  const expired: any[] = []
+
+  ;(state.trendInsights.activeTrends || []).forEach((trend: any) => {
+    const weeksSinceFirstSeen = (now - trend.first_seen) / (1000 * 60 * 60 * 24 * 7)
+    const shelfLife = trend.shelf_life_weeks || 4
+    if (weeksSinceFirstSeen > shelfLife && trend.lifecycle === 'declining') {
+      expired.push({ ...trend, expiredAt: now })
+    } else {
+      active.push(trend)
+    }
+  })
+
+  state.trendInsights.activeTrends = active
+  state.trendInsights.expiredTrends = [
+    ...(state.trendInsights.expiredTrends || []),
+    ...expired
+  ].slice(-50)
+
+  if (expired.length > 0) {
+    console.log(`[LEARN] Expired ${expired.length} trends: ${expired.map((t: any) => t.trend_name).join(', ')}`)
+  }
+}
+
+function saveSystemOptimizationIdeas(state: any, ideas: any[]) {
+  if (!state.expertise) state.expertise = {}
+  if (!state.expertise.systemOptimization) {
+    state.expertise.systemOptimization = { ideas: [], implementedCount: 0 }
+  }
+
+  const existingIdeas = new Set(
+    state.expertise.systemOptimization.ideas.map((i: any) =>
+      (i.idea || i).toString().trim().toLowerCase()
+    )
+  )
+
+  let addedCount = 0
+  ideas.forEach((idea: any) => {
+    const ideaText = (idea.idea || idea).toString().trim().toLowerCase()
+    if (!existingIdeas.has(ideaText)) {
+      state.expertise.systemOptimization.ideas.push({
+        ...idea,
+        suggestedAt: Date.now(),
+        status: 'pending',
+      })
+      existingIdeas.add(ideaText)
+      addedCount++
+    }
+  })
+
+  console.log(`[LEARN] System optimization: added ${addedCount} new ideas (${state.expertise.systemOptimization.ideas.length} total)`)
+  return addedCount
+}
+
+// ==================== EDITOR BRAIN ====================
+
+async function compressEditorBrain(brain: any): Promise<any> {
+  console.log('[BRAIN] Compressing insights for efficient prompts...')
+
+  const totalRules = (brain.editingRules?.length || 0) +
+    (brain.socialInsights?.length || 0) +
+    (brain.marketingInsights?.length || 0) +
+    (brain.paidAdsInsights?.length || 0)
+
+  if (totalRules < 10) {
+    console.log('[BRAIN] Too few rules to compress, skipping')
+    return brain
+  }
+
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return brain
+
+    const compressionPrompt = `You are an expert editor who needs to create a CONCISE editing guide.
+Below are ${totalRules} editing insights organized by domain.
+Your job: COMPRESS these into the shortest possible text WITHOUT losing ANY insight.
+Rules for compression:
+1. MERGE similar rules into single combined rules
+2. REMOVE redundant information (if 3 rules say "use zoom on key words" merge into 1)
+3. Use SHORT sentences - no fluff, no explanations, just actionable instructions
+4. Keep SPECIFIC numbers and parameters (don't lose "1.2x zoom" or "0.5s timing")
+5. Group related rules together
+6. Use bullet format: "• rule"
+7. NEVER delete a unique insight - if 2 rules say different things, keep BOTH
+8. Target: reduce total text by 50-70% while keeping 100% of unique information
+
+EDITING RULES (${brain.editingRules?.length || 0}):
+${(brain.editingRules || []).map((r: string) => `- ${r}`).join('\n')}
+
+SOCIAL INSIGHTS (${brain.socialInsights?.length || 0}):
+${(brain.socialInsights || []).map((r: string) => `- ${r}`).join('\n')}
+
+MARKETING INSIGHTS (${brain.marketingInsights?.length || 0}):
+${(brain.marketingInsights || []).map((r: string) => `- ${r}`).join('\n')}
+
+PAID ADS INSIGHTS (${brain.paidAdsInsights?.length || 0}):
+${(brain.paidAdsInsights || []).map((r: string) => `- ${r}`).join('\n')}
+
+Return a JSON object with these EXACT fields:
+{
+  "editingRulesCompressed": "• rule1\\n• rule2\\n...",
+  "socialInsightsCompressed": "• rule1\\n• rule2\\n...",
+  "marketingInsightsCompressed": "• rule1\\n• rule2\\n...",
+  "paidAdsInsightsCompressed": "• rule1\\n• rule2\\n...",
+  "totalOriginal": number,
+  "totalCompressed": number
+}
+CRITICAL: Return ONLY valid JSON. No markdown, no backticks, no explanation.`
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 4000,
+      messages: [{ role: 'user', content: compressionPrompt }],
+      response_format: { type: 'json_object' },
+    })
+
+    const content = response.choices[0].message.content?.trim() || ''
+    const cleaned = content.replace(/```json|```/g, '').trim()
+    const compressed = JSON.parse(cleaned)
+
+    brain.compressed = {
+      editing: compressed.editingRulesCompressed || '',
+      social: compressed.socialInsightsCompressed || '',
+      marketing: compressed.marketingInsightsCompressed || '',
+      paid_ads: compressed.paidAdsInsightsCompressed || '',
+      totalOriginal: compressed.totalOriginal || totalRules,
+      totalCompressed: compressed.totalCompressed || 0,
+      compressedAt: new Date().toISOString(),
+    }
+
+    const reduction = Math.round((1 - (compressed.totalCompressed || 0) / totalRules) * 100)
+    console.log(`[BRAIN] Compressed: ${totalRules} rules → ${compressed.totalCompressed} (${reduction}% reduction)`)
+
+    return brain
+  } catch (e: any) {
+    console.warn('[BRAIN] Compression failed, using uncompressed:', e.message)
+    return brain
+  }
+}
+
+async function updateEditorBrain(state: any) {
+  console.log('[LEARN] Updating editor brain...')
+
+  const brain: any = {
+    lastUpdated: new Date().toISOString(),
+    lastUpdatedIsrael: new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+    version: (state.expertise?.editing?.totalInsights || 0) +
+             (state.expertise?.social?.totalInsights || 0) +
+             (state.expertise?.marketing?.totalInsights || 0) +
+             (state.expertise?.paid_ads?.totalInsights || 0),
+
+    editingRules: (state.expertise?.editing?.insights || [])
+      .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
+      .slice(0, 30)
+      .map((r: any) => r.rule),
+
+    socialInsights: (state.expertise?.social?.insights || [])
+      .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
+      .slice(0, 15)
+      .map((r: any) => r.rule),
+
+    marketingInsights: (state.expertise?.marketing?.insights || [])
+      .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
+      .slice(0, 15)
+      .map((r: any) => r.rule),
+
+    paidAdsInsights: (state.expertise?.paid_ads?.insights || [])
+      .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
+      .slice(0, 10)
+      .map((r: any) => r.rule),
+
+    activeTrends: (state.trendInsights?.activeTrends || [])
+      .filter((t: any) => t.lifecycle !== 'declining')
+      .slice(0, 10)
+      .map((t: any) => ({
+        name: t.trend_name,
+        lifecycle: t.lifecycle,
+        techniques: (t.techniques || []).slice(0, 3),
+        businessUse: t.adaptation_for_business,
+      })),
+
+    contentSOPs: {} as Record<string, string>,
+    subtitleRecommendations: {} as Record<string, any>,
+
+    expertiseLevels: {
+      editing: state.expertise?.editing?.level || 'beginner',
+      social: state.expertise?.social?.level || 'beginner',
+      marketing: state.expertise?.marketing?.level || 'beginner',
+      paid_ads: state.expertise?.paid_ads?.level || 'beginner',
+    },
+  }
+
+  Object.entries(state.learnedPatterns || {}).forEach(([cat, data]: [string, any]) => {
+    if (data.sop_update) {
+      brain.contentSOPs[cat] = data.sop_update
+    }
+    if (data.patterns?.subtitles) {
+      brain.subtitleRecommendations[cat] = data.patterns.subtitles
+    }
+  })
+
+  // Compress brain for efficient prompt injection
+  const compressedBrain = await compressEditorBrain(brain)
+
+  const brainPath = path.join(__dirname, 'editor-brain.json')
+  fs.writeFileSync(brainPath, JSON.stringify(compressedBrain, null, 2))
+
+  console.log(`[LEARN] Editor brain updated: v${compressedBrain.version} | ${compressedBrain.editingRules.length} editing rules | ${compressedBrain.activeTrends.length} trends`)
+
+  return compressedBrain
+}
+
+function getEditorBrainPrompt(contentType?: string): string {
+  try {
+    const brainPath = path.join(__dirname, 'editor-brain.json')
+    if (!fs.existsSync(brainPath)) return ''
+
+    const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
+    const useCompressed = !!brain.compressed?.editing
+
+    let prompt = `\n\n=== AI EDITOR KNOWLEDGE (v${brain.version}${useCompressed ? ', compressed' : ''}) ===\n`
+    prompt += `Last updated: ${brain.lastUpdatedIsrael}\n`
+    prompt += `Expertise: Editing=${brain.expertiseLevels?.editing || 'beginner'}, Social=${brain.expertiseLevels?.social || 'beginner'}, Marketing=${brain.expertiseLevels?.marketing || 'beginner'}, Ads=${brain.expertiseLevels?.paid_ads || 'beginner'}\n\n`
+
+    if (useCompressed) {
+      if (brain.compressed.editing) {
+        prompt += `EDITING RULES:\n${brain.compressed.editing}\n`
+      }
+      if (brain.compressed.social) {
+        prompt += `\nSOCIAL INSIGHTS:\n${brain.compressed.social}\n`
+      }
+      if (['marketing', 'ad', 'ad_short', 'social_reels'].includes(contentType || '')) {
+        if (brain.compressed.marketing) {
+          prompt += `\nMARKETING:\n${brain.compressed.marketing}\n`
+        }
+        if (brain.compressed.paid_ads) {
+          prompt += `\nPAID ADS:\n${brain.compressed.paid_ads}\n`
+        }
+      }
+    } else {
+      if (brain.editingRules?.length > 0) {
+        prompt += `EDITING RULES:\n`
+        brain.editingRules.forEach((r: string) => { prompt += `• ${r}\n` })
+      }
+      if (brain.socialInsights?.length > 0) {
+        prompt += `\nSOCIAL:\n`
+        brain.socialInsights.forEach((r: string) => { prompt += `• ${r}\n` })
+      }
+      if (['marketing', 'ad', 'ad_short', 'social_reels'].includes(contentType || '')) {
+        if (brain.marketingInsights?.length > 0) {
+          prompt += `\nMARKETING:\n`
+          brain.marketingInsights.forEach((r: string) => { prompt += `• ${r}\n` })
+        }
+        if (brain.paidAdsInsights?.length > 0) {
+          prompt += `\nPAID ADS:\n`
+          brain.paidAdsInsights.forEach((r: string) => { prompt += `• ${r}\n` })
+        }
+      }
+    }
+
+    if (contentType && brain.contentSOPs?.[contentType]) {
+      prompt += `\nSOP (${contentType}):\n${brain.contentSOPs[contentType]}\n`
+    }
+
+    if (contentType && brain.subtitleRecommendations?.[contentType]) {
+      const subRec = brain.subtitleRecommendations[contentType]
+      prompt += `\nSUBTITLE STYLE (${contentType}):\n`
+      prompt += `Style: ${subRec.style || 'classic'}\n`
+      if (subRec.animation_insights) {
+        prompt += `Animation: ${subRec.animation_insights.most_popular_animation || 'none'}\n`
+        prompt += `Words per frame: ${subRec.animation_insights.avg_words_per_frame || 3}\n`
+        prompt += `Position: ${subRec.animation_insights.position || 'bottom'}\n`
+      }
+    }
+
+    if (brain.activeTrends?.length > 0) {
+      prompt += `\nTRENDS:\n`
+      brain.activeTrends.forEach((t: any) => {
+        const emoji = t.lifecycle === 'rising' ? '📈' : t.lifecycle === 'peak' ? '🔝' : '📉'
+        prompt += `${emoji} ${t.name} (${t.lifecycle}): ${t.businessUse || t.techniques?.[0] || ''}\n`
+      })
+    }
+
+    prompt += `\n=== END KNOWLEDGE ===\n`
+    prompt += `IMPORTANT: Apply these learned rules when making editing decisions. They are based on analysis of real viral content.\n`
+
+    return prompt
+  } catch {
+    return ''
+  }
+}
+
+function logBrainStatus() {
+  try {
+    const brainPath = path.join(__dirname, 'editor-brain.json')
+    if (fs.existsSync(brainPath)) {
+      const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
+      console.log(`[BRAIN] Editor brain v${brain.version} loaded (${brain.editingRules?.length || 0} rules, ${brain.activeTrends?.length || 0} trends, updated ${brain.lastUpdatedIsrael})`)
+      if (brain.compressed) {
+        console.log(`[BRAIN] Compressed: ${brain.compressed.totalOriginal} → ${brain.compressed.totalCompressed} rules`)
+      }
+    } else {
+      console.log('[BRAIN] No editor brain yet - will be created after first learning session')
+    }
+  } catch {
+    console.log('[BRAIN] Editor brain not available')
+  }
+}
+
 async function sendTelegram(message: string) {
   try {
     const token = process.env.TELEGRAM_BOT_TOKEN
@@ -6134,7 +6706,6 @@ async function sendLearningReport(state: any, results: any) {
   if (results.newRules.length > 0) {
     message += `✨ תובנות חדשות (${results.newRules.length}):\n\n`
 
-    // Group by category
     const byCategory: Record<string, any[]> = {}
     results.newRules.forEach((r: any) => {
       if (!byCategory[r.category]) byCategory[r.category] = []
@@ -6152,6 +6723,73 @@ async function sendLearningReport(state: any, results: any) {
     })
   }
 
+  // New trends
+  if (results.newTrends?.length > 0) {
+    message += `🔥 טרנדים חדשים שזוהו:\n`
+    results.newTrends.forEach((t: any) => {
+      const lifecycle = t.lifecycle === 'rising' ? '📈' : t.lifecycle === 'peak' ? '🔝' : '📉'
+      message += `  ${lifecycle} ${t.trend_name}\n`
+      message += `     תוקף: ~${t.shelf_life_weeks} שבועות\n`
+      message += `     שימוש עסקי: ${t.adaptation_for_business}\n`
+    })
+    message += '\n'
+  }
+
+  // Expertise levels
+  const domainEmoji: Record<string, string> = { editing: '🎬', social: '📱', marketing: '📣', paid_ads: '💰' }
+  const levelEmoji: Record<string, string> = { beginner: '🥉', intermediate: '🥈', advanced: '🥇', expert: '🏆' }
+  const domainName: Record<string, string> = { editing: 'עריכת וידאו', social: 'סושיאל מדיה', marketing: 'שיווק', paid_ads: 'פרסום ממומן' }
+
+  if (state.expertise) {
+    message += `🧠 רמות מומחיות:\n`
+    ;['editing', 'social', 'marketing', 'paid_ads'].forEach(domain => {
+      const exp = state.expertise[domain]
+      if (exp) {
+        const emoji = domainEmoji[domain] || '📌'
+        const level = levelEmoji[exp.level] || '🥉'
+        message += `  ${emoji} ${domainName[domain]}: ${level} ${exp.level} (${exp.totalInsights} תובנות)\n`
+      }
+    })
+
+    const sysOpt = state.expertise.systemOptimization
+    if (sysOpt?.ideas?.length > 0) {
+      const highImpact = sysOpt.ideas.filter((i: any) => i.impact === 'high' && i.status === 'pending').length
+      message += `\n  ⚙️ רעיונות לשיפור המערכת: ${sysOpt.ideas.length} (${highImpact} בעדיפות גבוהה)\n`
+    }
+    message += '\n'
+  }
+
+  // Editor brain stats
+  try {
+    const brainPath = path.join(__dirname, 'editor-brain.json')
+    if (fs.existsSync(brainPath)) {
+      const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
+      message += `🧠 מוח העורך:\n`
+      message += `  גרסה: v${brain.version}\n`
+      message += `  כללי עריכה: ${brain.editingRules?.length || 0}\n`
+      message += `  תובנות שיווק: ${brain.marketingInsights?.length || 0}\n`
+      message += `  תובנות סושיאל: ${brain.socialInsights?.length || 0}\n`
+      message += `  תובנות ממומן: ${brain.paidAdsInsights?.length || 0}\n`
+      message += `  טרנדים פעילים: ${brain.activeTrends?.length || 0}\n`
+      if (brain.compressed) {
+        const reduction = Math.round((1 - brain.compressed.totalCompressed / brain.compressed.totalOriginal) * 100)
+        message += `  📦 דחיסה: ${brain.compressed.totalOriginal} → ${brain.compressed.totalCompressed} כללים (${reduction}% קיצור)\n`
+      }
+      message += `  עריכות שהשתמשו במוח: ${state.learningMetrics?.editsWithBrain || 0}\n\n`
+    }
+  } catch {}
+
+  // Learning metrics
+  if (state.learningMetrics) {
+    const m = state.learningMetrics
+    message += `📈 מדדי למידה:\n`
+    message += `  סשנים: ${m.totalSessions}\n`
+    message += `  ממוצע תובנות לסשן: ${m.avgRulesPerSession.toFixed(1)}\n`
+    message += `  ביטחון ממוצע: ${(m.avgConfidence * 100).toFixed(0)}%\n`
+    message += `  קטגוריות שכוסו: ${m.uniqueCategories}/${Object.keys(LEARNING_CATEGORIES).length}\n`
+    message += `  סשנים עם תובנות: ${m.sessionsWithNewInsights}/${m.totalSessions}\n\n`
+  }
+
   // Missing features (only critical ones)
   if (results.missingFeatures?.length > 0) {
     const criticalFeatures = results.missingFeatures.filter((f: any) => f.priority === 'critical')
@@ -6163,6 +6801,13 @@ async function sendLearningReport(state: any, results: any) {
       message += '\n'
     }
   }
+
+  // Trends summary
+  const trends = state.trendInsights || {}
+  message += `🔥 טרנדים:\n`
+  message += `  פעילים: ${(trends.activeTrends || []).length}\n`
+  message += `  פגי תוקף: ${(trends.expiredTrends || []).length}\n`
+  message += `  כללים נצחיים: ${(trends.evergreenRules || []).length}\n\n`
 
   // Costs
   message += `💰 עלויות:\n`
@@ -6225,15 +6870,13 @@ async function runServerLearning() {
 
   console.log('[LEARN] Starting learning session...')
 
-  const allCategories = ['viral_editing', 'hooks', 'pacing', 'subtitles', 'broll', 'marketing', 'transitions', 'color_grading', 'animated_captions']
-  const dayNumber = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
-  const startIndex = (dayNumber * 3) % allCategories.length
-  const todayCategories: string[] = []
-  for (let i = 0; i < 3; i++) {
-    todayCategories.push(allCategories[(startIndex + i) % allCategories.length])
-  }
+  // Use diverse categories with random selection
+  const sessionCategories = getSessionCategories()
+  const todayCategories = sessionCategories.map(sc => sc.category)
+  const sessionGoals = sessionCategories.map(sc => sc.goal)
 
-  console.log('[LEARN] Categories today:', todayCategories)
+  console.log('[LEARN] Categories today:', todayCategories.join(', '))
+  console.log('[LEARN] Goals:', sessionGoals.join(' | '))
 
   const ai = await getOpenAI()
   if (!ai) {
@@ -6247,9 +6890,28 @@ async function runServerLearning() {
   }
   const youtube = google.youtube({ version: 'v3', auth: process.env.YOUTUBE_API_KEY })
 
-  const results: any = { categories: {}, errors: [], totalCost: 0, rulesLearned: 0 }
+  const results: any = { categories: {}, errors: [], totalCost: 0, rulesLearned: 0, newTrends: [], systemIdeas: [] }
 
-  for (const category of todayCategories) {
+  // Initialize expertise if not present
+  if (!state.expertise) {
+    state.expertise = {
+      editing: { level: 'beginner', totalInsights: 0, insights: [] },
+      social: { level: 'beginner', totalInsights: 0, insights: [] },
+      marketing: { level: 'beginner', totalInsights: 0, insights: [] },
+      paid_ads: { level: 'beginner', totalInsights: 0, insights: [] },
+      systemOptimization: { ideas: [], implementedCount: 0 },
+    }
+  }
+  if (!state.trendInsights) {
+    state.trendInsights = { activeTrends: [], expiredTrends: [], evergreenRules: [], lastTrendUpdate: null }
+  }
+
+  // Clean expired trends
+  cleanExpiredTrends(state)
+
+  for (let catIdx = 0; catIdx < sessionCategories.length; catIdx++) {
+    const { category, query: searchQuery, goal: sessionGoal } = sessionCategories[catIdx]
+
     // Check limits before each category
     if (state.dailyYoutubeUnits >= 5000 || state.dailyGptCalls >= 15) {
       console.log('[LEARN] Daily limit reached, stopping')
@@ -6258,21 +6920,9 @@ async function runServerLearning() {
 
     try {
       // --- STEP 1: Search YouTube (100 units) ---
-      const searchQueries: Record<string, string> = {
-        'viral_editing': 'viral video editing techniques 2026',
-        'hooks': 'best video hooks first 3 seconds',
-        'transitions': 'creative video transitions trending',
-        'subtitles': 'best subtitle styles social media viral',
-        'pacing': 'fast cut editing rhythm viral',
-        'broll': 'B-Roll techniques effective videos',
-        'color_grading': 'cinematic color grading social media',
-        'marketing': 'best product video ads viral 2026',
-        'animated_captions': 'animated captions trending style TikTok Reels viral word by word 2026',
-      }
-
       const searchRes = await youtube.search.list({
         part: ['snippet'],
-        q: searchQueries[category] || 'viral video editing',
+        q: searchQuery,
         type: ['video'],
         order: 'viewCount',
         maxResults: 5,
@@ -6304,7 +6954,7 @@ async function runServerLearning() {
 
       if (videos.length === 0) continue
 
-      // --- STEP 3: Analyze top 2 videos with Vision ---
+      // --- STEP 3: Analyze top 2 videos with Deep Analysis ---
       const ytdlpPath = fs.existsSync('/opt/homebrew/bin/yt-dlp')
         ? '/opt/homebrew/bin/yt-dlp'
         : fs.existsSync('/usr/local/bin/yt-dlp')
@@ -6313,26 +6963,116 @@ async function runServerLearning() {
       const ffmpegPath = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'
       const analyses: any[] = []
 
-      // Check if yt-dlp is available before attempting video analysis
       let ytdlpAvailable = true
       try {
         execSync(`which yt-dlp || "${ytdlpPath}" --version`, { timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] })
       } catch {
-        console.warn('[LEARN] yt-dlp not installed. Skipping visual analysis. Install with: brew install yt-dlp')
+        console.warn('[LEARN] yt-dlp not installed. Skipping visual analysis.')
         ytdlpAvailable = false
       }
 
+      // Deep analysis prompt with trend detection
+      const deepAnalysisPrompt = `You are a world-class video editor and content strategist analyzing a video.
+Your goal: ${sessionGoal}
+Analyze these frames and provide DEEP, SPECIFIC insights.
+
+For each aspect below, give CONCRETE observations:
+
+1. HOOK ANALYSIS (first 1-3 seconds):
+   - What exact visual/text/audio technique grabs attention?
+   - What emotion does the hook trigger? (curiosity, fear, excitement, confusion)
+   - Would you scroll past this? Why/why not?
+
+2. EDITING RHYTHM:
+   - What is the average shot length? Does it vary?
+   - Where does the editor speed up? Slow down? WHY?
+   - Are cuts on beat? On words? On emotion changes?
+
+3. B-ROLL STRATEGY:
+   - When does B-Roll appear? What triggers it?
+   - Does B-Roll REPLACE the speaker or OVERLAY?
+   - How long is each B-Roll clip?
+
+4. TEXT & SUBTITLES:
+   - Style: font, size, color, animation, position
+   - How many words per screen at once?
+   - Do subtitles highlight key words? How?
+
+5. COLOR & VISUAL IDENTITY:
+   - Dominant color palette? Color grade?
+   - Does color change to signal mood shifts?
+
+6. SOUND DESIGN:
+   - Background music: genre, energy level
+   - Sound effects: whooshes, clicks, transitions?
+
+7. STORYTELLING STRUCTURE:
+   - Narrative arc? (problem→solution, story→lesson, question→answer)
+   - How does the video END? CTA? Loop?
+
+8. CONVERSION ELEMENTS:
+   - Is there a CTA? When does it appear?
+   - How does the video build trust/authority?
+
+9. WHAT MAKES THIS VIDEO SPECIAL:
+   - ONE technique that other videos don't do?
+   - What would you STEAL for your own editing?
+
+10. TREND ANALYSIS:
+   - Is this video following a current trend? Which one?
+   - What elements are "trendy" vs "timeless"?
+   - How long will this trend likely last?
+
+Return JSON:
+{
+  "hook_seconds": 1.5,
+  "hook_type": "text/question/visual",
+  "hook_emotion": "curiosity/fear/excitement",
+  "cuts_per_minute": 15,
+  "avg_clip_sec": 2.5,
+  "subtitle_style": "classic/karaoke/animated",
+  "subtitle_position": "center/bottom",
+  "subtitle_animation": {"type":"karaoke","word_by_word":true,"highlight_color":"yellow","background":"black_box","font_size":"large","words_per_frame":3},
+  "broll_percent": 35,
+  "broll_timing": "topic_change/emphasis/example",
+  "color_tone": "warm/cold/vibrant",
+  "special": ["zoom","emoji"],
+  "editing_rules": [
+    {
+      "rule": "Specific implementable rule with exact parameters",
+      "when_to_use": "Exact situation where this applies",
+      "when_NOT_to_use": "Situations where this would hurt",
+      "parameters": {"timing":"0.5s","intensity":"1.2x","frequency":"every 5s"},
+      "confidence": 0.85
+    }
+  ],
+  "trend_techniques": [
+    {
+      "technique": "specific technique",
+      "trend_name": "name of trend",
+      "lifecycle": "rising/peak/declining",
+      "shelf_life_weeks": 4,
+      "adaptation_for_business": "how to use in business content"
+    }
+  ],
+  "evergreen_techniques": [
+    {"technique": "specific technique", "why_evergreen": "why this always works"}
+  ],
+  "virality_reasons": ["reason1"],
+  "lessons": ["lesson1"]
+}`
+
       if (!ytdlpAvailable) {
-        // Skip video analysis, go straight to synthesis with metadata only
+        // Metadata-only analysis with deep prompt
         if (state.dailyGptCalls < 15) {
           const synthRes = await ai.chat.completions.create({
             model: 'gpt-5.4',
             messages: [
-              { role: 'system', content: 'נתח patterns מסרטונים ויראליים על בסיס מטא-דאטה בלבד (ללא ניתוח ויזואלי). החזר JSON: {"editing_rules":[{"rule":"כלל בעברית","applies_to":"all/social/marketing","confidence":0.7}],"sop_update":"SOP מעודכן","patterns":{"hook":{"avg_seconds":2,"rule":"כלל"},"pacing":{"avg_cuts":12,"rule":"כלל"},"subtitles":{"style":"classic","rule":"כלל","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":80,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"כלל על כתוביות"}}}}' },
-              { role: 'user', content: `קטגוריה: ${category}\nסרטונים (מטא-דאטה בלבד):\n${videos.slice(0, 5).map((v: any) => `- "${v.title}" (${v.views} צפיות, ${v.likes} לייקים, תגיות: ${v.tags?.join(', ')})`).join('\n')}` }
+              { role: 'system', content: `You are a world-class video editor analyzing videos. Goal: ${sessionGoal}. Analyze based on metadata only. Return JSON: {"editing_rules":[{"rule":"Specific actionable rule with parameters","when_to_use":"when to apply","when_NOT_to_use":"when not to apply","applies_to":"all/social/marketing","confidence":0.7}],"trend_techniques":[{"technique":"specific technique","trend_name":"trend name","lifecycle":"rising/peak/declining","shelf_life_weeks":4,"adaptation_for_business":"business use"}],"evergreen_techniques":[{"technique":"technique","why_evergreen":"reason"}],"system_optimization":[{"idea":"improvement idea","why":"connection to learned insight","impact":"high/medium/low","category":"new_feature/improve_existing/automation/ai_quality","implementation_hint":"brief approach"}],"sop_update":"Updated SOP","patterns":{"hook":{"avg_seconds":2,"rule":"rule"},"pacing":{"avg_cuts":12,"rule":"rule"},"subtitles":{"style":"classic","rule":"rule","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":80,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"subtitle rule"}}}}` },
+              { role: 'user', content: `Category: ${category}\nGoal: ${sessionGoal}\nVideos (metadata only):\n${videos.slice(0, 5).map((v: any) => `- "${v.title}" (${v.views} views, ${v.likes} likes, tags: ${v.tags?.join(', ')})`).join('\n')}` }
             ],
             response_format: { type: 'json_object' },
-            max_completion_tokens: 1000,
+            max_completion_tokens: 2000,
           })
           state.dailyGptCalls++
           state.monthlyGptCost += 0.01
@@ -6340,14 +7080,31 @@ async function runServerLearning() {
           try {
             const synthesis = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
             if (synthesis.editing_rules) {
-              // Preserve non-rule data
               if (!state.learnedPatterns[category]) state.learnedPatterns[category] = {}
               state.learnedPatterns[category].patterns = synthesis.patterns
               state.learnedPatterns[category].sop_update = synthesis.sop_update
               state.learnedPatterns[category].learnedAt = Date.now()
-              // Use dedup function for rules
               const added = addRulesToCategory(state, category, synthesis.editing_rules)
               results.rulesLearned += added
+
+              // Classify insights into expertise domains
+              ;(synthesis.editing_rules || []).forEach((rule: any) => {
+                classifyInsightToDomain(state, category, rule)
+                saveInsightWithTrendClassification(state, category, rule)
+              })
+
+              // Track trends
+              ;(synthesis.trend_techniques || []).forEach((t: any) => {
+                saveInsightWithTrendClassification(state, category, t)
+                results.newTrends.push(t)
+              })
+
+              // System optimization ideas
+              if (synthesis.system_optimization?.length > 0) {
+                saveSystemOptimizationIdeas(state, synthesis.system_optimization)
+                results.systemIdeas.push(...synthesis.system_optimization)
+              }
+
               results.categories[category] = {
                 videosAnalyzed: 0,
                 rulesLearned: added,
@@ -6368,7 +7125,6 @@ async function runServerLearning() {
           const framesDir = path.join(tmpDir, 'frames')
           fs.mkdirSync(framesDir, { recursive: true })
 
-          // Download first 60 sec, lowest quality
           try {
             execSync(`"${ytdlpPath}" --format "worst[ext=mp4]" --download-sections "*0:00-1:00" --max-filesize 15M -o "${videoPath}" "https://www.youtube.com/watch?v=${video.id}"`, { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] })
           } catch {
@@ -6377,7 +7133,6 @@ async function runServerLearning() {
 
           if (!fs.existsSync(videoPath)) continue
 
-          // Extract frames every 5 sec, low res
           execSync(`"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/5,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`, { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] })
 
           const frameFiles = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort().slice(0, 10)
@@ -6385,13 +7140,13 @@ async function runServerLearning() {
             base64: fs.readFileSync(path.join(framesDir, file)).toString('base64'),
           }))
 
-          // GPT Vision analysis
+          // Deep GPT Vision analysis
           const analysisRes = await ai.chat.completions.create({
             model: 'gpt-5.4',
             messages: [
-              { role: 'system', content: 'נתח סרטון ויראלי. החזר JSON בלבד: {"hook_seconds":1.5,"hook_type":"text/question/visual","cuts_per_minute":15,"avg_clip_sec":2.5,"subtitle_style":"classic/karaoke/animated","subtitle_position":"center/bottom","subtitle_animation":{"type":"none/karaoke/pop/typewriter/glow/bounce/slide","word_by_word":true,"highlight_color":"yellow/white/purple","background":"none/black_box/blur","font_size":"small/medium/large/extra_large","words_per_frame":3,"animation_speed":"slow/medium/fast"},"broll_percent":35,"color_tone":"warm/cold/vibrant","special":["zoom","emoji"],"virality_reasons":["reason1"],"lessons":["lesson1"]}' },
+              { role: 'system', content: deepAnalysisPrompt },
               { role: 'user', content: [
-                { type: 'text' as const, text: `"${video.title}" | ${category} | ${frameImages.length} frames:` },
+                { type: 'text' as const, text: `"${video.title}" | ${category} | Goal: ${sessionGoal} | ${frameImages.length} frames:` },
                 ...frameImages.map((f: any) => ({
                   type: 'image_url' as const,
                   image_url: { url: `data:image/jpeg;base64,${f.base64}`, detail: 'low' as const }
@@ -6399,10 +7154,11 @@ async function runServerLearning() {
               ]}
             ],
             response_format: { type: 'json_object' },
-            max_completion_tokens: 1000,
+            max_completion_tokens: 2000,
           })
 
           const analysis = JSON.parse(analysisRes.choices[0]?.message?.content || '{}')
+          analysis.title = video.title
           analyses.push(analysis)
           state.dailyGptCalls++
           state.monthlyGptCost += 0.02
@@ -6417,29 +7173,122 @@ async function runServerLearning() {
 
       if (analyses.length === 0) continue
 
-      // --- STEP 4: Synthesize patterns (1 GPT call) ---
+      // --- STEP 4: Deep synthesis - pattern detection across videos ---
       if (state.dailyGptCalls < 15) {
+        const videoAnalyses = analyses
+        const synthesisPrompt = `You are a master video editor who has analyzed ${videoAnalyses.length} videos.
+Here are the individual analyses:
+${videoAnalyses.map((a: any, i: number) => `VIDEO ${i + 1} (${a.title || 'untitled'}):\n${JSON.stringify(a).substring(0, 3000)}`).join('\n\n---\n\n')}
+
+Find DEEP PATTERNS across these videos.
+
+1. UNIVERSAL PATTERNS (appeared in 2+ videos):
+   - What editing techniques are consistently used?
+   - What specific timings/durations keep appearing?
+
+2. CONTRASTING APPROACHES:
+   - Where do the videos DIFFER in technique?
+   - Which approach worked better?
+
+3. SURPRISING INSIGHTS:
+   - What technique was unexpected?
+   - What "rule" was broken successfully?
+
+4. TREND vs EVERGREEN:
+   - Which techniques are TREND-dependent (will expire)?
+   - Which are EVERGREEN (will always work)?
+
+Return JSON:
+{
+  "editing_rules": [
+    {
+      "rule": "Specific implementable instruction with exact parameters",
+      "when_to_use": "Exact situation/context",
+      "when_NOT_to_use": "Situations where this hurts",
+      "parameters": {"timing":"exact seconds","intensity":"specific values","frequency":"how often"},
+      "evidence": "Which videos showed this",
+      "confidence": 0.85,
+      "applies_to": "all/social/marketing/corporate"
+    }
+  ],
+  "trend_techniques": [
+    {
+      "technique": "specific technique",
+      "trend_name": "name of trend",
+      "lifecycle": "rising/peak/declining",
+      "shelf_life_weeks": 4,
+      "adaptation_for_business": "how to use in business content"
+    }
+  ],
+  "evergreen_techniques": [
+    {"technique": "specific technique", "why_evergreen": "reason"}
+  ],
+  "subtitle_insights": {
+    "most_effective_style": "style name",
+    "word_highlight_technique": "how key words are emphasized",
+    "timing_pattern": "how subtitles sync with speech",
+    "position_strategy": "when to use top/center/bottom",
+    "font_and_color": "recommendations"
+  },
+  "system_optimization": [
+    {
+      "idea": "what to improve in our editing platform",
+      "why": "connection to what we learned",
+      "impact": "high/medium/low",
+      "category": "new_feature/improve_existing/automation/ai_quality/performance",
+      "implementation_hint": "brief technical approach"
+    }
+  ],
+  "sop_update": "Updated SOP based on patterns",
+  "patterns": {
+    "hook": {"avg_seconds":1.5,"rule":"hook rule"},
+    "pacing": {"avg_cuts":15,"rule":"pacing rule"},
+    "subtitles": {"style":"karaoke","rule":"subtitle rule","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":85,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"animation rule"}}
+  }
+}`
+
         const synthRes = await ai.chat.completions.create({
           model: 'gpt-5.4',
           messages: [
-            { role: 'system', content: 'נתח patterns מסרטונים ויראליים. החזר JSON: {"editing_rules":[{"rule":"כלל בעברית","applies_to":"all/social/marketing","confidence":0.9}],"sop_update":"SOP מעודכן","patterns":{"hook":{"avg_seconds":1.5,"rule":"כלל"},"pacing":{"avg_cuts":15,"rule":"כלל"},"subtitles":{"style":"karaoke","rule":"כלל","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":85,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"כלל על כתוביות"}}}}' },
-            { role: 'user', content: `${analyses.length} ניתוחים ל-"${category}":\n${JSON.stringify(analyses).substring(0, 6000)}` }
+            { role: 'system', content: synthesisPrompt },
+            { role: 'user', content: `Category: ${category} | Goal: ${sessionGoal} | Synthesize ${videoAnalyses.length} video analyses above.` }
           ],
           response_format: { type: 'json_object' },
-          max_completion_tokens: 1500,
+          max_completion_tokens: 3000,
         })
 
         const patterns = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
-        // Preserve non-rule data (patterns, sop_update, etc.)
         if (!state.learnedPatterns[category]) state.learnedPatterns[category] = {}
         state.learnedPatterns[category].patterns = patterns.patterns
         state.learnedPatterns[category].sop_update = patterns.sop_update
         state.learnedPatterns[category].learnedAt = Date.now()
-        // Use dedup function for rules
         const rulesAdded = addRulesToCategory(state, category, patterns.editing_rules || [])
         state.dailyGptCalls++
         state.monthlyGptCost += 0.02
         results.totalCost += 0.02
+
+        // Classify into expertise domains
+        ;(patterns.editing_rules || []).forEach((rule: any) => {
+          classifyInsightToDomain(state, category, rule)
+          saveInsightWithTrendClassification(state, category, rule)
+        })
+
+        // Track trends
+        ;(patterns.trend_techniques || []).forEach((t: any) => {
+          saveInsightWithTrendClassification(state, category, t)
+          results.newTrends.push(t)
+        })
+
+        // Evergreen techniques
+        ;(patterns.evergreen_techniques || []).forEach((t: any) => {
+          saveInsightWithTrendClassification(state, category, t)
+        })
+
+        // System optimization ideas
+        if (patterns.system_optimization?.length > 0) {
+          saveSystemOptimizationIdeas(state, patterns.system_optimization)
+          results.systemIdeas.push(...patterns.system_optimization)
+        }
 
         results.categories[category] = {
           videosAnalyzed: analyses.length,
@@ -6452,16 +7301,37 @@ async function runServerLearning() {
     }
   }
 
-  // --- STEP 5: Detect missing features (1 GPT call) ---
+  // --- STEP 5: Detect missing features focused on editing capabilities ---
   if (state.dailyGptCalls < 15 && Object.keys(state.learnedPatterns).length > 0) {
     try {
-      const currentFeatures = 'trim,split,speed,reverse,filters,crop,resize,subtitles,karaoke,animated_subtitles,word_by_word_captions,tts,voice_clone,clean_audio,ducking,auto_transcribe,filler_removal,silence_removal,ai_chat,auto_editor,broll_generation,multi_platform_export'
+      const todaysInsights = Object.entries(state.learnedPatterns)
+        .map(([cat, data]: [string, any]) => {
+          const rules = (data.editing_rules || []).slice(-5).map((r: any) => r.rule).join('; ')
+          return `${cat}: ${rules}`
+        }).join('\n')
+
+      const missingFeaturesPrompt = `Based on editing patterns we learned, compare against our current editing capabilities:
+
+CURRENT CAPABILITIES:
+- FFmpeg: cuts, concat, crop, zoom (static), color filters, text overlay (ASS/SRT), audio mix
+- Multi-cam simulation (crop-based)
+- B-Roll insertion (split and insert)
+- Animated subtitles (karaoke, pop, typewriter, glow, bounce, slide)
+- Background image behind video
+- Platform export (9:16, 1:1, 16:9)
+- Background music mixing
+
+WHAT WE LEARNED TODAY:
+${todaysInsights}
+
+What SPECIFIC editing features would we need to implement the techniques we learned?
+Return JSON: {"missing_features":[{"name":"Feature name","description":"What it does","why_important":"Which learned rule requires this","implementation":"How to build it (FFmpeg command, API, or code approach)","difficulty":"easy/medium/hard","impact":8,"priority":"critical/important/nice_to_have"}],"summary":"Summary","biggest_gap":"The gap"}`
 
       const missingRes = await ai.chat.completions.create({
         model: 'gpt-5.4',
         messages: [
-          { role: 'system', content: 'השווה בין מה שנלמד מסרטונים ויראליים לפיצ\'רים קיימים. מצא כלים חסרים (מקסימום 8). החזר JSON: {"missing_features":[{"name":"שם","description":"מה","why_important":"למה","viral_evidence":"בX%","difficulty":"easy/medium/hard","needs_new_api":false,"suggested_api":"FFmpeg/CSS","priority":"critical/important/nice_to_have"}],"summary":"סיכום","biggest_gap":"הפער"}' },
-          { role: 'user', content: `נלמד:\n${JSON.stringify(state.learnedPatterns).substring(0, 6000)}\n\nקיים: ${currentFeatures}` }
+          { role: 'system', content: missingFeaturesPrompt },
+          { role: 'user', content: 'Analyze and return missing features as JSON.' }
         ],
         response_format: { type: 'json_object' },
         max_completion_tokens: 1500,
@@ -6474,15 +7344,14 @@ async function runServerLearning() {
       results.totalCost += 0.02
       results.missingFeatures = state.missingFeatures.length
 
-      // Send Telegram: Missing features
       if (state.missingFeatures.length > 0 && process.env.TELEGRAM_BOT_TOKEN) {
         const pEmoji: Record<string, string> = { critical: '🔴', important: '🟡', nice_to_have: '🟢' }
         let msg = `🔧 <b>כלים חסרים (${state.missingFeatures.length})</b>\n\n`
         msg += `📊 ${missing.summary || ''}\n⚠️ ${missing.biggest_gap || ''}\n\n`
         state.missingFeatures.forEach((f: any, i: number) => {
           msg += `${pEmoji[f.priority] || '⚪'} <b>${i + 1}. ${f.name}</b>\n`
-          msg += `   ${f.description}\n   📈 ${f.viral_evidence}\n`
-          msg += `   ${f.needs_new_api ? '🔌 ' + f.suggested_api : '✅ אפשרי'} | ${f.difficulty}\n\n`
+          msg += `   ${f.description}\n`
+          msg += `   ${f.implementation ? '🔧 ' + f.implementation.substring(0, 100) : ''} | ${f.difficulty}\n\n`
         })
         await sendTelegram(msg)
       }
@@ -6491,9 +7360,13 @@ async function runServerLearning() {
     }
   }
 
-  // --- STEP 6: Save state first ---
+  // --- STEP 6: Save state with learning metrics ---
   state.lastLearnDate = Date.now()
   state.lastLearnDateIsrael = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
+
+  // Update trend timestamp
+  state.trendInsights.lastTrendUpdate = Date.now()
+
   saveLearningState(state)
 
   // --- STEP 7: Find what's NEW by comparing before/after ---
@@ -6515,6 +7388,44 @@ async function runServerLearning() {
 
   const videosThisSession = (stateAfter.totalVideosAnalyzed || 0) - videosBeforeTotal
 
+  // Update learning metrics
+  stateAfter.learningMetrics = stateAfter.learningMetrics || {
+    totalSessions: 0,
+    totalVideosAnalyzed: 0,
+    totalRulesLearned: 0,
+    avgRulesPerSession: 0,
+    avgConfidence: 0,
+    categoriesCovered: [],
+    uniqueCategories: 0,
+    sessionsWithNewInsights: 0,
+    sessionsWithNoNewInsights: 0,
+    editsWithBrain: 0,
+    lastBrainVersionUsed: 0,
+  }
+  stateAfter.learningMetrics.totalSessions++
+  stateAfter.learningMetrics.totalRulesLearned = totalRulesAfter
+  stateAfter.learningMetrics.avgRulesPerSession = totalRulesAfter / stateAfter.learningMetrics.totalSessions
+  stateAfter.learningMetrics.sessionsWithNewInsights += newRules.length > 0 ? 1 : 0
+  stateAfter.learningMetrics.sessionsWithNoNewInsights += newRules.length === 0 ? 1 : 0
+
+  // Track category coverage
+  const todaysCatNames = todayCategories
+  stateAfter.learningMetrics.categoriesCovered = [
+    ...new Set([...(stateAfter.learningMetrics.categoriesCovered || []), ...todaysCatNames])
+  ]
+  stateAfter.learningMetrics.uniqueCategories = stateAfter.learningMetrics.categoriesCovered.length
+
+  // Average confidence of all rules
+  const allConfidences: number[] = []
+  Object.values(stateAfter.learnedPatterns || {}).forEach((data: any) => {
+    ;(data.editing_rules || []).forEach((r: any) => {
+      if (r.confidence) allConfidences.push(r.confidence)
+    })
+  })
+  stateAfter.learningMetrics.avgConfidence = allConfidences.length > 0
+    ? allConfidences.reduce((a: number, b: number) => a + b, 0) / allConfidences.length
+    : 0
+
   const learningResults = {
     videosThisSession,
     totalVideosAllTime: stateAfter.totalVideosAnalyzed || 0,
@@ -6523,16 +7434,24 @@ async function runServerLearning() {
     newRules,
     categories: Object.keys(stateAfter.learnedPatterns || {}),
     missingFeatures: stateAfter.missingFeatures || [],
+    newTrends: results.newTrends || [],
+    systemIdeas: results.systemIdeas || [],
   }
 
   console.log(`[LEARN] After: ${totalRulesAfter} total rules (+${newRules.length} new)`)
 
-  // --- STEP 8: Send Telegram - ONLY if there are NEW insights ---
+  // --- STEP 8: Update editor brain ---
+  try {
+    await updateEditorBrain(stateAfter)
+  } catch (e: any) {
+    console.warn('[LEARN] Editor brain update failed:', e.message)
+  }
+
+  // --- STEP 9: Send Telegram - ONLY if there are NEW insights ---
   if (newRules.length > 0) {
     await sendLearningReport(stateAfter, learningResults)
   } else {
     console.log('[LEARN] No new insights learned, skipping detailed Telegram notification')
-    // Still send a short status update
     const israelTime = new Date().toLocaleString('he-IL', {
       timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit'
     })
@@ -6754,6 +7673,92 @@ async function sendFullReport() {
     message += `  📅 למידה אחרונה: ${state.lastLearnDateIsrael || 'לא ידוע'}\n`
     message += `  🆕 תובנות חדשות בפעם האחרונה: ${state.lastSessionNewRules || 0}\n\n`
 
+    // Learning metrics
+    if (state.learningMetrics) {
+      const m = state.learningMetrics
+      message += `📈 מדדי למידה:\n`
+      message += `  סשנים: ${m.totalSessions}\n`
+      message += `  ממוצע תובנות לסשן: ${m.avgRulesPerSession.toFixed(1)}\n`
+      message += `  ביטחון ממוצע: ${(m.avgConfidence * 100).toFixed(0)}%\n`
+      message += `  קטגוריות שכוסו: ${m.uniqueCategories}/${Object.keys(LEARNING_CATEGORIES).length}\n`
+      message += `  סשנים עם תובנות: ${m.sessionsWithNewInsights}/${m.totalSessions}\n\n`
+    }
+
+    // Expertise breakdown
+    const domainEmojiReport: Record<string, string> = { editing: '🎬', social: '📱', marketing: '📣', paid_ads: '💰' }
+    const domainNameReport: Record<string, string> = { editing: 'עריכת וידאו', social: 'סושיאל מדיה', marketing: 'שיווק', paid_ads: 'פרסום ממומן' }
+
+    if (state.expertise) {
+      message += `🧠 מומחיות מפורטת:\n`
+      ;['editing', 'social', 'marketing', 'paid_ads'].forEach(domain => {
+        const exp = state.expertise[domain]
+        if (exp && exp.totalInsights > 0) {
+          const nextLevel = exp.level === 'beginner' ? 20 : exp.level === 'intermediate' ? 50 : exp.level === 'advanced' ? 100 : null
+          const progress = nextLevel ? ` (${nextLevel - exp.totalInsights} עד הרמה הבאה)` : ' (מקסימום!)'
+          message += `  ${domainEmojiReport[domain]} ${domainNameReport[domain]}: ${exp.totalInsights} תובנות${progress}\n`
+        }
+      })
+      message += '\n'
+
+      // Top system optimization ideas
+      const sysOpt = state.expertise.systemOptimization
+      if (sysOpt?.ideas?.length > 0) {
+        const topIdeas = sysOpt.ideas
+          .filter((i: any) => i.status === 'pending' && i.impact === 'high')
+          .slice(0, 5)
+
+        if (topIdeas.length > 0) {
+          message += `⚙️ רעיונות שיפור מובילים:\n`
+          topIdeas.forEach((idea: any, i: number) => {
+            message += `  ${i + 1}. ${idea.idea}\n`
+            message += `     (${idea.category}) - ${idea.implementation_hint || ''}\n`
+          })
+          message += '\n'
+        }
+      }
+    }
+
+    // Editor brain info
+    try {
+      const brainPath = path.join(__dirname, 'editor-brain.json')
+      if (fs.existsSync(brainPath)) {
+        const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
+        message += `🧠 מוח העורך v${brain.version}:\n`
+        message += `  כללי עריכה: ${brain.editingRules?.length || 0}\n`
+        message += `  תובנות שיווק: ${brain.marketingInsights?.length || 0}\n`
+        message += `  תובנות סושיאל: ${brain.socialInsights?.length || 0}\n`
+        message += `  תובנות ממומן: ${brain.paidAdsInsights?.length || 0}\n`
+        message += `  טרנדים פעילים: ${brain.activeTrends?.length || 0}\n`
+        if (brain.compressed) {
+          const reduction = Math.round((1 - brain.compressed.totalCompressed / brain.compressed.totalOriginal) * 100)
+          message += `  📦 דחיסה: ${brain.compressed.totalOriginal} → ${brain.compressed.totalCompressed} כללים (${reduction}% קיצור)\n`
+        }
+        message += `  עריכות שהשתמשו במוח: ${state.learningMetrics?.editsWithBrain || 0}\n`
+        if (brain.contentSOPs) {
+          message += `\n  📋 SOPs לפי סוג תוכן:\n`
+          Object.keys(brain.contentSOPs).forEach(type => {
+            message += `    • ${type}\n`
+          })
+        }
+        message += '\n'
+      }
+    } catch {}
+
+    // Trends
+    const trends = state.trendInsights || {}
+    message += `🔥 טרנדים:\n`
+    message += `  פעילים: ${(trends.activeTrends || []).length}\n`
+    message += `  פגי תוקף: ${(trends.expiredTrends || []).length}\n`
+    message += `  כללים נצחיים: ${(trends.evergreenRules || []).length}\n`
+    if ((trends.activeTrends || []).length > 0) {
+      message += `\n  טרנדים פעילים:\n`
+      trends.activeTrends.forEach((t: any) => {
+        const lifecycle = t.lifecycle === 'rising' ? '📈' : t.lifecycle === 'peak' ? '🔝' : '📉'
+        message += `    ${lifecycle} ${t.trend_name} (${t.techniques?.length || 0} טכניקות)\n`
+      })
+    }
+    message += '\n'
+
     // Per category breakdown
     message += `📂 תובנות לפי קטגוריה:\n`
     Object.entries(categoryCounts)
@@ -6838,7 +7843,8 @@ app.listen(PORT, () => {
   console.log('[LEARN]   Schedule: 07:00 + 19:00 Israel time')
   console.log('[LEARN]   Telegram: ' + (process.env.TELEGRAM_BOT_TOKEN ? '✅ Enabled' : '❌ Not configured'))
   console.log('[LEARN]   Chat ID: ' + (process.env.TELEGRAM_CHAT_ID || 'NOT SET'))
-  console.log('[LEARN]   Categories: viral_editing, hooks, pacing, subtitles, broll, marketing, transitions, color_grading, animated_captions')
+  console.log(`[LEARN]   Categories: ${Object.keys(LEARNING_CATEGORIES).length} diverse categories across 4 domains`)
+  logBrainStatus()
 
   // Check if we missed a session
   console.log('[LEARN] Checking if learning session was missed...')
