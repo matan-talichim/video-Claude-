@@ -319,7 +319,9 @@ async function processVideosWithPlan(
   backgroundImage: string,
   versionLabel: string,
   skipPlatformExport: boolean = false,
-  brollClips: string[] = []
+  brollClips: string[] = [],
+  passedTranscript?: any,
+  passedMainPresenter?: string | null
 ): Promise<VideoResult[]> {
   const addLog = useAutoEditorStore.getState().addLog
   const processedVideos: VideoResult[] = []
@@ -358,12 +360,16 @@ async function processVideosWithPlan(
       })),
     }
 
-    // Get transcript segments and presenter from store for subtitle generation
+    // Get transcript segments and presenter - use passed params first, then store fallback
     const storeState = useAutoEditorStore.getState()
-    const storedTranscript = storeState.transcript || storeState.cachedTranscript
-    let storedMainPresenter = storeState.mainPresenter || storeState.detectedPresenter
+    const storedTranscript = passedTranscript || storeState.transcript || storeState.cachedTranscript
+    let storedMainPresenter = passedMainPresenter || storeState.mainPresenter || storeState.detectedPresenter
     if (!storedMainPresenter || storedMainPresenter === 'undefined' || storedMainPresenter === 'unknown') {
-      storedMainPresenter = null
+      // Last resort: use mainSpeaker from transcript or first sorted speaker
+      storedMainPresenter = storedTranscript?.mainSpeaker || null
+      if (!storedMainPresenter && storedTranscript?.sortedSpeakers?.length > 0) {
+        storedMainPresenter = storedTranscript.sortedSpeakers[0]?.speaker || null
+      }
     }
 
     // Build B-Roll assets from brollClips URLs + plan timing info
@@ -374,7 +380,34 @@ async function processVideosWithPlan(
       duration: planBroll[idx]?.duration || 4,
     })).filter((b: any) => b.url)
 
-    addLog(`[${versionLabel}] Sending to process: transcript=${storedTranscript?.segments?.length || 0} presenter=${storedMainPresenter || 'none'} broll=${brollAssets.length} music=${musicUrl ? 'YES' : 'NO'} bg=${backgroundImage ? 'YES' : 'NO'}`)
+    // === DIAGNOSTIC: Log data sources to trace where data comes from ===
+    console.log('=== ORCHESTRATOR SENDING TO PROCESS ===')
+    console.log('data source:', passedTranscript ? 'PASSED PARAM' : storeState.transcript ? 'store.transcript' : storeState.cachedTranscript ? 'store.cachedTranscript' : 'NONE')
+    console.log('transcript segments:', storedTranscript?.segments?.length || 0)
+    console.log('mainPresenter:', storedMainPresenter || 'MISSING')
+    console.log('brollAssets:', brollAssets.length)
+    console.log('zooms:', (videoPlan?.zooms || []).length)
+    console.log('speakers:', (videoPlan?.speakers || []).length)
+    console.log('graphics:', (videoPlan?.graphics || []).length)
+    console.log('subtitles:', (videoPlan?.subtitles || []).length)
+    console.log('store keys with data:', Object.keys(storeState).filter(k => {
+      const v = (storeState as any)[k]
+      return v !== null && v !== undefined && v !== '' && v !== false &&
+        !(Array.isArray(v) && v.length === 0)
+    }))
+
+    // Validate critical data before sending
+    if (!storedTranscript?.segments?.length) {
+      console.error('!!! TRANSCRIPT MISSING - checking all store fields:')
+      Object.keys(storeState).forEach(key => {
+        const val = (storeState as any)[key]
+        if (val && typeof val === 'object' && !Array.isArray(val) && (val.segments || val.text || val.words)) {
+          console.log(`  Found transcript-like data in store.${key}:`, typeof val, Array.isArray(val.segments) ? val.segments.length + ' segments' : '')
+        }
+      })
+    }
+
+    addLog(`[${versionLabel}] Sending to process: transcript=${storedTranscript?.segments?.length || 0} presenter=${storedMainPresenter || 'none'} broll=${brollAssets.length} zooms=${(videoPlan?.zooms || []).length} music=${musicUrl ? 'YES' : 'NO'} bg=${backgroundImage ? 'YES' : 'NO'}`)
 
     const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
       method: 'POST',
@@ -383,7 +416,9 @@ async function processVideosWithPlan(
         videoUrl: sourceUrl,
         videoPlan: fullPlan,
         targetDuration: finalInput.targetDuration === -1
-          ? (videoPlan.optimalDuration || 60)
+          ? (videoPlan.optimalDuration || videoPlan.estimatedDuration ||
+            // Fallback: compute from actual cuts duration
+            fullPlan.cuts.reduce((sum: number, c: any) => sum + ((c.keepEnd || 0) - (c.keepStart || 0)), 0) || 60)
           : finalInput.targetDuration,
         platforms: finalInput.platforms,
         musicUrl: musicUrl || null,
@@ -811,17 +846,26 @@ export async function continueAfterEnrichment(
     // Step 6 — Process videos with FFmpeg (2 versions if B plan exists)
     setStep('editing')
 
+    // Get presenter from store (captured here to pass explicitly to processVideosWithPlan)
+    const mainPresenter = store.mainPresenter || store.detectedPresenter || transcript?.mainSpeaker || null
+
+    console.log('[AUTO-EDIT] Phase 2 data check before processing:')
+    console.log('  transcript segments:', transcript?.segments?.length || 0)
+    console.log('  mainPresenter:', mainPresenter || 'MISSING')
+    console.log('  store.transcript:', !!store.transcript, 'store.cachedTranscript:', !!store.cachedTranscript)
+    console.log('  store.mainPresenter:', store.mainPresenter, 'store.detectedPresenter:', store.detectedPresenter)
+
     // Process Version A - FULL quality, skip platform export for A/B comparison
     const hasVersionB = !!editingPlanB
     setProgress({ current: 0, total: 2, label: 'עורך גרסה A...' })
-    const processedA = await processVideosWithPlan(editingPlanA, enrichment, finalInput, musicUrl, backgroundImage, 'A', hasVersionB, brollClips)
+    const processedA = await processVideosWithPlan(editingPlanA, enrichment, finalInput, musicUrl, backgroundImage, 'A', hasVersionB, brollClips, transcript, mainPresenter)
 
     // Process Version B (if available) - FULL quality, skip platform export
     let processedB: VideoResult[] | null = null
     if (editingPlanB) {
       setProgress({ current: 1, total: 2, label: 'עורך גרסה B...' })
       try {
-        processedB = await processVideosWithPlan(editingPlanB, enrichment, finalInput, musicUrl, backgroundImage, 'B', true, brollClips)
+        processedB = await processVideosWithPlan(editingPlanB, enrichment, finalInput, musicUrl, backgroundImage, 'B', true, brollClips, transcript, mainPresenter)
       } catch (err: any) {
         addLog(`גרסה B נכשלה: ${err.message}. ממשיך עם גרסה A בלבד.`)
       }
@@ -926,6 +970,10 @@ export async function selectABVersion(
     timestamp: Date.now(),
   })
 
+  // Get transcript and presenter for export (needed for subtitle rendering)
+  const transcript = store.transcript || store.cachedTranscript
+  const mainPresenter = store.mainPresenter || store.detectedPresenter || transcript?.mainSpeaker || null
+
   // Now export selected version(s) to platforms
   setStep('exporting')
   const allResults: VideoResult[] = []
@@ -969,6 +1017,17 @@ export async function selectABVersion(
             targetDuration: v.optimalDuration || finalInput.targetDuration || 60,
             platforms: finalInput.platforms,
             skipPlatformExport: false, // NOW do platform export
+            // Include transcript and presenter for subtitle rendering during export
+            mainPresenter: mainPresenter || undefined,
+            transcript: transcript ? {
+              segments: transcript.segments || [],
+              mainSpeaker: transcript.mainSpeaker,
+              totalDuration: transcript.totalDuration || transcript.total_duration,
+            } : undefined,
+            includeSubtitles: finalInput.includeSubtitles ?? true,
+            includeBackground: finalInput.includeBackground ?? true,
+            animatedSubtitles: finalInput.animatedSubtitles ?? false,
+            animationStyle: finalInput.animationStyle || 'karaoke',
           }),
         })
 
