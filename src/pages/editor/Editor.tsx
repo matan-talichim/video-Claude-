@@ -40,9 +40,38 @@ export default function Editor() {
     if (project) {
       const activeVideo = project.videos?.find((v) => v.id === project.activeVideoId) || project.videos?.[0]
       const mediaFile = activeVideo?.file ?? project.mediaFile
-      const mediaBlobUrl = activeVideo?.blobUrl ?? project.mediaBlobUrl
+      let mediaBlobUrl = activeVideo?.blobUrl ?? project.mediaBlobUrl
       const mediaType = activeVideo?.mediaType ?? project.mediaType
       const transcript = activeVideo?.transcript?.length ? activeVideo.transcript : project.transcript
+
+      // Check if auto-editor stored a video URL as fallback
+      const autoEditorUrl = localStorage.getItem('autoEditorVideoUrl')
+      if (autoEditorUrl && (!mediaBlobUrl || mediaBlobUrl.startsWith('blob:') && !mediaFile)) {
+        console.log('[EDITOR] Using auto-editor video URL:', autoEditorUrl)
+        mediaBlobUrl = autoEditorUrl
+      }
+      localStorage.removeItem('autoEditorVideoUrl')
+
+      // Load auto-editor transcript if available
+      let autoTranscript: any[] | undefined = transcript
+      if (!autoTranscript?.length) {
+        const storedTranscript = localStorage.getItem('autoEditorTranscript')
+        if (storedTranscript) {
+          try {
+            const parsed = JSON.parse(storedTranscript)
+            if (parsed?.segments?.length) {
+              autoTranscript = parsed.segments.map((s: any) => ({
+                start: s.start || 0,
+                end: s.end || 0,
+                text: s.text || '',
+                speaker: s.speaker || '',
+              }))
+              console.log('[EDITOR] Loaded auto-editor transcript:', autoTranscript?.length, 'segments')
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      localStorage.removeItem('autoEditorTranscript')
 
       loadProject({
         id: project.id,
@@ -51,15 +80,22 @@ export default function Editor() {
         mediaFile,
         mediaBlobUrl,
         mediaType,
-        transcript,
+        transcript: autoTranscript,
         editHistory: project.editHistory,
         deletedRegions: project.deletedRegions,
       })
     } else {
+      // No project found - check if auto-editor stored a video URL
+      const autoEditorUrl = localStorage.getItem('autoEditorVideoUrl')
+      localStorage.removeItem('autoEditorVideoUrl')
+      localStorage.removeItem('autoEditorTranscript')
+
       loadProject({
         id,
         name: 'פרויקט חדש',
         isDemo: false,
+        mediaBlobUrl: autoEditorUrl || undefined,
+        mediaType: autoEditorUrl ? 'video' : undefined,
       })
     }
   }, [id, getProject, loadProject])

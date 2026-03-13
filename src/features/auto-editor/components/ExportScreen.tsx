@@ -237,13 +237,24 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
         if (!mainFile) continue
 
         const videoUrl = ensureFullUrl(mainFile.url)
-        console.log('[TRANSFER] Fetching video from:', videoUrl)
+        console.log('[TRANSFER] Fetching VIDEO from:', videoUrl)
+
+        // Store video URL in localStorage as fallback for the editor
+        localStorage.setItem('autoEditorVideoUrl', videoUrl)
+
+        // Also store transcript if available
+        const storeState = useAutoEditorStore.getState()
+        if (storeState.transcript) {
+          try {
+            localStorage.setItem('autoEditorTranscript', JSON.stringify(storeState.transcript))
+          } catch { /* ignore serialization errors */ }
+        }
 
         try {
           const response = await fetch(videoUrl)
           if (!response.ok) {
             console.error('[TRANSFER] Video fetch failed:', videoUrl, response.status)
-            // Use server URL directly as fallback
+            // Use server URL directly as blobUrl (not empty blob)
             const emptyBlob = new Blob([], { type: 'video/mp4' })
             const file = new File([emptyBlob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
             videoFiles.push({ file, blobUrl: videoUrl, mediaType: 'video' })
@@ -251,10 +262,12 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
           }
 
           const blob = await response.blob()
-          console.log('[TRANSFER] Blob size:', blob.size, 'type:', blob.type)
+          const contentType = response.headers.get('content-type') || 'video/mp4'
+          console.log('[TRANSFER] Blob size:', blob.size, 'type:', contentType)
 
-          if (blob.size === 0) {
-            console.error('[TRANSFER] Empty blob for:', videoUrl)
+          // Ensure we got a VIDEO file (not audio)
+          if (blob.size === 0 || contentType.startsWith('audio/')) {
+            console.error('[TRANSFER] Got empty or audio blob for:', videoUrl, 'type:', contentType)
             const emptyBlob = new Blob([], { type: 'video/mp4' })
             const file = new File([emptyBlob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
             videoFiles.push({ file, blobUrl: videoUrl, mediaType: 'video' })
@@ -277,7 +290,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
           const file = new File([emptyBlob], `סרטון_${videoResult.videoIndex}.mp4`, { type: 'video/mp4' })
           videoFiles.push({
             file,
-            blobUrl: videoUrl, // Use server URL directly
+            blobUrl: videoUrl,
             mediaType: 'video',
           })
         }

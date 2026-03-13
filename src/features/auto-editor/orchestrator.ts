@@ -8,8 +8,13 @@ import { generateBrollSeedance } from './services/seedanceService'
 import { generateBrollVeo } from './services/veoService'
 import { findMusic } from './services/pixabayService'
 import { BASE_VISUAL_PROMPT, BASE_ENRICH_PROMPT } from './constants/basePrompts'
+import type { EditJob, TranscriptSegment, SubtitleSegment } from './types/EditJob'
+import { createEmptyEditJob } from './types/EditJob'
 
 const API_BASE = 'http://localhost:3001/api'
+
+// === Module-level job storage: persists across Phase 1 → Phase 2 ===
+let currentJobA: EditJob | null = null
 
 interface ValidationResult {
   valid: boolean
@@ -24,16 +29,15 @@ function validateAvailableContent(
 ): ValidationResult {
   let duration = totalDuration
 
-  // Safety: if duration is 0 but we have segments, estimate from them
   if (duration === 0 && segments && segments.length > 0) {
     duration = Math.max(...segments.map(s => s.end || 0))
     if (duration === 0) {
-      duration = segments.length * 3 // ~3 sec per segment fallback
+      duration = segments.length * 3
     }
     console.log('[VALIDATE] Duration was 0, estimated:', duration)
   }
 
-  const available = duration * 0.7 // ~70% after cuts
+  const available = duration * 0.7
   const required = targetDuration * numberOfVideos
 
   if (available < required) {
@@ -135,7 +139,7 @@ async function findMusicSafe(
   }
 }
 
-// === IMPROVEMENT 3: Speech pace and energy analysis ===
+// === Speech pace and energy analysis ===
 interface EnergyAnalysis {
   totalWords: number
   totalSpeechDuration: number
@@ -166,7 +170,6 @@ function analyzeTranscriptEnergy(transcript: any): EnergyAnalysis {
   const silences: EnergyAnalysis['silences'] = []
   const speakerChanges: EnergyAnalysis['speakerChanges'] = []
 
-  // Energy map per 10 seconds
   const windowSize = 10
   for (let t = 0; t < totalDuration; t += windowSize) {
     const windowSegs = segments.filter((s: any) => s.start >= t && s.start < t + windowSize)
@@ -182,13 +185,11 @@ function analyzeTranscriptEnergy(transcript: any): EnergyAnalysis {
     energyMap.push({ time: t, energy, wordCount, avgGap })
   }
 
-  // Find peaks and valleys
   energyMap.forEach(e => {
     if (e.energy >= 7) peaks.push({ time: e.time, reason: `אנרגיה גבוהה (${e.wordCount} מילים, קצב מהיר)` })
     if (e.energy <= 3 && e.wordCount > 0) valleys.push({ time: e.time, reason: `אנרגיה נמוכה (קצב איטי, הפסקות)` })
   })
 
-  // Silence detection
   for (let i = 1; i < segments.length; i++) {
     const gap = segments[i].start - segments[i - 1].end
     if (gap > 0.5) {
@@ -196,7 +197,6 @@ function analyzeTranscriptEnergy(transcript: any): EnergyAnalysis {
     }
   }
 
-  // Speaker changes
   for (let i = 1; i < segments.length; i++) {
     if (segments[i].speaker !== segments[i - 1].speaker) {
       speakerChanges.push({ time: segments[i].start, from: segments[i - 1].speaker, to: segments[i].speaker })
@@ -206,22 +206,19 @@ function analyzeTranscriptEnergy(transcript: any): EnergyAnalysis {
   return { totalWords, totalSpeechDuration, wordsPerMinute, pace, energyMap, silences, peaks, valleys, speakerChanges }
 }
 
-// === IMPROVEMENT 5: Quality metrics ===
-function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: number): QualityReport {
+// === Quality metrics ===
+function evaluateEditQuality(job: EditJob, plan: any, outputDuration: number, targetDuration: number): QualityReport {
   const report: QualityReport = {
     score: 100,
     issues: [],
     passed: [],
   }
 
-  // Use actual store data to verify what was really available, not just what was planned
-  const storeState = useAutoEditorStore.getState()
-  const hasTranscript = (storeState.transcript?.segments?.length || 0) > 0
-  const hasPresenter = !!(storeState.mainPresenter || storeState.detectedPresenter)
-  const hasBrollAssets = (storeState.cachedAssets?.brollClips?.length || 0) > 0
-  const hasMusicAsset = !!(storeState.cachedAssets?.music)
+  const hasTranscript = (job.transcript?.segments?.length || 0) > 0
+  const hasPresenter = !!job.transcript?.mainPresenter
+  const hasBrollAssets = (job.assets.brollClips.length) > 0
+  const hasMusicAsset = !!job.assets.musicTrack
 
-  // Check 1: Duration matches target
   const durationDiff = Math.abs(outputDuration - targetDuration)
   if (durationDiff > 5) {
     report.score -= 20
@@ -233,8 +230,7 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
     report.passed.push(`אורך תואם ליעד (${outputDuration.toFixed(1)}שנ)`)
   }
 
-  // Check 2: Has B-Roll (check actual assets, not just plan)
-  const brollCount = hasBrollAssets ? storeState.cachedAssets!.brollClips.length : 0
+  const brollCount = hasBrollAssets ? job.assets.brollClips.length : 0
   const planBrollCount = plan?.brollMoments?.length || plan?.broll?.length || 0
   const expectedBRoll = Math.floor(targetDuration / 15)
   if (brollCount >= expectedBRoll) {
@@ -250,18 +246,14 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
     report.issues.push({ severity: 'warning', message: 'אין B-Roll כלל' })
   }
 
-  // Check 3: Has subtitles (check if transcript segments exist for subtitle generation)
-  const subtitleCount = plan?.subtitles?.length || 0
-  const transcriptCount = hasTranscript ? storeState.transcript.segments.length : 0
-  if (subtitleCount > 0 || transcriptCount > 0) {
-    const count = subtitleCount || transcriptCount
-    report.passed.push(`כתוביות: ${count} שורות (מתמלול${hasPresenter ? ' - דובר ראשי בלבד' : ''})`)
-  } else {
+  const subtitleCount = job.subtitles.segments.length
+  if (subtitleCount > 0) {
+    report.passed.push(`כתוביות: ${subtitleCount} שורות (מתמלול${hasPresenter ? ' - דובר ראשי בלבד' : ''})`)
+  } else if (hasTranscript) {
     report.score -= 10
     report.issues.push({ severity: 'warning', message: 'אין כתוביות - חסר תמלול' })
   }
 
-  // Check 4: Has transitions
   if (plan?.transitions?.length > 0) {
     report.passed.push(`מעברים: ${plan?.transitions?.length}`)
   } else {
@@ -269,7 +261,6 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
     report.issues.push({ severity: 'info', message: 'אין מעברים - חיתוכים ישירים בלבד' })
   }
 
-  // Check 5: Has CTA at end
   if (plan?.outro) {
     report.passed.push('CTA בסיום')
   } else {
@@ -277,20 +268,17 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
     report.issues.push({ severity: 'info', message: 'אין קריאה לפעולה בסוף' })
   }
 
-  // Check 6: Color grade applied
   if (plan?.colorGrade && plan?.colorGrade !== 'none') {
     report.passed.push(`Color grade: ${plan?.colorGrade}`)
   }
 
-  // Check 7: Has zooms
-  if (plan?.zooms?.length > 0) {
-    report.passed.push(`זומים: ${plan?.zooms?.length}`)
+  if (job.plan?.zooms && job.plan.zooms.length > 0) {
+    report.passed.push(`זומים: ${job.plan.zooms.length}`)
   } else {
     report.score -= 5
     report.issues.push({ severity: 'info', message: 'אין זומים' })
   }
 
-  // Check 8: Music (check actual asset, not just plan)
   if (hasMusicAsset) {
     report.passed.push('מוזיקת רקע')
   } else if (plan?.musicMoments?.length > 0 || plan?.music_moments?.length > 0) {
@@ -298,10 +286,9 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
     report.issues.push({ severity: 'info', message: 'מוזיקת רקע תוכננה אך לא נמצאה' })
   }
 
-  // Check 9: Presenter isolation
   if (hasPresenter) {
-    report.passed.push(`בידוד דובר ראשי: ${storeState.mainPresenter || storeState.detectedPresenter}`)
-  } else if (hasTranscript && storeState.transcript.segments.some((s: any) => s.speaker)) {
+    report.passed.push(`בידוד דובר ראשי: ${job.transcript?.mainPresenter}`)
+  } else if (hasTranscript && job.transcript!.segments.some(s => s.speaker)) {
     report.score -= 5
     report.issues.push({ severity: 'info', message: 'זוהו מספר דוברים אך לא בוצע בידוד' })
   }
@@ -310,18 +297,199 @@ function evaluateEditQuality(plan: any, outputDuration: number, targetDuration: 
   return report
 }
 
-// === Helper: Process videos through FFmpeg pipeline ===
-async function processVideosWithPlan(
+// === Build EditJob from editing plan + assets for server processing ===
+function buildEditJobForProcessing(
+  job: EditJob,
   editingPlan: any,
   enrichment: any,
   finalInput: AutoEditorInput,
   musicUrl: string,
   backgroundImage: string,
-  versionLabel: string,
-  skipPlatformExport: boolean = false,
-  brollClips: string[] = [],
-  passedTranscript?: any,
-  passedMainPresenter?: string | null
+  brollClips: string[],
+  versionLabel: 'A' | 'B',
+  skipPlatformExport: boolean,
+): EditJob {
+  const videoPlan = editingPlan?.videos?.[0] || {}
+
+  // Build cuts
+  const cuts = (videoPlan?.cuts || []).map((c: any) => ({
+    sourceStart: parseFloat(String(c.keepStart ?? c.keep_start ?? 0)),
+    sourceEnd: parseFloat(String(c.keepEnd ?? c.keep_end ?? 0)),
+    outputStart: 0, // Will be calculated
+    type: 'presenter' as const,
+  }))
+
+  // Calculate outputStart for each cut
+  let outputOffset = 0
+  for (const cut of cuts) {
+    cut.outputStart = outputOffset
+    outputOffset += cut.sourceEnd - cut.sourceStart
+  }
+
+  // Build zooms
+  const rawZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
+  const zooms = rawZooms.map((z: any) => ({
+    timestamp: z.at_time ?? z.atTime ?? z.relative_time ?? z.relativeTime ?? z.time ?? z.start ?? 0,
+    duration: z.duration || 3,
+    intensity: Math.min(z.scale || z.intensity || 1.2, 1.5),
+    direction: (z.direction || 'in') as 'in' | 'out',
+    reason: z.reason || '',
+  }))
+
+  // Build camera angles
+  const rawAngles = videoPlan?.cameraAngles || videoPlan?.camera_angles || videoPlan?.angles || []
+  const cameraAngles = rawAngles.map((ca: any) => ({
+    timestamp: ca.start || 0,
+    duration: (ca.end || ca.start || 0) - (ca.start || 0),
+    type: (ca.camera || ca.type || 'wide') as 'wide' | 'medium' | 'closeup' | 'left' | 'right',
+    cropX: 0, cropY: 0, cropW: 0, cropH: 0,
+  }))
+
+  // Build B-Roll placements
+  const planBroll = videoPlan?.brollMoments || videoPlan?.broll || editingPlan?.prompts?.broll || []
+  const brollPlacements = brollClips.map((_url: string, idx: number) => ({
+    outputTimestamp: planBroll[idx]?.time || planBroll[idx]?.insert_at || planBroll[idx]?.atTime || (idx * 15),
+    duration: planBroll[idx]?.duration || 4,
+    assetIndex: idx,
+    keepAudio: true,
+  })).filter((_: any, idx: number) => brollClips[idx])
+
+  // Build B-Roll assets
+  const brollAssets = brollClips.filter(Boolean).map(url => ({
+    localPath: '',
+    url,
+    type: 'video' as const,
+    duration: 4,
+    width: 0,
+    height: 0,
+  }))
+
+  // Build speakers (lower thirds)
+  const rawSpeakers = videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds || []
+  const speakers = rawSpeakers.map((s: any) => ({
+    name: s.name || 'דובר',
+    firstAppearance: s.firstAppearance ?? s.first_appearance ?? 0,
+    displayDuration: s.displayDuration ?? s.display_duration ?? 4,
+  }))
+
+  // Build graphics
+  const rawGraphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays || []
+  const graphics = rawGraphics.map((g: any) => ({
+    type: g.type || 'text',
+    text: g.text || '',
+    atTime: g.atTime ?? g.at_time ?? 0,
+    duration: g.duration ?? 3,
+    label: g.label,
+  }))
+
+  // Build transitions
+  const rawTransitions = videoPlan?.transitions || ['fade']
+  const transitions = rawTransitions.map((t: any) => ({
+    type: (typeof t === 'string' ? t : t.type || 'fade') as 'fade' | 'cut' | 'dissolve',
+    duration: typeof t === 'object' ? (t.duration || 0.5) : 0.5,
+    atTime: typeof t === 'object' ? (t.atTime || 0) : 0,
+  }))
+
+  // Build subtitle segments from transcript
+  const subtitleSegments: SubtitleSegment[] = []
+  if (job.subtitles.enabled && job.transcript?.segments) {
+    const presenterSegments = job.transcript.segments.filter(s => s.isPresenter)
+    const segsToUse = presenterSegments.length > 0 ? presenterSegments : job.transcript.segments
+    for (const seg of segsToUse) {
+      subtitleSegments.push({
+        start: seg.start,
+        end: seg.end,
+        text: seg.text,
+      })
+    }
+  }
+
+  // Also add plan subtitles if they exist
+  const planSubs = videoPlan?.subtitles || []
+  if (planSubs.length > 0 && subtitleSegments.length === 0) {
+    for (const s of planSubs) {
+      subtitleSegments.push({
+        start: s.start ?? s.keepStart ?? 0,
+        end: s.end ?? s.keepEnd ?? 0,
+        text: s.text || '',
+      })
+    }
+  }
+
+  const processJob: EditJob = {
+    ...job,
+    plan: {
+      contentType: enrichment?.detected_type || 'corporate',
+      targetDuration: finalInput.targetDuration === -1 ? 'auto' : finalInput.targetDuration,
+      mainMessage: enrichment?.enhanced_prompt || finalInput.userPrompt,
+      hookStrategy: videoPlan?.hookStrategy || '',
+      cuts,
+      cameraAngles,
+      zooms,
+      transitions,
+      colorGrade: enrichment?.style?.color || videoPlan?.colorGrade || videoPlan?.color_grade || 'clean',
+      speakers,
+      graphics,
+      brollPlacements,
+    },
+    assets: {
+      brollClips: brollAssets,
+      backgroundImage: backgroundImage || null,
+      musicTrack: musicUrl || null,
+      musicVolume: 0.15,
+    },
+    subtitles: {
+      ...job.subtitles,
+      segments: subtitleSegments,
+      animated: finalInput.animatedSubtitles ?? false,
+      style: (finalInput.animationStyle as any) || job.subtitles.style,
+    },
+    output: {
+      platforms: (finalInput.platforms || ['tiktok']).map(p => ({ name: p, ratio: getPlatformRatio(p) })),
+      skipPlatformExport,
+      version: versionLabel,
+    },
+  }
+
+  console.log('=== ORCHESTRATOR SENDING EditJob TO PROCESS ===')
+  console.log(`Job ID: ${processJob.id}`)
+  console.log(`Version: ${versionLabel}`)
+  console.log(`Transcript segments: ${processJob.transcript?.segments?.length || 0}`)
+  console.log(`Main presenter: ${processJob.transcript?.mainPresenter || 'MISSING'}`)
+  console.log(`Cuts: ${processJob.plan?.cuts?.length || 0}`)
+  console.log(`Zooms: ${processJob.plan?.zooms?.length || 0}`)
+  console.log(`Camera angles: ${processJob.plan?.cameraAngles?.length || 0}`)
+  console.log(`B-Roll placements: ${processJob.plan?.brollPlacements?.length || 0}`)
+  console.log(`B-Roll clips: ${processJob.assets.brollClips.length}`)
+  console.log(`Subtitle segments: ${processJob.subtitles.segments.length}`)
+  console.log(`Music: ${!!processJob.assets.musicTrack}`)
+  console.log(`Background: ${!!processJob.assets.backgroundImage}`)
+  console.log(`Color grade: ${processJob.plan?.colorGrade}`)
+  console.log(`Skip platform export: ${processJob.output.skipPlatformExport}`)
+
+  return processJob
+}
+
+function getPlatformRatio(platform: string): string {
+  const ratios: Record<string, string> = {
+    tiktok: '9:16', reels: '9:16', shorts: '9:16', story: '9:16',
+    youtube: '16:9', facebook: '16:9', twitter: '16:9',
+    linkedin: '1:1',
+  }
+  return ratios[platform] || '9:16'
+}
+
+// === Process videos through the server ===
+async function processVideosWithPlan(
+  job: EditJob,
+  editingPlan: any,
+  enrichment: any,
+  finalInput: AutoEditorInput,
+  musicUrl: string,
+  backgroundImage: string,
+  versionLabel: 'A' | 'B',
+  skipPlatformExport: boolean,
+  brollClips: string[],
 ): Promise<VideoResult[]> {
   const addLog = useAutoEditorStore.getState().addLog
   const processedVideos: VideoResult[] = []
@@ -329,121 +497,27 @@ async function processVideosWithPlan(
   const videos = editingPlan?.videos || []
   for (let i = 0; i < videos.length; i++) {
     const videoPlan = videos[i]
-    const sourceIndex = videoPlan?.sourceSegments?.[0]?.sourceFile || 0
-    const sourceUrl = finalInput.videoUrls[sourceIndex] || finalInput.videoUrls[0]
 
-    addLog(`[${versionLabel}] מעבד סרטון ${i + 1}: שולח לשרת...`)
+    addLog(`[${versionLabel}] מעבד סרטון ${i + 1}: שולח EditJob לשרת...`)
 
-    const fullPlan = {
-      cuts: (videoPlan?.cuts || []).map((c: any) => ({ keepStart: parseFloat(String(c.keepStart ?? 0)), keepEnd: parseFloat(String(c.keepEnd ?? 0)) })),
-      transitions: videoPlan?.transitions || ['fade'],
-      zooms: videoPlan?.zooms || [],
-      camera_angles: (videoPlan.cameraAngles || []).map((ca: any) => ({
-        start: ca.start, end: ca.end, camera: ca.camera,
-      })),
-      color_grade: enrichment?.style?.color || videoPlan.colorGrade || 'clean',
-      framing_strategy: videoPlan.framingStrategy || 'blur_background',
-      subtitles: videoPlan.subtitles || [],
-      graphics: (videoPlan.graphics || []).map((g: any) => ({
-        type: g.type, text: g.text, at_time: g.atTime, duration: g.duration, label: g.label,
-      })),
-      speakers: (videoPlan.speakers || []).map((s: any) => ({
-        name: s.name, first_appearance: s.firstAppearance, display_duration: s.displayDuration,
-      })),
-      segments_intensity: (videoPlan.segmentsIntensity || []).map((si: any) => ({
-        start: si.start, end: si.end, intensity: si.intensity, type: si.type,
-      })),
-      intro: videoPlan.intro || null,
-      outro: videoPlan.outro || null,
-      music_moments: (videoPlan.musicMoments || []).map((mm: any) => ({
-        at_time: mm.atTime, volume: mm.volume,
-      })),
-    }
+    // Build a complete EditJob for this specific video
+    const processJob = buildEditJobForProcessing(
+      job, editingPlan, enrichment, finalInput,
+      musicUrl, backgroundImage, brollClips,
+      versionLabel, skipPlatformExport,
+    )
 
-    // Get transcript segments and presenter - use passed params first, then store fallback
-    const storeState = useAutoEditorStore.getState()
-    const storedTranscript = passedTranscript || storeState.transcript || storeState.cachedTranscript
-    let storedMainPresenter = passedMainPresenter || storeState.mainPresenter || storeState.detectedPresenter
-    if (!storedMainPresenter || storedMainPresenter === 'undefined' || storedMainPresenter === 'unknown') {
-      // Last resort: use mainSpeaker from transcript or first sorted speaker
-      storedMainPresenter = storedTranscript?.mainSpeaker || null
-      if (!storedMainPresenter && storedTranscript?.sortedSpeakers?.length > 0) {
-        storedMainPresenter = storedTranscript.sortedSpeakers[0]?.speaker || null
-      }
-    }
-
-    // Build B-Roll assets from brollClips URLs + plan timing info
-    const planBroll = videoPlan?.brollMoments || videoPlan?.broll || editingPlan?.prompts?.broll || []
-    const brollAssets = brollClips.map((url: string, idx: number) => ({
-      url,
-      insertAt: planBroll[idx]?.time || planBroll[idx]?.insert_at || planBroll[idx]?.atTime || (idx * 15),
-      duration: planBroll[idx]?.duration || 4,
-    })).filter((b: any) => b.url)
-
-    // === DIAGNOSTIC: Log data sources to trace where data comes from ===
-    console.log('=== ORCHESTRATOR SENDING TO PROCESS ===')
-    console.log('data source:', passedTranscript ? 'PASSED PARAM' : storeState.transcript ? 'store.transcript' : storeState.cachedTranscript ? 'store.cachedTranscript' : 'NONE')
-    console.log('transcript segments:', storedTranscript?.segments?.length || 0)
-    console.log('mainPresenter:', storedMainPresenter || 'MISSING')
-    console.log('brollAssets:', brollAssets.length)
-    console.log('zooms:', (videoPlan?.zooms || []).length)
-    console.log('speakers:', (videoPlan?.speakers || []).length)
-    console.log('graphics:', (videoPlan?.graphics || []).length)
-    console.log('subtitles:', (videoPlan?.subtitles || []).length)
-    console.log('store keys with data:', Object.keys(storeState).filter(k => {
-      const v = (storeState as any)[k]
-      return v !== null && v !== undefined && v !== '' && v !== false &&
-        !(Array.isArray(v) && v.length === 0)
-    }))
-
-    // Validate critical data before sending
-    if (!storedTranscript?.segments?.length) {
-      console.error('!!! TRANSCRIPT MISSING - checking all store fields:')
-      Object.keys(storeState).forEach(key => {
-        const val = (storeState as any)[key]
-        if (val && typeof val === 'object' && !Array.isArray(val) && (val.segments || val.text || val.words)) {
-          console.log(`  Found transcript-like data in store.${key}:`, typeof val, Array.isArray(val.segments) ? val.segments.length + ' segments' : '')
-        }
-      })
-    }
-
-    addLog(`[${versionLabel}] Sending to process: transcript=${storedTranscript?.segments?.length || 0} presenter=${storedMainPresenter || 'none'} broll=${brollAssets.length} zooms=${(videoPlan?.zooms || []).length} music=${musicUrl ? 'YES' : 'NO'} bg=${backgroundImage ? 'YES' : 'NO'}`)
+    addLog(`[${versionLabel}] Sending EditJob: transcript=${processJob.transcript?.segments?.length || 0} presenter=${processJob.transcript?.mainPresenter || 'none'} broll=${processJob.assets.brollClips.length} zooms=${processJob.plan?.zooms?.length || 0} music=${musicUrl ? 'YES' : 'NO'} bg=${backgroundImage ? 'YES' : 'NO'}`)
 
     const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoUrl: sourceUrl,
-        videoPlan: fullPlan,
-        targetDuration: finalInput.targetDuration === -1
-          ? (videoPlan.optimalDuration || videoPlan.estimatedDuration ||
-            // Fallback: compute from actual cuts duration
-            fullPlan.cuts.reduce((sum: number, c: any) => sum + ((c.keepEnd || 0) - (c.keepStart || 0)), 0) || 60)
-          : finalInput.targetDuration,
-        platforms: finalInput.platforms,
-        musicUrl: musicUrl || null,
-        backgroundImage: backgroundImage || null,
-        captionStyle: 'modern',
-        includeSubtitles: finalInput.includeSubtitles ?? true,
-        includeBackground: finalInput.includeBackground ?? true,
-        animatedSubtitles: finalInput.animatedSubtitles ?? false,
-        animationStyle: finalInput.animationStyle || 'karaoke',
-        skipPlatformExport,
-        mainPresenter: storedMainPresenter || storedTranscript?.mainSpeaker || undefined,
-        // Send transcript segments for subtitle generation
-        transcript: storedTranscript ? {
-          segments: storedTranscript.segments || [],
-          mainSpeaker: storedTranscript.mainSpeaker,
-          totalDuration: storedTranscript.totalDuration || storedTranscript.total_duration,
-        } : undefined,
-        // Send B-Roll assets for insertion
-        brollAssets,
-      }),
+      body: JSON.stringify(processJob),
     })
 
     if (!processRes.ok) {
       const err = await processRes.json().catch(() => ({}))
-      throw new Error(`שגיאה בעיבוד סרטון ${i + 1} [${versionLabel}]: ${err.message || processRes.statusText}`)
+      throw new Error(`שגיאה בעיבוד סרטון ${i + 1} [${versionLabel}]: ${err.message || err.error || processRes.statusText}`)
     }
 
     const result = await processRes.json()
@@ -461,7 +535,7 @@ async function processVideosWithPlan(
   return processedVideos
 }
 
-// === IMPROVEMENT 4: A/B version style helpers ===
+// === A/B version style helpers ===
 function getVersionAStyle(type: string): string {
   switch (type) {
     case 'marketing_product': return 'פתיחה עם הבעיה, קצב מהיר, הרבה B-Roll'
@@ -488,13 +562,13 @@ function getVersionBStyle(type: string): string {
 
 /**
  * Phase 1: Transcribe → Visual Analysis → Energy Analysis → Enrich prompt → Pause for user review
+ * Creates EditJob and stores it in module-level variable for Phase 2
  */
 export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
   const store = useAutoEditorStore.getState()
   const { setStep, setProgress, setError, setInput, addLog,
     setCachedTranscript, setEnrichment, setTranscript, setVisualAnalysis, setEnergyAnalysis } = store
 
-  // Apply learned preferences as defaults from user profile
   const profile = useUserProfileStore.getState()
   const enrichedInput: AutoEditorInput = {
     ...input,
@@ -502,7 +576,6 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     platforms: input.platforms?.length ? input.platforms : ['tiktok', 'reels', 'shorts'],
   }
 
-  // Record that auto-edit started for this session
   const sessionProjectId = `auto-editor-${Date.now()}`
   profile.recordAutoEditResult(sessionProjectId, ['auto_edit'], {
     userPrompt: input.userPrompt,
@@ -512,15 +585,22 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     platforms: enrichedInput.platforms,
   })
 
-  // Save input for reference
   setInput(enrichedInput)
 
+  // === Create the EditJob - SINGLE source of truth ===
+  const job = createEmptyEditJob(
+    enrichedInput.videoUrls[0],
+    enrichedInput.videoUrls[0],
+  )
+  job.subtitles.enabled = enrichedInput.includeSubtitles !== false
+  job.subtitles.animated = enrichedInput.animatedSubtitles || false
+  job.subtitles.style = (enrichedInput.animationStyle as any) || 'auto'
+
   try {
-    // Check available APIs
     const apis = await checkApiAvailability()
     addLog(`APIs: Gemini=${apis.gemini ? 'V' : 'X'} Seedance=${apis.seedance ? 'V' : 'X'} Pixabay=${apis.pixabay ? 'V' : 'X'}`)
 
-    // Step 1 — Transcription (use cached if available from previous run)
+    // Step 1 — Transcription
     let transcript = useAutoEditorStore.getState().cachedTranscript
     if (!transcript) {
       if (useAutoEditorStore.getState().step !== 'transcribing') {
@@ -532,14 +612,41 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       addLog('משתמש בתמלול קיים מהמטמון')
     }
 
-    // Store transcript for enrichment review
+    // Store in EditJob
+    const segments: TranscriptSegment[] = (transcript.segments || []).map((s: any) => ({
+      start: s.start || 0,
+      end: s.end || 0,
+      text: s.text || '',
+      speaker: s.speaker || '',
+      isPresenter: false,
+    }))
+
+    const speakerTimes: Record<string, number> = {}
+    for (const seg of segments) {
+      speakerTimes[seg.speaker] = (speakerTimes[seg.speaker] || 0) + (seg.end - seg.start)
+    }
+
+    job.transcript = {
+      segments,
+      speakers: Object.entries(speakerTimes).map(([name, totalTime]) => ({
+        name,
+        totalTime,
+        isPresenter: false,
+      })),
+      mainPresenter: '',
+      presenterConfidence: 'low',
+      totalDuration: transcript.totalDuration || transcript.total_duration || 0,
+    }
+    job.sourceDuration = job.transcript.totalDuration
+
+    // Also keep store updated for UI
     setTranscript(transcript)
 
-    // Step 2 — Validation (skip duration validation when AI chooses)
+    // Step 2 — Validation
     setStep('validating')
     if (enrichedInput.targetDuration !== -1) {
       const validation = validateAvailableContent(
-        transcript.totalDuration,
+        job.transcript.totalDuration,
         enrichedInput.targetDuration,
         enrichedInput.numberOfVideos,
         transcript.segments
@@ -551,13 +658,12 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     }
     addLog('ולידציה עברה בהצלחה')
 
-    // === IMPROVEMENT 1: Visual Analysis ===
+    // Step 3 — Visual Analysis
     setStep('analyzing_visuals')
     setProgress({ current: 0, total: 1, label: 'AI מנתח את התמונה בסרטון...' })
 
     let visualAnalysis = null
     try {
-      // Get evolved prompt for visual analysis
       const evolvedVisualPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('visual_analysis', BASE_VISUAL_PROMPT)
 
       const visualRes = await fetch(`${API_BASE}/auto-editor/analyze-visuals`, {
@@ -565,17 +671,24 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           videoUrl: enrichedInput.videoUrls[0],
-          duration: transcript.totalDuration,
+          duration: job.transcript.totalDuration,
           promptEvolution: evolvedVisualPrompt !== BASE_VISUAL_PROMPT ? evolvedVisualPrompt : undefined,
         }),
       })
       if (visualRes.ok) {
         visualAnalysis = await visualRes.json()
 
-        // Collect prompt improvements from visual analysis
         if (visualAnalysis._promptImprovements?.length > 0) {
           usePromptEvolutionStore.getState().recordEvolution('visual_analysis', visualAnalysis._promptImprovements)
           addLog(`[למידה] ניתוח ויזואלי למד ${visualAnalysis._promptImprovements.length} תובנות חדשות`)
+        }
+
+        // Store in EditJob
+        job.visualAnalysis = {
+          frames: visualAnalysis.scene_analysis || [],
+          presenterDescription: visualAnalysis.overall?.presenter_description || '',
+          presenterFrames: [],
+          sceneChanges: (visualAnalysis.scene_analysis || []).map((s: any) => s.timestamp || 0),
         }
 
         setVisualAnalysis(visualAnalysis)
@@ -586,7 +699,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       addLog('ניתוח ויזואלי נכשל, ממשיך ללא')
     }
 
-    // === Identify presenter by cross-referencing visual analysis with speaker diarization ===
+    // === Identify presenter ===
     if (visualAnalysis && transcript.sortedSpeakers?.length > 1) {
       try {
         addLog('מזהה פרזנטור ראשי לפי ניתוח ויזואלי + דיאריזציה...')
@@ -603,9 +716,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
           const presenterData = await presenterRes.json()
           let { mainPresenter: detectedPresenter, confidence, presenterDescription, method } = presenterData
 
-          // Validate presenter is not undefined/invalid
           if (!detectedPresenter || detectedPresenter === 'undefined' || detectedPresenter === 'null' || detectedPresenter === 'unknown') {
-            // Fallback: use speaker with most time from transcript
             const speakers = transcript.sortedSpeakers || []
             const validSpeaker = speakers.find((s: any) => s.speaker && s.speaker !== 'undefined')
             detectedPresenter = validSpeaker?.speaker || 'דובר 1'
@@ -613,11 +724,20 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
             addLog(`[פרזנטור] שם לא תקין מהשרת, נופל לברירת מחדל: ${detectedPresenter}`)
           }
 
-          // Update store with detected presenter
+          // Update EditJob
+          job.transcript!.mainPresenter = detectedPresenter
+          job.transcript!.presenterConfidence = confidence || 'medium'
+          job.transcript!.segments.forEach(seg => {
+            seg.isPresenter = (seg.speaker === detectedPresenter)
+          })
+          job.transcript!.speakers.forEach(s => {
+            s.isPresenter = (s.name === detectedPresenter)
+          })
+
+          // Also update store for UI
           store.setDetectedPresenter(detectedPresenter, confidence, presenterDescription)
           store.setMainPresenter(detectedPresenter)
 
-          // Update transcript mainSpeaker and segment flags
           transcript.mainSpeaker = detectedPresenter
           transcript.autoDetected = true
           transcript.segments.forEach((seg: any) => {
@@ -633,16 +753,15 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       }
     }
 
-    // === IMPROVEMENT 3: Energy Analysis ===
+    // === Energy Analysis ===
     const energyAnalysis = analyzeTranscriptEnergy(transcript)
     setEnergyAnalysis(energyAnalysis)
     addLog(`ניתוח אנרגיה: ${energyAnalysis.wordsPerMinute} מילים/דקה (${energyAnalysis.pace}), ${energyAnalysis.peaks.length} שיאים, ${energyAnalysis.valleys.length} שפלים`)
 
-    // Step 3 — Enrich prompt with AI (includes visual + energy data)
+    // Step 4 — Enrich prompt
     setStep('enriching')
     setProgress({ current: 0, total: 1, label: 'AI מנתח את התוכן ומשפר את הפרומפט...' })
 
-    // Get evolved prompt for enrichment
     const evolvedEnrichPrompt = usePromptEvolutionStore.getState().getEvolvedPrompt('enrichment', BASE_ENRICH_PROMPT)
 
     let socialRules = ''
@@ -660,8 +779,8 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       body: JSON.stringify({
         transcript: {
           segments: transcript.segments,
-          total_duration: transcript.totalDuration,
-          totalDuration: transcript.totalDuration,
+          total_duration: job.transcript!.totalDuration,
+          totalDuration: job.transcript!.totalDuration,
         },
         userPrompt: enrichedInput.userPrompt,
         targetDuration: enrichedInput.targetDuration,
@@ -681,7 +800,6 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
 
     const enrichment = await enrichRes.json()
 
-    // Collect prompt improvements from enrichment
     if (enrichment._promptImprovements?.length > 0) {
       usePromptEvolutionStore.getState().recordEvolution('enrichment', enrichment._promptImprovements)
       addLog(`[למידה] שיפור פרומפט למד ${enrichment._promptImprovements.length} תובנות חדשות`)
@@ -693,10 +811,12 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
 
     // Store enrichment and pause for user review
     setEnrichment(enrichment)
-    setStep('review_enrichment')
 
+    // Save job to module-level variable for Phase 2
+    currentJobA = job
+
+    setStep('review_enrichment')
     // PAUSE HERE - UI will show EnrichmentReview component
-    // User clicks "אשר והתחל עריכה" to call continueAfterEnrichment()
 
   } catch (err: any) {
     setError(err.message || 'שגיאה לא צפויה')
@@ -720,18 +840,32 @@ export async function continueAfterEnrichment(
     return
   }
 
-  const transcript = store.transcript || store.cachedTranscript
-  if (!transcript) {
+  // Retrieve the EditJob from Phase 1
+  const job = currentJobA
+  if (!job || !job.transcript) {
     setError('חסר תמלול - נסה שוב')
     return
   }
 
+  // Check if user changed the presenter in Phase 1 review
+  const storePresenter = store.mainPresenter || store.detectedPresenter
+  if (storePresenter && storePresenter !== job.transcript.mainPresenter) {
+    job.transcript.mainPresenter = storePresenter
+    job.transcript.segments.forEach(seg => {
+      seg.isPresenter = (seg.speaker === storePresenter)
+    })
+    job.transcript.speakers.forEach(s => {
+      s.isPresenter = (s.name === storePresenter)
+    })
+    console.log(`[EditJob] Presenter updated from store: ${storePresenter}`)
+  }
+
+  const transcript = store.transcript || store.cachedTranscript
   const enrichment = store.enrichment
   const visualAnalysis = store.visualAnalysis
   const energyAnalysis = store.energyAnalysis
   const detectedType = enrichment?.detected_type || 'corporate'
 
-  // Apply overrides from user review
   const finalInput: AutoEditorInput = {
     ...enrichedInput,
     userPrompt: overrides?.userPrompt || enrichment?.enhanced_prompt || enrichedInput.userPrompt,
@@ -760,15 +894,13 @@ export async function continueAfterEnrichment(
   try {
     const apis = await checkApiAvailability()
 
-    // Step 4 — Two-step AI planning: Creative Director + Technical Editor
-    // Now creates 2 versions (A and B) with different approaches
+    // Step 4 — Two-step AI planning: 2 versions (A and B)
     let editingPlanA = useAutoEditorStore.getState().cachedEditingPlan
     let editingPlanB: any = null
 
     if (!editingPlanA) {
       setStep('planning')
 
-      // === Version A ===
       const versionAStyle = getVersionAStyle(detectedType)
       setProgress({ current: 0, total: 4, label: `גרסה A: ${versionAStyle}` })
       addLog(`תכנון גרסה A: ${versionAStyle}`)
@@ -780,7 +912,6 @@ export async function continueAfterEnrichment(
       editingPlanA = await planWithChatGPT(transcript, inputA, detectedType, visualAnalysis, energyAnalysis)
       setCachedEditingPlan(editingPlanA)
 
-      // === Version B ===
       const versionBStyle = getVersionBStyle(detectedType)
       setProgress({ current: 2, total: 4, label: `גרסה B: ${versionBStyle}` })
       addLog(`תכנון גרסה B: ${versionBStyle}`)
@@ -796,7 +927,6 @@ export async function continueAfterEnrichment(
       addLog('משתמש בתכנון קיים מהמטמון (גרסה A בלבד)')
     }
 
-    // If AI chooses duration, log it
     if (finalInput.targetDuration === -1 && editingPlanA?.videos) {
       const durationSummary = (editingPlanA?.videos || [])
         .map((v: any) => `סרטון ${v.videoIndex} = ${v.optimalDuration || '?'}שנ`)
@@ -804,14 +934,13 @@ export async function continueAfterEnrichment(
       addLog(`AI בחר אורך (A): ${durationSummary}`)
     }
 
-    // Verify plan quality for both
     for (const video of (editingPlanA?.videos || [])) {
       const cutsDuration = video.cuts.reduce((sum: number, c: any) => sum + (parseFloat(String(c.keepEnd ?? 0)) - parseFloat(String(c.keepStart ?? 0))), 0)
       const videoTarget = finalInput.targetDuration === -1 ? (video.optimalDuration || '?') : finalInput.targetDuration
       addLog(`[אימות A] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${videoTarget}s)`)
     }
 
-    // Step 5 — Generate assets with graceful fallbacks
+    // Step 5 — Generate assets
     let backgroundImage: string, brollClips: string[], musicUrl: string
     const cachedAssets = useAutoEditorStore.getState().cachedAssets
     if (cachedAssets) {
@@ -846,46 +975,43 @@ export async function continueAfterEnrichment(
     // Step 6 — Process videos with FFmpeg (2 versions if B plan exists)
     setStep('editing')
 
-    // Get presenter from store (captured here to pass explicitly to processVideosWithPlan)
-    const mainPresenter = store.mainPresenter || store.detectedPresenter || transcript?.mainSpeaker || null
-
-    console.log('[AUTO-EDIT] Phase 2 data check before processing:')
-    console.log('  transcript segments:', transcript?.segments?.length || 0)
-    console.log('  mainPresenter:', mainPresenter || 'MISSING')
-    console.log('  store.transcript:', !!store.transcript, 'store.cachedTranscript:', !!store.cachedTranscript)
-    console.log('  store.mainPresenter:', store.mainPresenter, 'store.detectedPresenter:', store.detectedPresenter)
-
-    // Process Version A - FULL quality, skip platform export for A/B comparison
     const hasVersionB = !!editingPlanB
-    setProgress({ current: 0, total: 2, label: 'עורך גרסה A...' })
-    const processedA = await processVideosWithPlan(editingPlanA, enrichment, finalInput, musicUrl, backgroundImage, 'A', hasVersionB, brollClips, transcript, mainPresenter)
 
-    // Process Version B (if available) - FULL quality, skip platform export
+    // Process Version A
+    setProgress({ current: 0, total: 2, label: 'עורך גרסה A...' })
+    const processedA = await processVideosWithPlan(
+      job, editingPlanA, enrichment, finalInput,
+      musicUrl, backgroundImage, 'A', hasVersionB, brollClips,
+    )
+
+    // Process Version B
     let processedB: VideoResult[] | null = null
     if (editingPlanB) {
       setProgress({ current: 1, total: 2, label: 'עורך גרסה B...' })
       try {
-        processedB = await processVideosWithPlan(editingPlanB, enrichment, finalInput, musicUrl, backgroundImage, 'B', true, brollClips, transcript, mainPresenter)
+        processedB = await processVideosWithPlan(
+          job, editingPlanB, enrichment, finalInput,
+          musicUrl, backgroundImage, 'B', true, brollClips,
+        )
       } catch (err: any) {
         addLog(`גרסה B נכשלה: ${err.message}. ממשיך עם גרסה A בלבד.`)
       }
     }
 
-    // === IMPROVEMENT 5: Quality metrics ===
+    // === Quality metrics ===
     const videoPlanA = editingPlanA?.videos?.[0]
     const videoTargetDur = finalInput.targetDuration === -1 ? (videoPlanA?.optimalDuration || 60) : finalInput.targetDuration
     const cutsDurA = videoPlanA?.cuts?.reduce((sum: number, c: any) => sum + (parseFloat(String(c.keepEnd ?? 0)) - parseFloat(String(c.keepStart ?? 0))), 0) || 0
-    const qualityReport = evaluateEditQuality(videoPlanA, cutsDurA, videoTargetDur)
+    const qualityReport = evaluateEditQuality(job, videoPlanA, cutsDurA, videoTargetDur)
     setQualityReport(qualityReport)
     addLog(`דוח איכות: ${qualityReport.score}/100 (${qualityReport.passed.length} עברו, ${qualityReport.issues.length} בעיות)`)
 
-    // Record quality for prompt evolution and check for degradation
+    // Record quality for prompt evolution
     const evolutionModels = ['visual_analysis', 'enrichment', 'creative_brief', 'technical_plan']
     const evoStore = usePromptEvolutionStore.getState()
     evolutionModels.forEach(modelId => {
       const evo = evoStore.evolutions[modelId]
       if (evo && evo.successRate > 0 && qualityReport.score < evo.successRate * 100 * 0.6) {
-        // Quality dropped by more than 40% - remove last addition
         console.warn(`[EVOLUTION] ${modelId}: quality dropped! Rolling back last addition.`)
         addLog(`[למידה] ${modelId}: איכות ירדה, מבטל שיפור אחרון`)
         const trimmed = evo.additions.slice(0, -1)
@@ -899,7 +1025,6 @@ export async function continueAfterEnrichment(
       evoStore.recordSuccess(modelId, qualityReport.score)
     })
 
-    // If we have both versions, show comparison screen
     if (processedB && processedB.length > 0) {
       const versionAStyle = getVersionAStyle(detectedType)
       const versionBStyle = getVersionBStyle(detectedType)
@@ -913,11 +1038,9 @@ export async function continueAfterEnrichment(
         versionBStyle
       )
 
-      // Go to comparison step
       setStep('comparing')
       addLog('שתי הגרסאות מוכנות להשוואה!')
     } else {
-      // Only version A available, go straight to done
       setStep('done')
       setProcessedVideos(processedA)
 
@@ -960,7 +1083,6 @@ export async function selectABVersion(
   const choice = choices.length === 1 ? choices[0] : (preferredForDesign || choices[0])
   setSelectedVersion(choice)
 
-  // Record the A/B choice for learning
   const profile = useUserProfileStore.getState()
   profile.recordABChoice({
     contentType: enrichment?.detected_type || 'corporate',
@@ -970,11 +1092,6 @@ export async function selectABVersion(
     timestamp: Date.now(),
   })
 
-  // Get transcript and presenter for export (needed for subtitle rendering)
-  const transcript = store.transcript || store.cachedTranscript
-  const mainPresenter = store.mainPresenter || store.detectedPresenter || transcript?.mainSpeaker || null
-
-  // Now export selected version(s) to platforms
   setStep('exporting')
   const allResults: VideoResult[] = []
 
@@ -990,45 +1107,44 @@ export async function selectABVersion(
     addLog(`מייצא גרסה ${ver} לפלטפורמות: ${approach}`)
     setProgress({ current: choices.indexOf(ver), total: choices.length, label: `מייצא גרסה ${ver} לפלטפורמות...` })
 
-    // Re-process with platform export enabled
     for (const v of chosen) {
       const mainFile = v.files[0]
       if (!mainFile) continue
 
       try {
-        // Use the already-edited file URL as source, and just do platform export
+        // Build a minimal EditJob for platform export only
+        const exportJob = createEmptyEditJob(mainFile.url, mainFile.url)
+        exportJob.transcript = currentJobA?.transcript || null
+        exportJob.plan = {
+          contentType: 'corporate',
+          targetDuration: v.optimalDuration || finalInput.targetDuration || 60,
+          mainMessage: '',
+          hookStrategy: '',
+          cuts: [{ sourceStart: 0, sourceEnd: 9999, outputStart: 0, type: 'presenter' }],
+          cameraAngles: [],
+          zooms: [],
+          transitions: [],
+          colorGrade: 'clean', // Already graded
+          speakers: [],
+          graphics: [],
+          brollPlacements: [],
+        }
+        exportJob.subtitles = {
+          enabled: false, // Already has subtitles burned in
+          style: 'auto',
+          animated: false,
+          segments: [],
+        }
+        exportJob.output = {
+          platforms: finalInput.platforms.map(p => ({ name: p, ratio: getPlatformRatio(p) })),
+          skipPlatformExport: false,
+          version: ver,
+        }
+
         const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            videoUrl: mainFile.url,
-            videoPlan: {
-              cuts: [{ keepStart: 0, keepEnd: 9999 }], // Keep entire edited file
-              transitions: [],
-              zooms: [],
-              camera_angles: [],
-              color_grade: 'clean', // Already graded
-              framing_strategy: 'blur_background',
-              subtitles: [],
-              graphics: [],
-              speakers: [],
-              segments_intensity: [],
-            },
-            targetDuration: v.optimalDuration || finalInput.targetDuration || 60,
-            platforms: finalInput.platforms,
-            skipPlatformExport: false, // NOW do platform export
-            // Include transcript and presenter for subtitle rendering during export
-            mainPresenter: mainPresenter || undefined,
-            transcript: transcript ? {
-              segments: transcript.segments || [],
-              mainSpeaker: transcript.mainSpeaker,
-              totalDuration: transcript.totalDuration || transcript.total_duration,
-            } : undefined,
-            includeSubtitles: finalInput.includeSubtitles ?? true,
-            includeBackground: finalInput.includeBackground ?? true,
-            animatedSubtitles: finalInput.animatedSubtitles ?? false,
-            animationStyle: finalInput.animationStyle || 'karaoke',
-          }),
+          body: JSON.stringify(exportJob),
         })
 
         if (processRes.ok) {
@@ -1042,7 +1158,6 @@ export async function selectABVersion(
           })
           addLog(`גרסה ${ver} סרטון ${v.videoIndex}: ${result.files?.length || 0} קבצי פלטפורמה`)
         } else {
-          // Fallback: use the original files as-is
           addLog(`ייצוא גרסה ${ver} נכשל, משתמש בקובץ המקורי`)
           allResults.push(v)
         }
