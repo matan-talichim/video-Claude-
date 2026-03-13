@@ -129,6 +129,25 @@ try {
   const ffmpegBin = getFFmpeg()
   AVAILABLE_TEXT_FILTER = getAvailableTextFilter(ffmpegBin)
   console.log(`[FFMPEG] Path: ${ffmpegBin}`)
+
+  // Detailed subtitle support check
+  try {
+    const filterCheck = execSync(`"${ffmpegBin}" -filters 2>/dev/null`, { encoding: 'utf-8', timeout: 5000 })
+    const hasSubtitles = filterCheck.includes(' subtitles ')
+    const hasAss = filterCheck.includes(' ass ')
+    const hasDrawtext = filterCheck.includes('drawtext')
+    console.log(`[FFMPEG] Subtitle support: subtitles=${hasSubtitles} ass=${hasAss} drawtext=${hasDrawtext}`)
+
+    if (!hasSubtitles && !hasAss && !hasDrawtext) {
+      console.error('[FFMPEG] ⚠️  NO TEXT FILTER AVAILABLE - subtitles will NOT work!')
+      console.error('[FFMPEG] FFmpeg was compiled WITHOUT libass and WITHOUT libfreetype.')
+      console.error('[FFMPEG] Fix: Install missing libraries and rebuild FFmpeg:')
+      console.error('[FFMPEG]   brew install libass freetype fontconfig harfbuzz fribidi')
+      console.error('[FFMPEG]   brew reinstall ffmpeg')
+      console.error('[FFMPEG] Or on Linux: apt-get install libass-dev libfreetype6-dev && rebuild ffmpeg')
+    }
+  } catch { /* filter check failed, continue with detected filter */ }
+
   console.log(`[FFMPEG] Available text filter: ${AVAILABLE_TEXT_FILTER || 'NONE'}`)
 } catch (e: any) {
   console.warn(`[FFMPEG] Could not detect text filter: ${e.message}`)
@@ -3160,7 +3179,7 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
         if (mainPresenter) {
           transcript.segments = transcript.segments.map((seg: any) => ({
             ...seg,
-            isPresenter: seg.speaker === mainPresenter,
+            isPresenter: matchesSpeaker(seg.speaker, mainPresenter),
           }))
           const presenterCount = transcript.segments.filter((s: any) => s.isPresenter).length
           console.log(`[TECH PLAN] Marked ${presenterCount}/${transcript.segments.length} segments as presenter (${mainPresenter})`)
@@ -4061,7 +4080,7 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
     // Mark each segment with isPresenter flag (preliminary, will be updated after visual analysis)
     segments.forEach((seg: any) => {
-      seg.isPresenter = (seg.speaker === mainSpeaker)
+      seg.isPresenter = matchesSpeaker(seg.speaker, mainSpeaker)
     })
 
     console.log('[AUTO-TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers,', totalDuration.toFixed(1), 'sec, model:', usedModel)
@@ -4606,6 +4625,27 @@ function getIntensityFilter(intensity: number): string {
   }
 }
 
+// Robust speaker matching: handles whitespace, encoding, and number differences
+function matchesSpeaker(segmentSpeaker: any, targetPresenter: string): boolean {
+  if (!segmentSpeaker || !targetPresenter) return false
+
+  const a = String(segmentSpeaker).trim().replace(/\s+/g, ' ').toLowerCase()
+  const b = String(targetPresenter).trim().replace(/\s+/g, ' ').toLowerCase()
+
+  // Exact match
+  if (a === b) return true
+
+  // Contains match
+  if (a.includes(b) || b.includes(a)) return true
+
+  // Number match (דובר 2 == speaker 2 == 2)
+  const numA = a.match(/\d+/)?.[0]
+  const numB = b.match(/\d+/)?.[0]
+  if (numA && numB && numA === numB) return true
+
+  return false
+}
+
 // Legacy endpoint kept for backward compat
 app.post('/api/auto-editor/process-video', async (req, res) => {
   // Redirect to new process endpoint
@@ -4698,10 +4738,26 @@ app.post('/api/auto-editor/process', async (req, res) => {
     const transcriptSegments = transcript?.segments || []
     const mainPresenter = req.body.mainPresenter || transcript?.mainSpeaker
 
-    // Filter transcript segments by main presenter if available
-    const filteredTranscriptSegments = mainPresenter && transcriptSegments.length > 0
-      ? transcriptSegments.filter((s: any) => s.speaker === mainPresenter)
-      : transcriptSegments
+    // Filter transcript segments by main presenter if available (robust matching)
+    let filteredTranscriptSegments = transcriptSegments
+    if (mainPresenter && transcriptSegments.length > 0) {
+      filteredTranscriptSegments = transcriptSegments.filter((s: any) => matchesSpeaker(s.speaker, mainPresenter))
+
+      if (filteredTranscriptSegments.length === 0) {
+        // Log diagnostic info for debugging
+        const uniqueSpeakers = [...new Set(transcriptSegments.map((s: any) => s.speaker))]
+        console.warn('[PROCESS] Speaker match failed! mainPresenter:', JSON.stringify(mainPresenter),
+          'Unique speakers in transcript:', JSON.stringify(uniqueSpeakers))
+        console.warn('[PROCESS] First segment speaker details:', JSON.stringify({
+          speaker: transcriptSegments[0]?.speaker,
+          type: typeof transcriptSegments[0]?.speaker,
+          length: transcriptSegments[0]?.speaker?.length,
+        }))
+        // Fallback: use all segments rather than 0
+        console.warn('[PROCESS] Using ALL segments as fallback (no speaker match)')
+        filteredTranscriptSegments = transcriptSegments
+      }
+    }
 
     // Resolve subtitle segments: plan > filtered transcript > raw transcript
     const subtitleSegments = planSubtitles.length > 0
@@ -4789,7 +4845,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
       // Get time ranges where the main presenter speaks
       const presenterRanges = transcriptSegments
-        .filter((s: any) => s.speaker === mainPresenter)
+        .filter((s: any) => matchesSpeaker(s.speaker, mainPresenter))
         .map((s: any) => ({ start: s.start, end: s.end }))
 
       const nonPresenterCount = transcriptSegments.length - presenterRanges.length
@@ -5168,6 +5224,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // ============================================
 
     const zooms = planZooms
+    console.log('[PROCESS] Zoom debug:', {
+      planZooms: planZooms.length,
+      firstZoom: planZooms[0] ? JSON.stringify(planZooms[0]) : 'none',
+    })
     if (zooms.length > 0) {
       const zoomFile = path.join(uploadsDir, `zoom_${timestamp}.mp4`)
       filesToCleanup.push(zoomFile)
@@ -5192,7 +5252,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
         // Remap zoom timestamps to cut video time
         const remappedZooms = zooms.map((z: any) => {
-          const atTime = z.at_time ?? z.atTime ?? 0
+          const atTime = z.at_time ?? z.atTime ?? z.relative_time ?? z.relativeTime ?? z.time ?? z.start ?? 0
           let relativeStart = 0
           let cutOffset = 0
           for (const cut of cuts) {
