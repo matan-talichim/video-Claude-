@@ -4662,27 +4662,58 @@ app.post('/api/auto-editor/process-video', async (req, res) => {
   return (app as any).handle(req, res)
 })
 
-// Main processing endpoint: professional video processing pipeline
+// Main processing endpoint: accepts EditJob or legacy format
 app.post('/api/auto-editor/process', async (req, res) => {
   const filesToCleanup: string[] = []
 
   try {
-    const {
-      videoUrl,
-      videoPlan,
-      targetDuration,
-      platforms,
-      musicUrl,
-      backgroundImage,
-      captionStyle,
-      includeSubtitles = true,
-      includeBackground = true,
-      animatedSubtitles = false,
-      animationStyle = 'karaoke',
-      skipPlatformExport = false,
-      transcript,
-      brollAssets = [],
-    } = req.body
+    // === NEW ARCHITECTURE: Accept EditJob ===
+    // Detect if this is a new EditJob (has 'id' and 'sourceUrl' fields) or legacy format
+    const isEditJob = req.body.id && (req.body.sourceUrl || req.body.sourceFile)
+    const job = isEditJob ? req.body : null
+
+    // Extract data from EditJob or legacy format
+    const videoUrl = job?.sourceUrl || job?.sourceFile || req.body.videoUrl
+    const videoPlan = job?.plan ? {
+      cuts: (job.plan.cuts || []).map((c: any) => ({ keepStart: c.sourceStart, keepEnd: c.sourceEnd })),
+      zooms: job.plan.zooms || [],
+      camera_angles: (job.plan.cameraAngles || []).map((ca: any) => ({
+        start: ca.timestamp, end: ca.timestamp + ca.duration, camera: ca.type,
+      })),
+      color_grade: job.plan.colorGrade || 'clean',
+      transitions: (job.plan.transitions || []).map((t: any) => t.type || 'fade'),
+      speakers: (job.plan.speakers || []).map((s: any) => ({
+        name: s.name, firstAppearance: s.firstAppearance, displayDuration: s.displayDuration,
+      })),
+      graphics: (job.plan.graphics || []).map((g: any) => ({
+        type: g.type, text: g.text, atTime: g.atTime, duration: g.duration,
+      })),
+      brollPlacements: job.plan.brollPlacements || [],
+    } : req.body.videoPlan
+    const targetDuration = (job?.plan?.targetDuration === 'auto' ? 60 : job?.plan?.targetDuration) || req.body.targetDuration
+    const platforms = (job?.output?.platforms || []).map((p: any) => p.name || p) || req.body.platforms
+    const musicUrl = job?.assets?.musicTrack || req.body.musicUrl
+    const backgroundImage = job?.assets?.backgroundImage || req.body.backgroundImage
+    const captionStyle = req.body.captionStyle
+    const includeSubtitles = job ? job.subtitles?.enabled !== false : (req.body.includeSubtitles ?? true)
+    const includeBackground = req.body.includeBackground ?? true
+    const animatedSubtitles = job ? job.subtitles?.animated || false : (req.body.animatedSubtitles ?? false)
+    const animationStyle = job ? job.subtitles?.style || 'karaoke' : (req.body.animationStyle || 'karaoke')
+    const skipPlatformExport = job ? job.output?.skipPlatformExport : (req.body.skipPlatformExport ?? false)
+    const transcript = job?.transcript ? {
+      segments: job.transcript.segments || [],
+      mainSpeaker: job.transcript.mainPresenter,
+      totalDuration: job.transcript.totalDuration,
+    } : req.body.transcript
+    const brollAssets = job ? (job.plan?.brollPlacements || []).map((p: any, i: number) => {
+      const clip = job.assets?.brollClips?.[p.assetIndex ?? i]
+      return {
+        url: clip?.url || clip?.localPath || '',
+        insertAt: p.outputTimestamp || 0,
+        duration: p.duration || 4,
+        keepAudio: p.keepAudio !== false,
+      }
+    }).filter((b: any) => b.url) : (req.body.brollAssets || [])
 
     const ffmpegPath = getFFmpeg()
     const timestamp = Date.now()
@@ -4702,86 +4733,56 @@ app.post('/api/auto-editor/process', async (req, res) => {
       fs.writeFileSync(sourceFile, buffer)
       filesToCleanup.push(sourceFile)
     } else {
-      return res.status(400).json({ message: 'חסר videoUrl' })
+      return res.status(400).json({ message: 'חסר videoUrl', error: 'Missing source file' })
     }
 
     if (!fs.existsSync(sourceFile)) {
-      return res.status(400).json({ message: 'קובץ המקור לא נמצא: ' + sourceFile })
+      return res.status(400).json({ message: 'קובץ המקור לא נמצא: ' + sourceFile, error: 'Source file not found' })
     }
 
     console.log('[PROCESS] === SERVER RECEIVED ===')
+    console.log('[PROCESS] Format:', isEditJob ? 'EditJob' : 'Legacy')
+    console.log('[PROCESS] Job ID:', job?.id || 'N/A')
     console.log('[PROCESS] Source file:', sourceFile)
-    console.log('[PROCESS] Top-level keys:', Object.keys(req.body))
-    console.log('[PROCESS] body.transcript:', transcript?.segments?.length || 'MISSING', 'segments')
-    console.log('[PROCESS] body.mainPresenter:', req.body.mainPresenter || 'MISSING')
-    console.log('[PROCESS] body.brollAssets:', brollAssets.length)
-    console.log('[PROCESS] body size:', JSON.stringify(req.body).length, 'bytes')
-    console.log('[PROCESS] Options:', { includeSubtitles, includeBackground, animatedSubtitles, animationStyle })
-    console.log('[PROCESS] Plan keys:', Object.keys(videoPlan || {}))
-    console.log('[PROCESS] skipPlatformExport:', skipPlatformExport)
+    console.log('[PROCESS] Transcript segments:', transcript?.segments?.length || 0)
+    console.log('[PROCESS] Main presenter:', transcript?.mainSpeaker || job?.transcript?.mainPresenter || 'NOT SET')
+    console.log('[PROCESS] B-Roll assets:', brollAssets.length)
+    console.log('[PROCESS] Subtitles:', includeSubtitles ? `enabled (${animatedSubtitles ? 'animated ' + animationStyle : 'standard'})` : 'disabled')
+    console.log('[PROCESS] Music:', musicUrl ? 'YES' : 'NO')
+    console.log('[PROCESS] Skip platform export:', skipPlatformExport)
 
-    // Extract features from videoPlan with multiple field name fallbacks
-    const planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects ||
-      videoPlan?.zoom || []
-    const planCameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles ||
-      videoPlan?.angles || videoPlan?.multicam || []
+    // Extract features from plan (EditJob uses consistent field names)
+    const planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
+    const planCameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles || videoPlan?.angles || []
     const planColorGrade = videoPlan?.color_grade || videoPlan?.colorGrade || 'clean'
     const planSpeakers = videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds || []
-    const planGraphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays ||
-      videoPlan?.textOverlays || []
+    const planGraphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays || []
     const planTransitions = videoPlan?.transitions || ['fade']
-    const planBrollPlacements = videoPlan?.broll_placements || videoPlan?.brollPlacements ||
-      videoPlan?.brollMoments || videoPlan?.broll || []
 
-    // Subtitles: use plan subtitles first, then transcript segments
-    const planSubtitles = videoPlan?.subtitles || []
-    const transcriptSegments = transcript?.segments || []
-    const mainPresenter = req.body.mainPresenter || transcript?.mainSpeaker
+    // Subtitles from EditJob or legacy
+    const subtitleSegments = job?.subtitles?.segments?.length > 0
+      ? job.subtitles.segments
+      : (transcript?.segments || [])
+    const mainPresenter = transcript?.mainSpeaker || job?.transcript?.mainPresenter || req.body.mainPresenter
 
-    // Filter transcript segments by main presenter if available (robust matching)
-    let filteredTranscriptSegments = transcriptSegments
-    if (mainPresenter && transcriptSegments.length > 0) {
-      filteredTranscriptSegments = transcriptSegments.filter((s: any) => matchesSpeaker(s.speaker, mainPresenter))
-
-      if (filteredTranscriptSegments.length === 0) {
-        // Log diagnostic info for debugging
-        const uniqueSpeakers = [...new Set(transcriptSegments.map((s: any) => s.speaker))]
-        console.warn('[PROCESS] Speaker match failed! mainPresenter:', JSON.stringify(mainPresenter),
-          'Unique speakers in transcript:', JSON.stringify(uniqueSpeakers))
-        console.warn('[PROCESS] First segment speaker details:', JSON.stringify({
-          speaker: transcriptSegments[0]?.speaker,
-          type: typeof transcriptSegments[0]?.speaker,
-          length: transcriptSegments[0]?.speaker?.length,
-        }))
-        // Fallback: use all segments rather than 0
-        console.warn('[PROCESS] Using ALL segments as fallback (no speaker match)')
-        filteredTranscriptSegments = transcriptSegments
+    // Filter subtitle segments by presenter if needed
+    let filteredSubtitleSegments = subtitleSegments
+    if (mainPresenter && subtitleSegments.length > 0 && !job?.subtitles?.segments?.length) {
+      const filtered = subtitleSegments.filter((s: any) => matchesSpeaker(s.speaker, mainPresenter))
+      if (filtered.length > 0) {
+        filteredSubtitleSegments = filtered
       }
     }
 
-    // Resolve subtitle segments: plan > filtered transcript > raw transcript
-    const subtitleSegments = planSubtitles.length > 0
-      ? planSubtitles
-      : filteredTranscriptSegments.length > 0
-        ? filteredTranscriptSegments
-        : transcriptSegments
-
-    console.log('[PROCESS] Plan parsed:', {
-      segments: (videoPlan?.cuts || []).length,
-      cameraAngles: planCameraAngles.length,
+    console.log('[PROCESS] Plan:', {
+      cuts: (videoPlan?.cuts || []).length,
       zooms: planZooms.length,
+      cameraAngles: planCameraAngles.length,
       speakers: planSpeakers.length,
       graphics: planGraphics.length,
-      brollPlacements: planBrollPlacements.length,
-      transitions: planTransitions.length,
+      broll: brollAssets.length,
       colorGrade: planColorGrade,
-    })
-    console.log('[PROCESS] Extracted features:', {
-      planSubtitles: planSubtitles.length,
-      transcriptSegments: transcriptSegments.length,
-      filteredTranscriptSegments: filteredTranscriptSegments.length,
-      subtitleSegments: subtitleSegments.length,
-      includeSubtitles,
+      subtitles: filteredSubtitleSegments.length,
       mainPresenter: mainPresenter || 'none',
     })
 
@@ -4791,10 +4792,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 1: CUT VIDEO WITH TRANSITIONS
     // ============================================
 
-    // Normalize cuts from camelCase or snake_case
+    // Normalize cuts from EditJob or legacy format
     let cuts = (videoPlan?.cuts || []).map((c: any) => ({
-      keep_start: c.keep_start ?? c.keepStart ?? 0,
-      keep_end: c.keep_end ?? c.keepEnd ?? targetDuration,
+      keep_start: c.keep_start ?? c.keepStart ?? c.sourceStart ?? 0,
+      keep_end: c.keep_end ?? c.keepEnd ?? c.sourceEnd ?? targetDuration,
     }))
 
     if (cuts.length === 0) {
@@ -4840,6 +4841,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // ============================================
     // If we have transcript segments and a main presenter,
     // re-cut the video to only include segments where the presenter speaks
+    const transcriptSegments = transcript?.segments || []
     if (mainPresenter && mainPresenter !== 'none' && transcriptSegments.length > 0) {
       console.log(`[PROCESS] Step 1.5: Isolating presenter "${mainPresenter}" audio...`)
 
@@ -4952,7 +4954,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
         console.log('[PROCESS] Step 1.5: All segments are from presenter, no filtering needed')
       }
     } else {
-      console.log('[PROCESS] Step 1.5 skipped:', !mainPresenter || mainPresenter === 'none' ? 'No presenter identified' : 'No transcript segments')
+      console.log('[PROCESS] Step 1.5 skipped:', !mainPresenter || mainPresenter === 'none' ? 'No presenter identified' : `No transcript segments (${transcriptSegments.length})`)
     }
 
     // ============================================
@@ -5393,14 +5395,11 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP 5: STYLED SUBTITLES (ASS FORMAT)
     // ============================================
 
-    // Use pre-resolved subtitleSegments (plan > filtered transcript > raw transcript)
-    const segments = subtitleSegments
+    // Use filtered subtitle segments
+    const segments = filteredSubtitleSegments
     let assFilePath: string | null = null
 
     console.log('[PROCESS] Step 5 check:', {
-      planSubtitles: planSubtitles.length,
-      transcriptSegments: transcriptSegments.length,
-      filteredTranscript: filteredTranscriptSegments.length,
       resolvedSegments: segments.length,
       includeSubtitles,
       animatedSubtitles,
@@ -5567,7 +5566,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
         }
       }
     } else {
-      console.log('[PROCESS] Step 5 skipped: No subtitles available (plan:', planSubtitles.length, 'transcript:', transcriptSegments.length, 'includeSubtitles:', includeSubtitles, ')')
+      console.log('[PROCESS] Step 5 skipped: No subtitles available (segments:', segments.length, 'includeSubtitles:', includeSubtitles, ')')
     }
 
     // ============================================
@@ -5777,16 +5776,36 @@ ${gfxDialogueLines.join('\n')}
     if (skipPlatformExport) {
       console.log('[PROCESS] Skipping platform export (A/B preview mode)')
       const fileSize = fs.statSync(currentFile).size / (1024 * 1024)
+      const fileUrl = `http://localhost:${PORT}/uploads/${path.basename(currentFile)}`
+
+      // Calculate quality score based on what effects were actually applied
+      let qualityScore = 0
+      if (fs.existsSync(currentFile) && fs.statSync(currentFile).size > 100000) qualityScore += 20
+      if (cuts.length > 0) qualityScore += 15
+      if (planZooms.length > 0) qualityScore += 10
+      if (filteredSubtitleSegments.length > 0) qualityScore += 15
+      if (brollAssets.length > 0) qualityScore += 15
+      if (musicUrl) qualityScore += 10
+      if (planColorGrade && planColorGrade !== 'none') qualityScore += 5
+      if (mainPresenter) qualityScore += 10
+      qualityScore = Math.min(qualityScore, 100)
+
+      console.log(`[PROCESS] Done! Preview: ${fileUrl} (${fileSize.toFixed(1)}MB, quality: ${qualityScore})`)
+
       return res.json({
         success: true,
+        processedFile: fileUrl,
         files: [{
-          url: `http://localhost:${PORT}/uploads/${path.basename(currentFile)}`,
+          url: fileUrl,
           platform: 'original',
           ratio: '16:9',
           resolution: '1920x1080',
           filename: path.basename(currentFile),
           sizeMB: parseFloat(fileSize.toFixed(1)),
         }],
+        platformFiles: [],
+        qualityScore,
+        processingTime: Date.now() - timestamp,
         plan: req.body,
         message: 'עריכה הושלמה (ללא ייצוא לפלטפורמות)',
       })
