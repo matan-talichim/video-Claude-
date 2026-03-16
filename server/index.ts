@@ -3091,6 +3091,139 @@ Return exactly 3 suggestions. Each suggestion must be:
   }
 })
 
+// POST /api/auto-editor/clean-transcript — Clean stutters, fillers, retakes from transcript
+app.post('/api/auto-editor/clean-transcript', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(500).json({ message: 'OpenAI לא מחובר' })
+
+    const { transcript, mainPresenter } = req.body
+
+    // Filter to presenter segments only
+    const presenterSegments = (transcript?.segments || []).filter((s: any) =>
+      matchesSpeaker(s.speaker, mainPresenter)
+    )
+
+    if (presenterSegments.length === 0) {
+      return res.json({
+        cleanedSegments: transcript?.segments || [],
+        summary: { error: 'No presenter segments found' },
+        originalCount: transcript?.segments?.length || 0,
+        cleanedCount: transcript?.segments?.length || 0,
+      })
+    }
+
+    const cleanPrompt = `You are a professional video editor cleaning a transcript for editing.
+
+TRANSCRIPT (presenter segments only):
+${presenterSegments.map((s: any, i: number) =>
+  `[${i}] ${s.start.toFixed(1)}s-${s.end.toFixed(1)}s: "${s.text}"`
+).join('\n')}
+
+Your job: Mark which segments to KEEP and which to REMOVE.
+
+REMOVE these:
+1. Filler words: "אממ", "אה", "כאילו", "בעצם", "נו", "אוקיי אז"
+2. Stutters: repeated words or syllables at start of sentences
+3. False starts: when a sentence starts, stops, and restarts differently
+4. Retakes: when the same idea is said twice and the second is better (remove the first)
+5. Crew directions: "עוד פעם", "מוכן?", "שנייה", "בוא נעשה עוד take"
+6. Unnatural long pauses (gaps > 2 seconds inside a sentence)
+7. Incomplete sentences that don't add value
+
+KEEP these:
+1. Complete, clean sentences
+2. Natural short pauses between ideas (< 1 second)
+3. Emotional moments and emphasis
+4. The best version of repeated ideas
+
+For each segment, return:
+{
+  "segments": [
+    {
+      "index": 0,
+      "action": "keep" | "remove" | "trim_start" | "trim_end",
+      "reason": "why",
+      "trim_to": { "start": new_start, "end": new_end }
+    }
+  ],
+  "summary": {
+    "total_segments": number,
+    "kept": number,
+    "removed": number,
+    "trimmed": number,
+    "removed_reasons": { "filler": count, "stutter": count, "retake": count }
+  }
+}
+
+IMPORTANT:
+- Be aggressive about removing filler and stutters
+- But NEVER remove content that carries the message
+- When in doubt, KEEP the segment
+- Trimming is better than full removal (trim the "אממ" at the start, keep the rest)
+- Return ONLY valid JSON, no markdown fences`
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 4000,
+      messages: [{ role: 'user', content: cleanPrompt }],
+    })
+
+    const content = response.choices[0].message.content?.trim() || ''
+    const cleaned = content.replace(/```json|```/g, '').trim()
+    const result = JSON.parse(cleaned)
+
+    // Apply cleaning decisions to segments
+    const cleanedSegments = presenterSegments
+      .map((seg: any, i: number) => {
+        const decision = result.segments?.find((d: any) => d.index === i)
+        if (!decision) return seg
+
+        if (decision.action === 'remove') return null
+
+        if (decision.action === 'trim_start' && decision.trim_to?.start) {
+          return { ...seg, start: decision.trim_to.start }
+        }
+        if (decision.action === 'trim_end' && decision.trim_to?.end) {
+          return { ...seg, end: decision.trim_to.end }
+        }
+        if (decision.action === 'keep' && decision.trim_to) {
+          return {
+            ...seg,
+            start: decision.trim_to.start ?? seg.start,
+            end: decision.trim_to.end ?? seg.end,
+          }
+        }
+
+        return seg
+      })
+      .filter(Boolean)
+
+    console.log(`[CLEAN] Transcript: ${presenterSegments.length} → ${cleanedSegments.length} segments`)
+    console.log(`[CLEAN] Summary:`, result.summary)
+
+    res.json({
+      cleanedSegments,
+      summary: result.summary,
+      originalCount: presenterSegments.length,
+      cleanedCount: cleanedSegments.length,
+    })
+
+  } catch (e: any) {
+    console.error('[CLEAN] Failed:', e.message)
+    // Fallback: return original segments
+    const presenterSegments = (req.body.transcript?.segments || []).filter((s: any) =>
+      matchesSpeaker(s.speaker, req.body.mainPresenter)
+    )
+    res.json({
+      cleanedSegments: presenterSegments.length > 0 ? presenterSegments : (req.body.transcript?.segments || []),
+      summary: { error: e.message },
+      originalCount: req.body.transcript?.segments?.length || 0,
+      cleanedCount: presenterSegments.length || req.body.transcript?.segments?.length || 0,
+    })
+  }
+})
+
 // POST /api/auto-editor/creative-brief — Step 1: Creative Director analyzes content
 app.post('/api/auto-editor/creative-brief', async (req, res) => {
   try {
@@ -4369,11 +4502,12 @@ const colorGrades: Record<string, string> = {
 // Subtitle style presets (ASS format)
 // Use "Sans" as font name for maximum cross-platform compatibility (maps to system sans-serif)
 const subtitleStyles: Record<string, string> = {
-  modern: 'Style: Default,Sans,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,1',
-  karaoke: 'Style: Default,Sans,22,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,50,1',
-  bold_white: 'Style: Default,Sans,24,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,1',
-  minimal: 'Style: Default,Sans,18,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,30,1',
-  colorful: 'Style: Default,Sans,22,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,45,1',
+  // MarginV=120 positions subtitles below chin, not at very bottom of screen
+  modern: 'Style: Default,Sans,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,1',
+  karaoke: 'Style: Default,Sans,26,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,1',
+  bold_white: 'Style: Default,Sans,28,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,120,1',
+  minimal: 'Style: Default,Sans,22,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,120,1',
+  colorful: 'Style: Default,Sans,26,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,1',
 }
 
 // Generate styled ASS subtitles
@@ -4432,25 +4566,25 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 `
   switch (style) {
     case 'karaoke':
-      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\n`
+      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1\n`
       break
     case 'pop':
-      ass += `Style: Default,Sans,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\nStyle: Pop,Sans,70,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,20,20,60,1\n`
+      ass += `Style: Default,Sans,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\nStyle: Pop,Sans,70,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,20,20,120,1\n`
       break
     case 'typewriter':
-      ass += `Style: Default,Sans,50,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,60,1\n`
+      ass += `Style: Default,Sans,50,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,120,1\n`
       break
     case 'glow':
-      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,20,20,60,1\n`
+      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,20,20,120,1\n`
       break
     case 'bounce':
       ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,200,1\n`
       break
     case 'slide':
-      ass += `Style: Default,Sans,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\n`
+      ass += `Style: Default,Sans,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1\n`
       break
     default:
-      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\n`
+      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1\n`
   }
   ass += `\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`
 
@@ -5027,6 +5161,242 @@ function validateCutRanges(
   return validRanges
 }
 
+// === PROFESSIONAL WORKFLOW HELPERS ===
+
+// Generate rhythmic zooms every 5-6 seconds (professional editor pattern)
+function generateRhythmicZooms(duration: number, segments: any[]): any[] {
+  const zooms: any[] = []
+  const ZOOM_INTERVAL = 5.5
+  const ZOOM_DURATION = 2.0
+  const ZOOM_INTENSITY = 1.15
+
+  // First zoom at the start
+  zooms.push({
+    timestamp: 0.5,
+    duration: ZOOM_DURATION,
+    intensity: ZOOM_INTENSITY,
+    direction: 'in',
+    reason: 'opening zoom',
+  })
+
+  // Regular zooms every 5-6 seconds
+  for (let t = ZOOM_INTERVAL; t < duration - 3; t += ZOOM_INTERVAL) {
+    const direction = zooms.length % 2 === 0 ? 'in' : 'out'
+
+    // Slightly vary the interval for natural feel
+    const jitter = (Math.random() - 0.5) * 2
+    const actualTime = t + jitter
+
+    // Skip if too close to previous zoom
+    const lastZoom = zooms[zooms.length - 1]
+    if (lastZoom && actualTime - lastZoom.timestamp < 3) continue
+
+    // Try to align with sentence boundaries
+    const nearestSentenceEnd = segments
+      .filter((s: any) => Math.abs(s.end - actualTime) < 1.5)
+      .sort((a: any, b: any) => Math.abs(a.end - actualTime) - Math.abs(b.end - actualTime))[0]
+
+    const alignedTime = nearestSentenceEnd
+      ? nearestSentenceEnd.end + 0.2
+      : actualTime
+
+    zooms.push({
+      timestamp: Math.max(0, alignedTime),
+      duration: ZOOM_DURATION,
+      intensity: ZOOM_INTENSITY + (Math.random() * 0.05),
+      direction,
+      reason: nearestSentenceEnd ? 'sentence boundary' : 'rhythmic',
+    })
+  }
+
+  console.log(`[ZOOMS] Generated ${zooms.length} rhythmic zooms for ${duration.toFixed(1)}s video`)
+  return zooms
+}
+
+// Generate camera angle switches every 2-4 sentences
+function generateCameraAngles(segments: any[], duration: number): any[] {
+  const angles: any[] = []
+  const ANGLE_TYPES = ['wide', 'medium', 'closeup', 'medium', 'wide', 'closeup']
+  let currentAngle = 0
+  let lastSwitchTime = 0
+  const MIN_SWITCH_INTERVAL = 4
+  const MAX_SWITCH_INTERVAL = 8
+
+  let sentenceCount = 0
+  const switchEvery = 2 + Math.floor(Math.random() * 2) // 2-3 sentences
+
+  segments.forEach((seg: any) => {
+    sentenceCount++
+
+    if (sentenceCount >= switchEvery && seg.start - lastSwitchTime >= MIN_SWITCH_INTERVAL) {
+      const angleType = ANGLE_TYPES[currentAngle % ANGLE_TYPES.length]
+
+      angles.push({
+        timestamp: seg.start,
+        duration: 0,
+        type: angleType,
+      })
+
+      currentAngle++
+      sentenceCount = 0
+      lastSwitchTime = seg.start
+    }
+
+    // Force switch if too long without one
+    if (seg.start - lastSwitchTime > MAX_SWITCH_INTERVAL) {
+      const angleType = ANGLE_TYPES[currentAngle % ANGLE_TYPES.length]
+      angles.push({
+        timestamp: seg.start,
+        duration: 0,
+        type: angleType,
+      })
+      currentAngle++
+      lastSwitchTime = seg.start
+    }
+  })
+
+  // Calculate durations
+  for (let i = 0; i < angles.length; i++) {
+    const next = angles[i + 1]
+    angles[i].duration = next ? next.timestamp - angles[i].timestamp : duration - angles[i].timestamp
+  }
+
+  // Calculate crop values for each angle type
+  angles.forEach((angle: any) => {
+    switch (angle.type) {
+      case 'closeup':
+        angle.cropX = 0.15; angle.cropY = 0.1
+        angle.cropW = 0.7; angle.cropH = 0.7
+        break
+      case 'medium':
+        angle.cropX = 0.08; angle.cropY = 0.05
+        angle.cropW = 0.84; angle.cropH = 0.84
+        break
+      case 'wide':
+      default:
+        angle.cropX = 0; angle.cropY = 0
+        angle.cropW = 1; angle.cropH = 1
+        break
+    }
+  })
+
+  console.log(`[ANGLES] Generated ${angles.length} camera angle switches`)
+  return angles
+}
+
+// Get optimal subtitle position (below chin, not at very bottom)
+function getSubtitlePosition(videoWidth: number, videoHeight: number): { marginV: number, alignment: number, fontSize: number } {
+  if (videoHeight > videoWidth) {
+    // Portrait (9:16): position below chin area
+    return {
+      marginV: Math.round(videoHeight * 0.35),
+      alignment: 2,
+      fontSize: Math.round(videoWidth * 0.045),
+    }
+  } else {
+    // Landscape (16:9): bottom with margin
+    return {
+      marginV: 40,
+      alignment: 2,
+      fontSize: 24,
+    }
+  }
+}
+
+// Process step wrapper: log + validate + fallback
+function processStepSync(stepName: string, inputFile: string, outputFile: string, fn: () => void): string {
+  if (!fs.existsSync(inputFile)) {
+    console.warn(`[PROCESS] ${stepName}: Input file missing, skipping`)
+    return inputFile
+  }
+
+  console.log(`[PROCESS] ${stepName}...`)
+
+  try {
+    fn()
+
+    if (fs.existsSync(outputFile) && fs.statSync(outputFile).size > 50000) {
+      console.log(`[PROCESS] ${stepName} done`)
+      return outputFile
+    } else {
+      console.warn(`[PROCESS] ${stepName}: Output invalid, keeping previous`)
+      return inputFile
+    }
+  } catch (e: any) {
+    console.warn(`[PROCESS] ${stepName} failed:`, e.stderr?.toString().substring(0, 200) || e.message)
+    return inputFile
+  }
+}
+
+// Calculate comprehensive quality score for professional editing
+function calculateQualityScore(job: any, outputFile: string, extraInfo: {
+  cuts: any[], planZooms: any[], filteredSubtitleSegments: any[],
+  brollAssets: any[], musicUrl: string | null, planColorGrade: string,
+  mainPresenter: string | null, planCameraAngles: any[],
+}): { score: number, report: any } {
+  const report: any = {}
+  let score = 0
+
+  // 1. Error cleaning (10 points)
+  if (job?.transcript?.cleaningSummary?.removed > 0) {
+    score += 10
+    report.errorCleaning = `נוקו ${job.transcript.cleaningSummary.removed} קטעים פגומים`
+  } else {
+    report.errorCleaning = 'לא בוצע ניקוי טעויות'
+  }
+
+  // 2. Presenter isolation (10 points)
+  if (extraInfo.mainPresenter && extraInfo.mainPresenter !== 'none') {
+    score += 10
+    report.presenterIsolation = `בידוד דובר ראשי: ${extraInfo.mainPresenter}`
+  }
+
+  // 3. Camera angles (10 points)
+  const angles = extraInfo.planCameraAngles?.length || 0
+  if (angles >= 3) { score += 10; report.cameraAngles = `${angles} החלפות זווית` }
+  else { report.cameraAngles = 'מעט החלפות זווית' }
+
+  // 4. Color grade (5 points)
+  if (extraInfo.planColorGrade && extraInfo.planColorGrade !== 'none') { score += 5; report.colorGrade = extraInfo.planColorGrade }
+
+  // 5. Background blur (10 points)
+  if (job?.plan?.backgroundBlur !== false) {
+    score += 10
+    report.backgroundBlur = 'טשטוש רקע'
+  } else {
+    report.backgroundBlur = 'ללא'
+  }
+
+  // 6. Zooms (10 points)
+  const zoomCount = extraInfo.planZooms?.length || 0
+  if (zoomCount >= 3) { score += 10; report.zooms = `${zoomCount} זומים` }
+
+  // 7. Subtitles (15 points)
+  if (extraInfo.filteredSubtitleSegments?.length > 0) {
+    score += 15
+    report.subtitles = `${extraInfo.filteredSubtitleSegments.length} שורות כתוביות`
+  } else {
+    report.subtitles = 'ללא כתוביות'
+  }
+
+  // 8. Music (10 points)
+  if (extraInfo.musicUrl) { score += 10; report.music = 'מוזיקת רקע' }
+  else { report.music = 'ללא מוזיקה' }
+
+  // 9. B-Roll (15 points)
+  const brollCount = extraInfo.brollAssets?.length || 0
+  if (brollCount >= 2) { score += 15; report.broll = `${brollCount} קטעי B-Roll` }
+  else if (brollCount === 1) { score += 8; report.broll = '1 קטע B-Roll' }
+  else { report.broll = 'ללא B-Roll' }
+
+  // 10. Output file valid (5 points)
+  if (fs.existsSync(outputFile) && fs.statSync(outputFile).size > 100000) {
+    score += 5
+  }
+
+  return { score: Math.min(score, 100), report }
+}
+
 // Legacy endpoint kept for backward compat
 app.post('/api/auto-editor/process-video', async (req, res) => {
   // Redirect to new process endpoint
@@ -5133,8 +5503,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
     console.log('[PROCESS] Skip platform export:', skipPlatformExport)
 
     // Extract features from plan (EditJob uses consistent field names)
-    const planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
-    const planCameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles || videoPlan?.angles || []
+    let planZooms = videoPlan?.zooms || videoPlan?.zoom_effects || videoPlan?.zoomEffects || []
+    let planCameraAngles = videoPlan?.camera_angles || videoPlan?.cameraAngles || videoPlan?.angles || []
     const planColorGrade = videoPlan?.color_grade || videoPlan?.colorGrade || 'clean'
     const planSpeakers = videoPlan?.speakers || videoPlan?.lower_thirds || videoPlan?.lowerThirds || []
     const planGraphics = videoPlan?.graphics || videoPlan?.overlays || videoPlan?.text_overlays || []
@@ -5170,7 +5540,63 @@ app.post('/api/auto-editor/process', async (req, res) => {
     const outputFiles: any[] = []
 
     // ============================================
-    // STEP 1: CUT VIDEO WITH TRANSITIONS
+    // STEP B: GET SOURCE VIDEO INFO
+    // ============================================
+    let sourceWidth = 1920, sourceHeight = 1080, sourceFps = 30, sourceDuration = 0
+    try {
+      const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+      const probeOut = execSync(
+        `"${ffprobePath}" -v quiet -select_streams v:0 -show_entries stream=width,height,r_frame_rate -show_entries format=duration -of json "${sourceFile}"`,
+        { timeout: 15000, encoding: 'utf-8' }
+      )
+      const probeData = JSON.parse(probeOut)
+      const stream = probeData.streams?.[0]
+      if (stream?.width) sourceWidth = stream.width
+      if (stream?.height) sourceHeight = stream.height
+      if (stream?.r_frame_rate) {
+        const [num, den] = stream.r_frame_rate.split('/')
+        sourceFps = Math.round(parseInt(num) / (parseInt(den) || 1))
+      }
+      sourceDuration = parseFloat(probeData.format?.duration || '0')
+      console.log(`[PROCESS] Step B: Source info: ${sourceWidth}x${sourceHeight} @ ${sourceFps}fps, ${sourceDuration.toFixed(1)}s`)
+    } catch (e: any) {
+      console.warn('[PROCESS] Step B: Probe failed, using defaults:', e.message?.substring(0, 100))
+    }
+
+    // ============================================
+    // STEP C: CLEAN TRANSCRIPT (remove stutters, fillers, retakes)
+    // ============================================
+    // Use cleaned segments for all subsequent steps
+    const cleanedSegments = job?.transcript?.cleanedSegments || transcript?.cleanedSegments
+    const transcriptSegmentsToUse = cleanedSegments || transcript?.segments || []
+    if (cleanedSegments) {
+      console.log(`[PROCESS] Step C: Using pre-cleaned transcript (${cleanedSegments.length} segments)`)
+    } else {
+      console.log(`[PROCESS] Step C: No cleaned transcript, using original (${transcriptSegmentsToUse.length} segments)`)
+    }
+
+    // ============================================
+    // STEP D: AUTO-GENERATE MISSING PLAN ELEMENTS
+    // ============================================
+    // Generate rhythmic zooms if none in plan
+    if (planZooms.length === 0 && sourceDuration > 10) {
+      planZooms = generateRhythmicZooms(sourceDuration, transcriptSegmentsToUse)
+      console.log(`[PROCESS] Step D: Auto-generated ${planZooms.length} rhythmic zooms`)
+    }
+
+    // Generate camera angles if none in plan
+    if (planCameraAngles.length <= 1 && transcriptSegmentsToUse.length > 3) {
+      const generatedAngles = generateCameraAngles(transcriptSegmentsToUse, sourceDuration)
+      if (generatedAngles.length > 1) {
+        planCameraAngles = generatedAngles.map((a: any) => ({
+          start: a.timestamp, end: a.timestamp + a.duration, camera: a.type,
+        }))
+        console.log(`[PROCESS] Step D: Auto-generated ${planCameraAngles.length} camera angle switches`)
+      }
+    }
+
+    // ============================================
+    // STEP E: CUT VIDEO WITH TRANSITIONS
     // ============================================
 
     // Normalize cuts from EditJob or legacy format
@@ -5187,7 +5613,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     const cutFile = path.join(uploadsDir, `cut_${timestamp}.mp4`)
     filesToCleanup.push(cutFile)
 
-    console.log('[PROCESS] Step 1: Cutting video with', cuts.length, 'segments and transitions...')
+    console.log('[PROCESS] Step E: Cutting video with', cuts.length, 'segments and transitions...')
 
     const { filter: transFilter, useTransitions } = buildTransitionFilter(cuts, transitions, 0.5)
 
@@ -5637,7 +6063,52 @@ app.post('/api/auto-editor/process', async (req, res) => {
     }
 
     // ============================================
-    // STEP 3: COLOR GRADE
+    // STEP H: BACKGROUND BLUR / DOF EFFECT
+    // ============================================
+
+    if (job?.plan?.backgroundBlur !== false) {
+      const blurOutput = path.join(uploadsDir, `blur_${timestamp}.mp4`)
+      filesToCleanup.push(blurOutput)
+
+      console.log('[PROCESS] Step H: Applying background blur / DOF effect...')
+
+      try {
+        // Vignette + unsharp for subtle DOF look
+        execSync(
+          `"${ffmpegPath}" -i "${currentFile}" -vf "unsharp=5:5:0.5:5:5:0.5,vignette=PI/4" -c:a copy -preset fast -crf 18 "${blurOutput}" -y`,
+          { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }
+        )
+
+        if (fs.existsSync(blurOutput) && fs.statSync(blurOutput).size > 50000) {
+          currentFile = blurOutput
+          console.log('[PROCESS] Step H done: Background blur / DOF applied')
+        } else {
+          console.warn('[PROCESS] Step H: Output invalid, keeping previous')
+        }
+      } catch (e: any) {
+        console.warn('[PROCESS] Step H: Blur failed, trying simpler approach:', e.stderr?.toString().substring(0, 150))
+
+        // Simpler fallback: just vignette + unsharp
+        try {
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -vf "unsharp=7:7:1.5:7:7:0.5,vignette=PI/5" -c:a copy -preset fast -crf 18 "${blurOutput}" -y`,
+            { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+          )
+
+          if (fs.existsSync(blurOutput) && fs.statSync(blurOutput).size > 50000) {
+            currentFile = blurOutput
+            console.log('[PROCESS] Step H done: Subtle DOF effect applied')
+          }
+        } catch {
+          console.warn('[PROCESS] Step H: All blur methods failed, skipping')
+        }
+      }
+    } else {
+      console.log('[PROCESS] Step H skipped: Background blur disabled')
+    }
+
+    // ============================================
+    // STEP I: COLOR GRADE
     // ============================================
 
     const colorGradeName = planColorGrade
@@ -5645,16 +6116,16 @@ app.post('/api/auto-editor/process', async (req, res) => {
     const gradedFile = path.join(uploadsDir, `graded_${timestamp}.mp4`)
     filesToCleanup.push(gradedFile)
 
-    console.log(`[PROCESS] Step 3: Color grading (${colorGradeName})...`)
+    console.log(`[PROCESS] Step I: Color grading (${colorGradeName})...`)
     execSync(
       `"${ffmpegPath}" -i "${currentFile}" -vf "${gradeFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
       { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
     )
     currentFile = gradedFile
-    console.log('[PROCESS] Step 3 done')
+    console.log('[PROCESS] Step I done')
 
     // ============================================
-    // STEP 3.5: ZOOM / KEN BURNS EFFECTS
+    // STEP J: ZOOM / KEN BURNS EFFECTS (every 5-6 seconds)
     // ============================================
 
     const zooms = planZooms
@@ -6210,17 +6681,11 @@ ${gfxDialogueLines.join('\n')}
       const fileSize = fs.statSync(currentFile).size / (1024 * 1024)
       const fileUrl = `http://localhost:${PORT}/uploads/${path.basename(currentFile)}`
 
-      // Calculate quality score based on what effects were actually applied
-      let qualityScore = 0
-      if (fs.existsSync(currentFile) && fs.statSync(currentFile).size > 100000) qualityScore += 20
-      if (cuts.length > 0) qualityScore += 15
-      if (planZooms.length > 0) qualityScore += 10
-      if (filteredSubtitleSegments.length > 0) qualityScore += 15
-      if (brollAssets.length > 0) qualityScore += 15
-      if (musicUrl) qualityScore += 10
-      if (planColorGrade && planColorGrade !== 'none') qualityScore += 5
-      if (mainPresenter) qualityScore += 10
-      qualityScore = Math.min(qualityScore, 100)
+      // Calculate comprehensive quality score (professional editing standards)
+      const { score: qualityScore, report: qualityReport } = calculateQualityScore(job, currentFile, {
+        cuts, planZooms, filteredSubtitleSegments, brollAssets, musicUrl,
+        planColorGrade, mainPresenter, planCameraAngles,
+      })
 
       console.log(`[PROCESS] Done! Preview: ${fileUrl} (${fileSize.toFixed(1)}MB, quality: ${qualityScore})`)
 
@@ -6237,6 +6702,7 @@ ${gfxDialogueLines.join('\n')}
         }],
         platformFiles: [],
         qualityScore,
+        qualityReport,
         processingTime: Date.now() - timestamp,
         plan: req.body,
         message: 'עריכה הושלמה (ללא ייצוא לפלטפורמות)',
@@ -6771,6 +7237,53 @@ const LEARNING_CATEGORIES: Record<string, Array<{query: string, goal: string}>> 
     { query: 'objection handling in marketing videos', goal: 'learn how to address doubts in video' },
     { query: 'video testimonial editing that builds trust', goal: 'learn testimonial editing techniques' },
   ],
+  // PROFESSIONAL WORKFLOW STEPS
+  error_cleaning: [
+    { query: 'how to clean video transcript remove filler words', goal: 'learn what to remove from speech' },
+    { query: 'video editing removing stutters jump cuts tutorial', goal: 'learn stutter removal techniques' },
+    { query: 'professional video editor cutting mistakes workflow', goal: 'learn pro error cleaning patterns' },
+  ],
+  camera_angles: [
+    { query: 'when to switch camera angle talking head video', goal: 'learn angle switching timing' },
+    { query: 'multicam editing single camera simulation', goal: 'learn faking multicam from one camera' },
+    { query: 'camera angle variety video engagement', goal: 'learn which angles increase engagement' },
+  ],
+  color_correction: [
+    { query: 'color grading talking head video tutorial 2026', goal: 'learn color grading for presenters' },
+    { query: 'skin tone correction video professional', goal: 'learn skin tone optimization' },
+    { query: 'matching colors between cameras video', goal: 'learn color matching techniques' },
+    { query: 'LUT video editing best presets business', goal: 'learn which LUTs work for business' },
+  ],
+  background_blur: [
+    { query: 'background blur video editing depth of field', goal: 'learn DOF techniques in post' },
+    { query: 'separate subject from background video post', goal: 'learn foreground isolation' },
+    { query: 'cinematic depth of field talking head', goal: 'learn cinematic DOF for presenters' },
+  ],
+  zoom_techniques: [
+    { query: 'zoom in editing talking head when to zoom', goal: 'learn zoom timing for engagement' },
+    { query: 'subtle zoom video editing ken burns effect', goal: 'learn subtle motion techniques' },
+    { query: 'dynamic zoom reels tiktok editing', goal: 'learn social media zoom patterns' },
+  ],
+  subtitle_design: [
+    { query: 'subtitle placement best practices video 2026', goal: 'learn optimal subtitle position' },
+    { query: 'animated captions design engaging subtitles', goal: 'learn caption design trends' },
+    { query: 'hebrew subtitles video RTL best practices', goal: 'learn Hebrew subtitle specifics' },
+  ],
+  music_selection: [
+    { query: 'background music selection marketing video', goal: 'learn music-content matching' },
+    { query: 'music volume mixing voice over ratio', goal: 'learn audio balance' },
+    { query: 'royalty free music for business videos tips', goal: 'learn music selection strategy' },
+  ],
+  broll_creation: [
+    { query: 'when to use b-roll talking head video', goal: 'learn B-Roll timing decisions' },
+    { query: 'AI generated b-roll video editing workflow', goal: 'learn AI B-Roll techniques' },
+    { query: 'b-roll types that increase video engagement', goal: 'learn which B-Roll works best' },
+  ],
+  final_polish: [
+    { query: 'video editing final review checklist professional', goal: 'learn QA checklist' },
+    { query: 'export settings social media video 2026', goal: 'learn optimal export settings' },
+    { query: 'video quality check before publishing', goal: 'learn final quality checks' },
+  ],
 }
 
 // Daily rotation: pick 3 random categories per session
@@ -6806,6 +7319,16 @@ const CATEGORY_TO_DOMAIN: Record<string, string> = {
   cta_conversion: 'marketing',
   industry_content: 'marketing',
   paid_ads: 'paid_ads',
+  // Professional workflow categories
+  error_cleaning: 'editing',
+  camera_angles: 'editing',
+  color_correction: 'editing',
+  background_blur: 'editing',
+  zoom_techniques: 'editing',
+  subtitle_design: 'editing',
+  music_selection: 'editing',
+  broll_creation: 'editing',
+  final_polish: 'editing',
 }
 
 function calculateExpertiseLevel(insightCount: number): string {

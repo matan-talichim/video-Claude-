@@ -759,6 +759,38 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     setEnergyAnalysis(energyAnalysis)
     addLog(`ניתוח אנרגיה: ${energyAnalysis.wordsPerMinute} מילים/דקה (${energyAnalysis.pace}), ${energyAnalysis.peaks.length} שיאים, ${energyAnalysis.valleys.length} שפלים`)
 
+    // === Step: Clean transcript (remove stutters, fillers, retakes) ===
+    setStep('cleaning')
+    setProgress({ current: 0, total: 1, label: 'מנקה טעויות וגמגומים...' })
+
+    try {
+      const cleanResponse = await fetch(`${API_BASE}/auto-editor/clean-transcript`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: { segments: job.transcript!.segments },
+          mainPresenter: job.transcript!.mainPresenter,
+        }),
+      })
+
+      if (cleanResponse.ok) {
+        const cleanResult = await cleanResponse.json()
+        job.transcript!.cleanedSegments = cleanResult.cleanedSegments
+        job.transcript!.cleaningSummary = cleanResult.summary
+
+        const removed = cleanResult.originalCount - cleanResult.cleanedCount
+        addLog(`ניקוי תמלול: ${cleanResult.originalCount} → ${cleanResult.cleanedCount} קטעים (הוסרו ${removed} קטעים פגומים)`)
+        console.log(`[AUTO-EDIT] Cleaned: ${cleanResult.originalCount} → ${cleanResult.cleanedCount} segments`)
+      } else {
+        addLog('ניקוי תמלול נכשל, ממשיך עם התמלול המקורי')
+      }
+    } catch (e: any) {
+      console.warn('[AUTO-EDIT] Transcript cleaning failed:', e.message)
+      addLog('ניקוי תמלול נכשל, ממשיך עם התמלול המקורי')
+    }
+
+    store.markStepCompleted('cleaning')
+
     // Step 4 — Enrich prompt
     setStep('enriching')
     setProgress({ current: 0, total: 1, label: 'AI מנתח את התוכן ומשפר את הפרומפט...' })
