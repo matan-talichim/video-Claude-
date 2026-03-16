@@ -1,6 +1,6 @@
 FROM node:22-slim
 
-# Install yt-dlp and ffmpeg
+# Install yt-dlp, ffmpeg, python3
 RUN apt-get update && apt-get install -y \
     python3 \
     curl \
@@ -12,17 +12,13 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy server package files and install
+COPY server/package*.json ./server/
+RUN cd server && npm install
 
-# Install dependencies
-RUN npm install
+# Copy all server source files
+COPY server/ ./server/
 
-# Copy source
-COPY . .
-
-# Expose port
 EXPOSE 3001
 
-# Start
-CMD ["npx", "tsx", "index.ts"]
+CMD ["sh", "-c", "cd server && npx tsx index.ts"]
