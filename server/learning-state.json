@@ -1,0 +1,21 @@
+{
+  "lastLearnDate": 0,
+  "totalVideosAnalyzed": 0,
+  "learnedPatterns": {},
+  "missingFeatures": [],
+  "dailyYoutubeUnits": 0,
+  "dailyGptCalls": 0,
+  "dailyGptCost": 0,
+  "dailyDate": "",
+  "monthlyGptCost": 0,
+  "monthlyDate": "",
+  "expertise": {},
+  "trendInsights": {
+    "activeTrends": [],
+    "expiredTrends": [],
+    "evergreenRules": []
+  },
+  "learningMetrics": {
+    "totalSessions": 0
+  }
+}
