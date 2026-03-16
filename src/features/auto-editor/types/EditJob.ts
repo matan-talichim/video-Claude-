@@ -14,6 +14,15 @@ export interface EditJob {
   // === TRANSCRIPT ===
   transcript: {
     segments: TranscriptSegment[]
+    cleanedSegments?: TranscriptSegment[]   // After error cleaning (stutters/fillers removed)
+    cleaningSummary?: {
+      total_segments?: number
+      kept?: number
+      removed?: number
+      trimmed?: number
+      removed_reasons?: Record<string, number>
+      error?: string
+    }
     speakers: SpeakerInfo[]
     mainPresenter: string         // "דובר 2" etc
     presenterConfidence: 'high' | 'medium' | 'low'
@@ -41,6 +50,7 @@ export interface EditJob {
     zooms: ZoomEffect[]           // Zoom in/out effects
     transitions: Transition[]     // Between cuts
     colorGrade: string            // 'warm', 'cold', 'clean', 'cinematic'
+    backgroundBlur?: boolean      // Apply background blur / DOF effect
 
     // Overlays
     speakers: LowerThird[]        // Speaker name overlays

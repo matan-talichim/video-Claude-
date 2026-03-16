@@ -5,6 +5,7 @@ export type AutoEditorStep =
   | 'transcribing'
   | 'validating'
   | 'analyzing_visuals'
+  | 'cleaning'
   | 'enriching'
   | 'review_enrichment'
   | 'planning'

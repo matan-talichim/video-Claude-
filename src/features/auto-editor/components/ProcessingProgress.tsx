@@ -5,6 +5,7 @@ const STEPS_CONFIG: { key: AutoEditorStep; label: string; activeLabel?: string; 
   { key: 'transcribing', label: 'תמלול הושלם', activeLabel: 'מתמלל את הסרטון...', icon: '🎤' },
   { key: 'validating', label: 'ולידציית חומר', activeLabel: 'מאמת את החומר...' },
   { key: 'analyzing_visuals', label: 'ניתוח תמונה הושלם', activeLabel: 'AI מנתח את התמונה בסרטון...', icon: '👁' },
+  { key: 'cleaning', label: 'ניקוי טעויות וגמגומים', activeLabel: 'מנקה טעויות וגמגומים...', icon: '🧹' },
   { key: 'enriching', label: 'AI ניתח תוכן', activeLabel: 'AI מנתח את התוכן ומשפר פרומפט...', icon: '🧠' },
   { key: 'review_enrichment', label: 'סקירת הצעות', activeLabel: 'ממתין לאישור...', icon: '📋' },
   { key: 'planning', label: 'תכנון דו-שלבי: במאי + עורך טכני', activeLabel: 'מתכנן 2 גרסאות עריכה...', icon: '🎬' },
