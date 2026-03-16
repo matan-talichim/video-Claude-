@@ -21,9 +21,40 @@ async function getOpenAI() {
   if (!process.env.OPENAI_API_KEY) return null
   if (!openai) {
     const { default: OpenAI } = await import('openai')
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 60000 })
   }
   return openai
+}
+
+// Helper: detailed OpenAI error logging
+function logOpenAIError(context: string, e: any): void {
+  const errorDetails = {
+    message: e.message?.substring(0, 200),
+    code: e.code,
+    status: e.status,
+    type: e.type,
+    cause: e.cause?.message?.substring(0, 100),
+  }
+  console.error(`[LEARN] ${context}:`, JSON.stringify(errorDetails))
+}
+
+// Helper: call OpenAI with retry and exponential backoff
+async function callOpenAIWithRetry(ai: any, params: any, maxRetries: number = 2): Promise<any> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await ai.chat.completions.create(params)
+      return response
+    } catch (e: any) {
+      logOpenAIError(`OpenAI attempt ${attempt}/${maxRetries} failed`, e)
+      if (attempt < maxRetries) {
+        const delay = attempt * 3000
+        console.warn(`[LEARN] Retrying in ${delay / 1000}s...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      } else {
+        throw e
+      }
+    }
+  }
 }
 
 // Google Gemini AI
@@ -8650,7 +8681,7 @@ Return JSON:
             })
           })
 
-          const synthRes = await ai.chat.completions.create({
+          const synthRes = await callOpenAIWithRetry(ai, {
             model: 'gpt-5.4',
             messages: [
               { role: 'system', content: `You are a world-class video editor analyzing videos. Goal: ${sessionGoal}. Analyze based on ${thumbnailImages.length > 0 ? 'thumbnails and metadata' : 'metadata only'}. Return JSON: {"editing_rules":[{"rule":"Specific actionable rule with parameters","when_to_use":"when to apply","when_NOT_to_use":"when not to apply","applies_to":"all/social/marketing","confidence":0.7}],"trend_techniques":[{"technique":"specific technique","trend_name":"trend name","lifecycle":"rising/peak/declining","shelf_life_weeks":4,"adaptation_for_business":"business use"}],"evergreen_techniques":[{"technique":"technique","why_evergreen":"reason"}],"system_optimization":[{"idea":"improvement idea","why":"connection to learned insight","impact":"high/medium/low","category":"new_feature/improve_existing/automation/ai_quality","implementation_hint":"brief approach"}],"sop_update":"Updated SOP","patterns":{"hook":{"avg_seconds":2,"rule":"rule"},"pacing":{"avg_cuts":12,"rule":"rule"},"subtitles":{"style":"classic","rule":"rule","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":80,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"subtitle rule"}}}}` },
@@ -8658,7 +8689,7 @@ Return JSON:
             ],
             response_format: { type: 'json_object' },
             max_completion_tokens: 2000,
-          })
+          }, 2)
           trackCost(state, 'gpt-5.4', synthRes.usage)
           results.totalCost += estimateCallCost('gpt-5.4', synthRes.usage?.prompt_tokens || 500, synthRes.usage?.completion_tokens || 500)
           state.totalVideosAnalyzed += thumbnailImages.length || 1
@@ -8697,7 +8728,7 @@ Return JSON:
               console.log(`[LEARN] Category ${category} (thumbnail): ${added} new rules from ${thumbnailImages.length} thumbnails`)
             }
           } catch (thumbErr: any) {
-            console.warn(`[LEARN] Thumbnail synthesis failed for ${category}: ${thumbErr.message?.substring(0, 100)}`)
+            logOpenAIError(`Thumbnail synthesis failed for ${category}`, thumbErr)
           }
         }
         continue
@@ -8770,15 +8801,16 @@ Return JSON:
             base64: fs.readFileSync(path.join(framesDir, file)).toString('base64'),
           }))
 
-          // Deep GPT Vision analysis
+          // Deep GPT Vision analysis with retry
           let analysisSucceeded = false
+          const metadataText = `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}`
           try {
-            const analysisRes = await ai.chat.completions.create({
+            const analysisRes = await callOpenAIWithRetry(ai, {
               model: 'gpt-5.4',
               messages: [
                 { role: 'system', content: deepAnalysisPrompt },
                 { role: 'user', content: [
-                  { type: 'text' as const, text: `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}` },
+                  { type: 'text' as const, text: metadataText },
                   ...frameImages.map((f: any) => ({
                     type: 'image_url' as const,
                     image_url: { url: `data:image/jpeg;base64,${f.base64}`, detail: 'low' as const }
@@ -8787,7 +8819,7 @@ Return JSON:
               ],
               response_format: { type: 'json_object' },
               max_completion_tokens: 2000,
-            })
+            }, 2)
 
             const analysis = JSON.parse(analysisRes.choices[0]?.message?.content || '{}')
             analysis.title = video.title
@@ -8798,14 +8830,13 @@ Return JSON:
             analysisSucceeded = true
             console.log(`[LEARN] Video ${video.id}: ${(analysis.editing_rules || []).length} rules | Method: ${analysisMethod}`)
           } catch (visionErr: any) {
-            console.warn(`[LEARN] GPT Vision failed for ${video.id}: ${visionErr.message?.substring(0, 150)}`)
+            logOpenAIError(`GPT Vision failed for ${video.id}`, visionErr)
           }
 
-          // Fallback: if GPT Vision failed (e.g. connection error), try thumbnail + metadata-only analysis
+          // Fallback 1: if GPT Vision failed, try with single thumbnail image
           if (!analysisSucceeded && hasBudget(state)) {
             console.log(`[LEARN] Falling back to thumbnail metadata analysis for ${video.id}`)
             try {
-              // Try to get a thumbnail if we used video frames before
               let thumbBase64 = ''
               if (analysisMethod === 'video_frames') {
                 const thumbnailUrls = [
@@ -8825,7 +8856,6 @@ Return JSON:
                   } catch {}
                 }
               } else {
-                // Already had thumbnail frames, reuse them
                 const existingFrames = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort()
                 if (existingFrames.length > 0) {
                   thumbBase64 = fs.readFileSync(path.join(framesDir, existingFrames[0])).toString('base64')
@@ -8833,7 +8863,7 @@ Return JSON:
               }
 
               const fallbackContent: Array<any> = [
-                { type: 'text' as const, text: `Analyze this video based on metadata and thumbnail.\n"${video.title}" | ${category} | Goal: ${sessionGoal}\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}\nProvide editing rules based on what you can infer.` },
+                { type: 'text' as const, text: `Analyze this video based on metadata and thumbnail.\n${metadataText}\nProvide editing rules based on what you can infer.` },
               ]
               if (thumbBase64) {
                 fallbackContent.push({
@@ -8842,7 +8872,7 @@ Return JSON:
                 })
               }
 
-              const fallbackRes = await ai.chat.completions.create({
+              const fallbackRes = await callOpenAIWithRetry(ai, {
                 model: 'gpt-5.4',
                 messages: [
                   { role: 'system', content: deepAnalysisPrompt },
@@ -8850,7 +8880,7 @@ Return JSON:
                 ],
                 response_format: { type: 'json_object' },
                 max_completion_tokens: 2000,
-              })
+              }, 2)
 
               const fallbackAnalysis = JSON.parse(fallbackRes.choices[0]?.message?.content || '{}')
               fallbackAnalysis.title = video.title
@@ -8858,13 +8888,40 @@ Return JSON:
               trackCost(state, 'gpt-5.4', fallbackRes.usage)
               results.totalCost += estimateCallCost('gpt-5.4', fallbackRes.usage?.prompt_tokens || 500, fallbackRes.usage?.completion_tokens || 500)
               state.totalVideosAnalyzed++
+              analysisSucceeded = true
               console.log(`[LEARN] Video ${video.id}: ${(fallbackAnalysis.editing_rules || []).length} rules | Method: thumbnail_fallback`)
             } catch (fallbackErr: any) {
-              console.warn(`[LEARN] Thumbnail fallback also failed for ${video.id}: ${fallbackErr.message?.substring(0, 150)}`)
+              logOpenAIError(`Thumbnail fallback failed for ${video.id}`, fallbackErr)
+            }
+          }
+
+          // Fallback 2: TEXT-ONLY analysis (no image at all - smallest request, most likely to succeed)
+          if (!analysisSucceeded && hasBudget(state)) {
+            console.log(`[LEARN] Trying text-only analysis (no image) for ${video.id}...`)
+            try {
+              const textOnlyRes = await callOpenAIWithRetry(ai, {
+                model: 'gpt-5.4',
+                messages: [
+                  { role: 'system', content: deepAnalysisPrompt },
+                  { role: 'user', content: `Analyze this video based on metadata ONLY (no image available).\n${metadataText}\nDescription: ${(video.description || '').substring(0, 500)}\nProvide editing rules based on what you can infer from metadata.` }
+                ],
+                response_format: { type: 'json_object' },
+                max_completion_tokens: 2000,
+              }, 2)
+
+              const textAnalysis = JSON.parse(textOnlyRes.choices[0]?.message?.content || '{}')
+              textAnalysis.title = video.title
+              analyses.push(textAnalysis)
+              trackCost(state, 'gpt-5.4', textOnlyRes.usage)
+              results.totalCost += estimateCallCost('gpt-5.4', textOnlyRes.usage?.prompt_tokens || 500, textOnlyRes.usage?.completion_tokens || 500)
+              state.totalVideosAnalyzed++
+              console.log(`[LEARN] Video ${video.id}: ${(textAnalysis.editing_rules || []).length} rules | Method: text_only`)
+            } catch (textErr: any) {
+              logOpenAIError(`Text-only analysis also failed for ${video.id}`, textErr)
             }
           }
         } catch (e: any) {
-          console.warn(`[LEARN] Video analysis failed for ${video.id}: ${e.message?.substring(0, 150)}`)
+          logOpenAIError(`Video analysis failed for ${video.id}`, e)
         } finally {
           try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
         }
@@ -8949,7 +9006,7 @@ Return JSON:
   }
 }`
 
-        const synthRes = await ai.chat.completions.create({
+        const synthRes = await callOpenAIWithRetry(ai, {
           model: 'gpt-5.4',
           messages: [
             { role: 'system', content: synthesisPrompt },
@@ -8957,7 +9014,7 @@ Return JSON:
           ],
           response_format: { type: 'json_object' },
           max_completion_tokens: 3000,
-        })
+        }, 2)
 
         const patterns = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
         if (!state.learnedPatterns[category]) state.learnedPatterns[category] = {}
@@ -8999,7 +9056,7 @@ Return JSON:
       }
 
     } catch (e: any) {
-      console.warn(`[LEARN] Category ${category} failed: ${e.message?.substring(0, 150)}`)
+      logOpenAIError(`Category ${category} failed`, e)
       results.errors.push(`${category}: ${e.message}`)
     }
   }
@@ -9030,7 +9087,7 @@ ${todaysInsights}
 What SPECIFIC editing features would we need to implement the techniques we learned?
 Return JSON: {"missing_features":[{"name":"Feature name","description":"What it does","why_important":"Which learned rule requires this","implementation":"How to build it (FFmpeg command, API, or code approach)","difficulty":"easy/medium/hard","impact":8,"priority":"critical/important/nice_to_have"}],"summary":"Summary","biggest_gap":"The gap"}`
 
-      const missingRes = await ai.chat.completions.create({
+      const missingRes = await callOpenAIWithRetry(ai, {
         model: 'gpt-5.4',
         messages: [
           { role: 'system', content: missingFeaturesPrompt },
@@ -9038,7 +9095,7 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
         ],
         response_format: { type: 'json_object' },
         max_completion_tokens: 1500,
-      })
+      }, 2)
 
       const missing = JSON.parse(missingRes.choices[0]?.message?.content || '{}')
       state.missingFeatures = missing.missing_features || []
@@ -9724,7 +9781,8 @@ app.listen(PORT, () => {
         console.log('[LEARN]   OpenAI API: ❌ No API key configured')
       }
     } catch (e: any) {
-      console.error(`[LEARN]   OpenAI API: ❌ FAILED - ${e.message?.substring(0, 150)}`)
+      console.error('[LEARN]   OpenAI API: ❌ FAILED')
+      logOpenAIError('Startup connectivity test', e)
     }
   })()
 
