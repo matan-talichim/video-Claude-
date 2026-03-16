@@ -9710,21 +9710,23 @@ app.listen(PORT, () => {
   }
 
   // Test OpenAI API connectivity at startup
-  try {
-    const ai = await getOpenAI()
-    if (ai) {
-      const testRes = await ai.chat.completions.create({
-        model: 'gpt-5.4',
-        max_completion_tokens: 10,
-        messages: [{ role: 'user', content: 'Say OK' }],
-      })
-      console.log('[LEARN]   OpenAI API: ✅ Connected (GPT Vision ready)')
-    } else {
-      console.log('[LEARN]   OpenAI API: ❌ No API key configured')
+  (async () => {
+    try {
+      const ai = await getOpenAI()
+      if (ai) {
+        const testRes = await ai.chat.completions.create({
+          model: 'gpt-5.4',
+          max_completion_tokens: 10,
+          messages: [{ role: 'user', content: 'Say OK' }],
+        })
+        console.log('[LEARN]   OpenAI API: ✅ Connected (GPT Vision ready)')
+      } else {
+        console.log('[LEARN]   OpenAI API: ❌ No API key configured')
+      }
+    } catch (e: any) {
+      console.error(`[LEARN]   OpenAI API: ❌ FAILED - ${e.message?.substring(0, 150)}`)
     }
-  } catch (e: any) {
-    console.error(`[LEARN]   OpenAI API: ❌ FAILED - ${e.message?.substring(0, 150)}`)
-  }
+  })()
 
   logBrainStatus()
 
