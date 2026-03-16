@@ -13,6 +13,19 @@ import { createEmptyEditJob } from './types/EditJob'
 
 const API_BASE = 'http://localhost:3001/api'
 
+// Client-side speaker matching (mirrors server's matchesSpeaker for consistency)
+function matchesSpeakerClient(segmentSpeaker: any, targetPresenter: string): boolean {
+  if (!segmentSpeaker || !targetPresenter) return false
+  const a = String(segmentSpeaker).trim().replace(/\s+/g, ' ').toLowerCase()
+  const b = String(targetPresenter).trim().replace(/\s+/g, ' ').toLowerCase()
+  if (a === b) return true
+  if (a.includes(b) || b.includes(a)) return true
+  const numA = a.match(/\d+/)?.[0]
+  const numB = b.match(/\d+/)?.[0]
+  if (numA && numB && numA === numB) return true
+  return false
+}
+
 // === Module-level job storage: persists across Phase 1 → Phase 2 ===
 let currentJobA: EditJob | null = null
 
@@ -428,6 +441,7 @@ function buildEditJobForProcessing(
       zooms,
       transitions,
       colorGrade: enrichment?.style?.color || videoPlan?.colorGrade || videoPlan?.color_grade || 'clean',
+      backgroundBlur: videoPlan?.backgroundBlur !== false,
       speakers,
       graphics,
       brollPlacements,
@@ -729,10 +743,10 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
           job.transcript!.mainPresenter = detectedPresenter
           job.transcript!.presenterConfidence = confidence || 'medium'
           job.transcript!.segments.forEach(seg => {
-            seg.isPresenter = (seg.speaker === detectedPresenter)
+            seg.isPresenter = matchesSpeakerClient(seg.speaker, detectedPresenter)
           })
           job.transcript!.speakers.forEach(s => {
-            s.isPresenter = (s.name === detectedPresenter)
+            s.isPresenter = matchesSpeakerClient(s.name, detectedPresenter)
           })
 
           // Also update store for UI
@@ -742,7 +756,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
           transcript.mainSpeaker = detectedPresenter
           transcript.autoDetected = true
           transcript.segments.forEach((seg: any) => {
-            seg.isPresenter = (seg.speaker === detectedPresenter)
+            seg.isPresenter = matchesSpeakerClient(seg.speaker, detectedPresenter)
           })
           setTranscript({ ...transcript })
 
@@ -885,10 +899,10 @@ export async function continueAfterEnrichment(
   if (storePresenter && storePresenter !== job.transcript.mainPresenter) {
     job.transcript.mainPresenter = storePresenter
     job.transcript.segments.forEach(seg => {
-      seg.isPresenter = (seg.speaker === storePresenter)
+      seg.isPresenter = matchesSpeakerClient(seg.speaker, storePresenter)
     })
     job.transcript.speakers.forEach(s => {
-      s.isPresenter = (s.name === storePresenter)
+      s.isPresenter = matchesSpeakerClient(s.name, storePresenter)
     })
     console.log(`[EditJob] Presenter updated from store: ${storePresenter}`)
   }
