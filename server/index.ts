@@ -21,7 +21,12 @@ async function getOpenAI() {
   if (!process.env.OPENAI_API_KEY) return null
   if (!openai) {
     const { default: OpenAI } = await import('openai')
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 60000 })
+    openai = new OpenAI({
+      apiKey: (process.env.OPENAI_API_KEY || '').trim(),
+      baseURL: 'https://api.openai.com/v1',
+      timeout: 60000,
+      maxRetries: 3,
+    })
   }
   return openai
 }
@@ -9771,18 +9776,36 @@ app.listen(PORT, () => {
     try {
       const ai = await getOpenAI()
       if (ai) {
-        const testRes = await ai.chat.completions.create({
+        const test = await ai.chat.completions.create({
           model: 'gpt-5.4',
           max_completion_tokens: 10,
           messages: [{ role: 'user', content: 'Say OK' }],
         })
-        console.log('[LEARN]   OpenAI API: ✅ Connected (GPT Vision ready)')
+        console.log('[OPENAI] ✅ Connected, response:', test.choices[0].message.content)
       } else {
-        console.log('[LEARN]   OpenAI API: ❌ No API key configured')
+        console.log('[OPENAI] ❌ No API key configured')
       }
     } catch (e: any) {
-      console.error('[LEARN]   OpenAI API: ❌ FAILED')
-      logOpenAIError('Startup connectivity test', e)
+      console.error('[OPENAI] ❌ FAILED:', JSON.stringify({
+        message: e.message,
+        code: e.code,
+        status: e.status,
+        type: e.type,
+        cause: e.cause?.message,
+        errno: e.cause?.errno,
+        syscall: e.cause?.syscall,
+      }))
+
+      // Test raw connectivity
+      try {
+        const raw = await fetch('https://api.openai.com/v1/models', {
+          headers: { 'Authorization': `Bearer ${(process.env.OPENAI_API_KEY || '').trim()}` },
+          signal: AbortSignal.timeout(15000),
+        })
+        console.log('[OPENAI] Raw fetch status:', raw.status)
+      } catch (fe: any) {
+        console.error('[OPENAI] Raw fetch failed:', fe.message, fe.cause?.message)
+      }
     }
   })()
 
