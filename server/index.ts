@@ -8350,12 +8350,15 @@ async function sendLearningReport(state: any, results: any) {
   await sendTelegram(message)
 }
 
-async function runServerLearning(options?: { budget?: number }) {
+async function runServerLearning(options?: { budget?: number, force?: boolean }) {
   const sessionBudget = options?.budget || 0.10
+  const force = options?.force || false
   const maxGptCalls = Math.floor(sessionBudget / 0.02)
   const numCategories = Math.min(5, Math.max(3, Math.ceil(maxGptCalls / 8)))
 
-  console.log(`[LEARN] Budget: $${sessionBudget} | Max GPT calls: ~${maxGptCalls} | Categories: ${numCategories}`)
+  console.log('[LEARN] === SESSION START ===')
+  console.log(`[LEARN] Budget: $${sessionBudget} | Force: ${force} | Max GPT calls: ~${maxGptCalls} | Categories: ${numCategories}`)
+  console.log(`[LEARN] State file: ${fs.existsSync(LEARNING_STATE_FILE) ? 'EXISTS' : 'MISSING'}`)
 
   if (options?.budget) {
     await sendTelegram(
@@ -8397,10 +8400,13 @@ async function runServerLearning(options?: { budget?: number }) {
     state.monthlyDate = thisMonth
   }
 
-  // Check if already learned this session (within 6 hours)
-  if (hasLearnedThisSessionGlobal()) {
+  // Check if already learned this session (within 6 hours) - skip check if forced
+  if (!force && hasLearnedThisSessionGlobal()) {
     console.log('[LEARN] Already learned this session (within 6 hours), skipping')
     return
+  }
+  if (force) {
+    console.log('[LEARN] Force mode: bypassing session check')
   }
 
   // Check budget
@@ -8606,20 +8612,30 @@ Return JSON:
       if (!ytdlpAvailable) {
         // Thumbnail + metadata analysis (Railway fallback when yt-dlp unavailable)
         if (hasBudget(state)) {
-          // Try to fetch thumbnails for top 2 videos
+          // Try to fetch thumbnails for top 2 videos (with fallback URLs)
           const thumbnailImages: Array<{base64: string; videoTitle: string}> = []
           for (const video of videos.slice(0, 2)) {
-            try {
-              const thumbUrl = `https://img.youtube.com/vi/${video.id}/maxresdefault.jpg`
-              const thumbRes = await fetch(thumbUrl)
-              if (thumbRes.ok) {
-                const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
-                thumbnailImages.push({
-                  base64: thumbBuffer.toString('base64'),
-                  videoTitle: video.title,
-                })
-              }
-            } catch {}
+            const thumbUrls = [
+              `https://img.youtube.com/vi/${video.id}/maxresdefault.jpg`,
+              `https://img.youtube.com/vi/${video.id}/hqdefault.jpg`,
+              `https://img.youtube.com/vi/${video.id}/mqdefault.jpg`,
+            ]
+            for (const thumbUrl of thumbUrls) {
+              try {
+                const thumbRes = await fetch(thumbUrl, { signal: AbortSignal.timeout(10000) })
+                if (thumbRes.ok) {
+                  const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
+                  if (thumbBuffer.length > 5000) {
+                    thumbnailImages.push({
+                      base64: thumbBuffer.toString('base64'),
+                      videoTitle: video.title,
+                    })
+                    console.log(`[LEARN] Thumbnail for "${video.title}": ${(thumbBuffer.length / 1024).toFixed(0)}KB`)
+                    break
+                  }
+                }
+              } catch {}
+            }
           }
 
           const userContent: any[] = [
@@ -8678,8 +8694,11 @@ Return JSON:
                 videosAnalyzed: thumbnailImages.length,
                 rulesLearned: added,
               }
+              console.log(`[LEARN] Category ${category} (thumbnail): ${added} new rules from ${thumbnailImages.length} thumbnails`)
             }
-          } catch {}
+          } catch (thumbErr: any) {
+            console.warn(`[LEARN] Thumbnail synthesis failed for ${category}: ${thumbErr.message?.substring(0, 100)}`)
+          }
         }
         continue
       }
@@ -8687,6 +8706,7 @@ Return JSON:
       for (const video of videos.slice(0, 2)) {
         if (!hasBudget(state)) break
 
+        let analysisMethod = 'unknown'
         const tmpDir = path.join(__dirname, 'uploads', `viral_${Date.now()}`)
         try {
           fs.mkdirSync(tmpDir, { recursive: true })
@@ -8694,15 +8714,56 @@ Return JSON:
           const framesDir = path.join(tmpDir, 'frames')
           fs.mkdirSync(framesDir, { recursive: true })
 
+          let gotFrames = false
+
+          // Try yt-dlp download with proper error handling
           try {
-            execSync(`"${ytdlpPath}" --format "worst[ext=mp4]" --download-sections "*0:00-1:00" --max-filesize 15M -o "${videoPath}" "https://www.youtube.com/watch?v=${video.id}"`, { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] })
-          } catch {
-            execSync(`"${ytdlpPath}" --format "worst[ext=mp4]" --max-filesize 10M -o "${videoPath}" "https://www.youtube.com/watch?v=${video.id}"`, { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] })
+            try {
+              execSync(`"${ytdlpPath}" --no-check-certificates --geo-bypass --socket-timeout 30 --retries 2 --format "worst[ext=mp4]" --download-sections "*0:00-1:00" --max-filesize 15M -o "${videoPath}" "https://www.youtube.com/watch?v=${video.id}"`, { timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'] })
+            } catch {
+              execSync(`"${ytdlpPath}" --no-check-certificates --geo-bypass --socket-timeout 30 --retries 2 --format "worst[ext=mp4]" --max-filesize 10M -o "${videoPath}" "https://www.youtube.com/watch?v=${video.id}"`, { timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'] })
+            }
+
+            if (fs.existsSync(videoPath) && fs.statSync(videoPath).size > 10000) {
+              console.log(`[LEARN] Downloaded video: ${(fs.statSync(videoPath).size / 1024 / 1024).toFixed(1)}MB`)
+              execSync(`"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/5,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`, { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] })
+              gotFrames = true
+              analysisMethod = 'video_frames'
+            }
+          } catch (dlErr: any) {
+            console.warn(`[LEARN] yt-dlp failed for ${video.id}: ${dlErr.message?.substring(0, 100)}`)
           }
 
-          if (!fs.existsSync(videoPath)) continue
+          // If yt-dlp failed, fallback to thumbnail analysis for this individual video
+          if (!gotFrames) {
+            console.log(`[LEARN] Using thumbnail fallback for video ${video.id}`)
+            analysisMethod = 'thumbnail'
+            const thumbnailUrls = [
+              `https://img.youtube.com/vi/${video.id}/maxresdefault.jpg`,
+              `https://img.youtube.com/vi/${video.id}/hqdefault.jpg`,
+              `https://img.youtube.com/vi/${video.id}/mqdefault.jpg`,
+            ]
+            for (const thumbUrl of thumbnailUrls) {
+              try {
+                const thumbRes = await fetch(thumbUrl, { signal: AbortSignal.timeout(10000) })
+                if (thumbRes.ok) {
+                  const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
+                  if (thumbBuffer.length > 5000) {
+                    const thumbPath = path.join(framesDir, 'thumb_001.jpg')
+                    fs.writeFileSync(thumbPath, thumbBuffer)
+                    console.log(`[LEARN] Thumbnail downloaded: ${(thumbBuffer.length / 1024).toFixed(0)}KB`)
+                    gotFrames = true
+                    break
+                  }
+                }
+              } catch {}
+            }
+          }
 
-          execSync(`"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/5,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`, { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] })
+          if (!gotFrames) {
+            console.warn(`[LEARN] No frames or thumbnail for ${video.id}, skipping`)
+            continue
+          }
 
           const frameFiles = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort().slice(0, 10)
           const frameImages = frameFiles.map((file: string) => ({
@@ -8715,7 +8776,7 @@ Return JSON:
             messages: [
               { role: 'system', content: deepAnalysisPrompt },
               { role: 'user', content: [
-                { type: 'text' as const, text: `"${video.title}" | ${category} | Goal: ${sessionGoal} | ${frameImages.length} frames:` },
+                { type: 'text' as const, text: `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}` },
                 ...frameImages.map((f: any) => ({
                   type: 'image_url' as const,
                   image_url: { url: `data:image/jpeg;base64,${f.base64}`, detail: 'low' as const }
@@ -8732,14 +8793,18 @@ Return JSON:
           trackCost(state, 'gpt-5.4', analysisRes.usage)
           results.totalCost += estimateCallCost('gpt-5.4', analysisRes.usage?.prompt_tokens || 500, analysisRes.usage?.completion_tokens || 500)
           state.totalVideosAnalyzed++
+          console.log(`[LEARN] Video ${video.id}: ${(analysis.editing_rules || []).length} rules | Method: ${analysisMethod}`)
         } catch (e: any) {
-          console.warn(`[LEARN] Video analysis failed: ${e.message}`)
+          console.warn(`[LEARN] Video analysis failed for ${video.id}: ${e.message?.substring(0, 150)}`)
         } finally {
           try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
         }
       }
 
-      if (analyses.length === 0) continue
+      if (analyses.length === 0) {
+        console.warn(`[LEARN] No analyses for category ${category}, skipping synthesis`)
+        continue
+      }
 
       // --- STEP 4: Deep synthesis - pattern detection across videos ---
       if (hasBudget(state)) {
@@ -8861,9 +8926,11 @@ Return JSON:
           videosAnalyzed: analyses.length,
           rulesLearned: rulesAdded,
         }
+        console.log(`[LEARN] Category ${category}: ${rulesAdded} new rules from ${analyses.length} videos`)
       }
 
     } catch (e: any) {
+      console.warn(`[LEARN] Category ${category} failed: ${e.message?.substring(0, 150)}`)
       results.errors.push(`${category}: ${e.message}`)
     }
   }
@@ -9004,7 +9071,29 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
     systemIdeas: results.systemIdeas || [],
   }
 
-  console.log(`[LEARN] After: ${totalRulesAfter} total rules (+${newRules.length} new)`)
+  console.log('[LEARN] === SESSION END ===')
+  console.log(`[LEARN] Videos analyzed: ${videosThisSession}`)
+  console.log(`[LEARN] New rules: ${newRules.length}`)
+  console.log(`[LEARN] Total rules: ${totalRulesAfter}`)
+  console.log(`[LEARN] Cost: $${results.totalCost.toFixed(3)}`)
+
+  // Backup learning state (survives Railway redeploys via log persistence)
+  try {
+    const backupTotalRules = Object.values(stateAfter.learnedPatterns || {}).reduce(
+      (sum: number, cat: any) => sum + (cat.editing_rules?.length || 0), 0
+    )
+    if (backupTotalRules > 0) {
+      console.log(`[BACKUP] Learning state: ${(JSON.stringify(stateAfter).length / 1024).toFixed(1)}KB, ${backupTotalRules} rules`)
+      console.log(`[BACKUP] Recovery info: ${JSON.stringify({
+        timestamp: Date.now(),
+        totalRules: backupTotalRules,
+        totalVideos: stateAfter.totalVideosAnalyzed || 0,
+        sessions: stateAfter.learningMetrics?.totalSessions || 0,
+      })}`)
+    }
+  } catch (e: any) {
+    console.warn('[BACKUP] Failed:', e.message)
+  }
 
   // --- STEP 8: Update editor brain ---
   try {
@@ -9234,9 +9323,22 @@ function startTelegramBotListener() {
 
   async function pollUpdates() {
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 35000)
+
       const res = await fetch(
-        `https://api.telegram.org/bot${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`
+        `https://api.telegram.org/bot${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`,
+        { signal: controller.signal }
       )
+
+      clearTimeout(timeoutId)
+
+      if (!res.ok) {
+        console.warn(`[TELEGRAM BOT] Poll response: ${res.status}`)
+        setTimeout(pollUpdates, 10000)
+        return
+      }
+
       const data = await res.json() as any
 
       if (data.ok && data.result?.length > 0) {
@@ -9248,62 +9350,70 @@ function startTelegramBotListener() {
 
           const text = msg.text.trim().toLowerCase()
 
-          if (text === 'דוח' || text === 'report' || text === 'סטטוס' || text === 'status') {
-            console.log('[TELEGRAM BOT] Report requested')
-            await sendFullReport()
-          } else if (text === 'צא ללמוד' || text === 'למד' || text === 'learn') {
-            console.log('[TELEGRAM BOT] Manual learning triggered')
-            await sendTelegram('🚀 יוצא ללמוד עכשיו... (תקציב: $1)')
-            // Run learning in background
-            ;(async () => {
-              try {
-                await runServerLearning({ budget: 1.0 })
-              } catch (e: any) {
-                await sendTelegram(`❌ הלמידה נכשלה: ${e.message?.substring(0, 300)}`)
-              }
-            })()
-          } else if (text === 'שרת' || text === 'server' || text === 'ping') {
-            console.log('[TELEGRAM BOT] Server status requested')
-            const uptime = process.uptime()
-            const hours = Math.floor(uptime / 3600)
-            const minutes = Math.floor((uptime % 3600) / 60)
+          try {
+            if (text === 'דוח' || text === 'report' || text === 'סטטוס' || text === 'status') {
+              console.log('[TELEGRAM BOT] Report requested')
+              await sendFullReport()
+            } else if (text === 'צא ללמוד' || text === 'למד' || text === 'learn') {
+              console.log('[TELEGRAM BOT] Manual learning triggered (force mode)')
+              await sendTelegram('🚀 יוצא ללמוד עכשיו... (תקציב: $1)')
+              // Run learning in background with force: true to bypass 6-hour check
+              ;(async () => {
+                try {
+                  await runServerLearning({ budget: 1.0, force: true })
+                } catch (e: any) {
+                  await sendTelegram(`❌ הלמידה נכשלה: ${e.message?.substring(0, 300)}`)
+                }
+              })()
+            } else if (text === 'שרת' || text === 'server' || text === 'ping') {
+              console.log('[TELEGRAM BOT] Server status requested')
+              const uptime = process.uptime()
+              const hours = Math.floor(uptime / 3600)
+              const minutes = Math.floor((uptime % 3600) / 60)
 
-            const srvState = loadLearningState()
-            const totalRules = Object.values(srvState.learnedPatterns || {}).reduce(
-              (sum: number, cat: any) => sum + (cat.editing_rules?.length || 0), 0
-            )
+              const srvState = loadLearningState()
+              const totalRules = Object.values(srvState.learnedPatterns || {}).reduce(
+                (sum: number, cat: any) => sum + (cat.editing_rules?.length || 0), 0
+              )
 
-            const israelTime = new Date().toLocaleString('he-IL', {
-              timeZone: 'Asia/Jerusalem',
-              hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit',
-            })
+              const israelTime = new Date().toLocaleString('he-IL', {
+                timeZone: 'Asia/Jerusalem',
+                hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit',
+              })
 
-            await sendTelegram(
-              `🖥️ סטטוס שרת - ${israelTime}\n` +
-              `─────────────\n` +
-              `✅ שרת פעיל: ${hours}:${String(minutes).padStart(2, '0')} שעות\n` +
-              `📚 תובנות: ${totalRules}\n` +
-              `🎬 סרטונים שנותחו: ${srvState.totalVideosAnalyzed || 0}\n` +
-              `📅 למידה אחרונה: ${srvState.lastLearnDateIsrael || 'טרם'}\n` +
-              `⏰ למידה הבאה: ${getNextSessionInfo()}\n` +
-              `🧠 סשנים: ${srvState.learningMetrics?.totalSessions || 0}\n` +
-              `💰 היום: $${(srvState.dailyGptCost || 0).toFixed(3)}/$${DAILY_GPT_COST_LIMIT}\n` +
-              `💰 החודש: $${(srvState.monthlyGptCost || 0).toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}\n` +
-              `\nפקודות:\n` +
-              `  📊 דוח - דוח מלא\n` +
-              `  📈 סטטוס - סטטוס מהיר\n` +
-              `  🖥️ שרת - סטטוס שרת\n` +
-              `  🚀 צא ללמוד - למידה מיידית ($1)`
-            )
+              await sendTelegram(
+                `🖥️ סטטוס שרת - ${israelTime}\n` +
+                `─────────────\n` +
+                `✅ שרת פעיל: ${hours}:${String(minutes).padStart(2, '0')} שעות\n` +
+                `📚 תובנות: ${totalRules}\n` +
+                `🎬 סרטונים שנותחו: ${srvState.totalVideosAnalyzed || 0}\n` +
+                `📅 למידה אחרונה: ${srvState.lastLearnDateIsrael || 'טרם'}\n` +
+                `⏰ למידה הבאה: ${getNextSessionInfo()}\n` +
+                `🧠 סשנים: ${srvState.learningMetrics?.totalSessions || 0}\n` +
+                `💰 היום: $${(srvState.dailyGptCost || 0).toFixed(3)}/$${DAILY_GPT_COST_LIMIT}\n` +
+                `💰 החודש: $${(srvState.monthlyGptCost || 0).toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}\n` +
+                `\nפקודות:\n` +
+                `  📊 דוח - דוח מלא\n` +
+                `  📈 סטטוס - סטטוס מהיר\n` +
+                `  🖥️ שרת - סטטוס שרת\n` +
+                `  🚀 צא ללמוד - למידה מיידית ($1)`
+              )
+            }
+          } catch (cmdError: any) {
+            console.error('[TELEGRAM BOT] Command error:', cmdError.message)
           }
         }
       }
     } catch (e: any) {
-      console.warn('[TELEGRAM BOT] Poll error:', e.message)
+      if (e.name === 'AbortError') {
+        // Timeout is normal for long polling
+      } else {
+        console.warn('[TELEGRAM BOT] Poll error:', e.message?.substring(0, 100))
+      }
     }
 
-    // Poll again
-    setTimeout(pollUpdates, 5000)
+    // Always continue polling
+    setTimeout(pollUpdates, 3000)
   }
 
   console.log('[TELEGRAM BOT] Listening for commands (דוח / סטטוס / שרת / צא ללמוד)')
