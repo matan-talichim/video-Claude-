@@ -6530,12 +6530,19 @@ import { google } from 'googleapis'
 
 const LEARNING_STATE_FILE = path.join(__dirname, 'learning-state.json')
 
+// Budget constants
+const DAILY_GPT_COST_LIMIT = 1.0   // $1 per day
+const MONTHLY_GPT_COST_LIMIT = 30.0 // $30 per month
+const DAILY_GPT_CALLS_LIMIT = 50    // ~50 calls/day at ~$0.02/call
+
 function loadLearningState(): any {
   try {
     if (fs.existsSync(LEARNING_STATE_FILE)) {
       return JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, 'utf-8'))
     }
   } catch {}
+  // If file doesn't exist (fresh deploy), start with empty state
+  console.log('[LEARN] No learning state file found, starting fresh')
   return {
     lastLearnDate: 0,
     totalVideosAnalyzed: 0,
@@ -6543,10 +6550,78 @@ function loadLearningState(): any {
     missingFeatures: [],
     dailyYoutubeUnits: 0,
     dailyGptCalls: 0,
+    dailyGptCost: 0,
     dailyDate: '',
     monthlyGptCost: 0,
     monthlyDate: '',
+    expertise: {},
+    trendInsights: { activeTrends: [], expiredTrends: [], evergreenRules: [] },
+    learningMetrics: { totalSessions: 0 },
   }
+}
+
+// Estimate cost per GPT call based on tokens
+function estimateCallCost(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing: Record<string, {input: number, output: number}> = {
+    'gpt-5.4': { input: 0.005 / 1000, output: 0.015 / 1000 },
+    'gpt-4o': { input: 0.0025 / 1000, output: 0.01 / 1000 },
+  }
+  const p = pricing[model] || pricing['gpt-5.4']
+  return (inputTokens * p.input) + (outputTokens * p.output)
+}
+
+// Track cost after each GPT call
+function trackCost(state: any, model: string, usage: any): any {
+  const cost = estimateCallCost(model, usage?.prompt_tokens || 500, usage?.completion_tokens || 500)
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
+  const month = today.substring(0, 7)
+
+  if (state.dailyDate !== today) {
+    state.dailyGptCost = 0
+    state.dailyGptCalls = 0
+    state.dailyDate = today
+  }
+  if (state.monthlyDate !== month) {
+    state.monthlyGptCost = 0
+    state.monthlyDate = month
+  }
+
+  state.dailyGptCost = (state.dailyGptCost || 0) + cost
+  state.dailyGptCalls = (state.dailyGptCalls || 0) + 1
+  state.monthlyGptCost = (state.monthlyGptCost || 0) + cost
+
+  console.log(`[LEARN] Cost: $${cost.toFixed(4)} | Today: $${state.dailyGptCost.toFixed(3)}/$${DAILY_GPT_COST_LIMIT} | Month: $${state.monthlyGptCost.toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}`)
+  return state
+}
+
+// Check if budget allows more GPT calls
+function hasBudget(state: any): boolean {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
+  if (state.dailyDate !== today) return true // New day, reset
+
+  if ((state.dailyGptCost || 0) >= DAILY_GPT_COST_LIMIT) {
+    console.log(`[LEARN] Daily budget exhausted: $${state.dailyGptCost.toFixed(2)}/$${DAILY_GPT_COST_LIMIT}`)
+    return false
+  }
+  if ((state.dailyGptCalls || 0) >= DAILY_GPT_CALLS_LIMIT) {
+    console.log(`[LEARN] Daily call limit reached: ${state.dailyGptCalls}/${DAILY_GPT_CALLS_LIMIT}`)
+    return false
+  }
+  if ((state.monthlyGptCost || 0) >= MONTHLY_GPT_COST_LIMIT) {
+    console.log(`[LEARN] Monthly budget exhausted: $${state.monthlyGptCost.toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}`)
+    return false
+  }
+  return true
+}
+
+// Get next session info for display
+function getNextSessionInfo(): string {
+  const israelHour = parseInt(new Date().toLocaleString('en-US', {
+    timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false
+  }))
+  if (israelHour < 7) return 'היום 07:00'
+  if (israelHour < 19) return 'היום 19:00'
+  return 'מחר 07:00'
 }
 
 function saveLearningState(state: any) {
@@ -6699,10 +6774,10 @@ const LEARNING_CATEGORIES: Record<string, Array<{query: string, goal: string}>> 
 }
 
 // Daily rotation: pick 3 random categories per session
-function getSessionCategories(): Array<{category: string, query: string, goal: string}> {
+function getSessionCategories(count: number = 3): Array<{category: string, query: string, goal: string}> {
   const allCategories = Object.entries(LEARNING_CATEGORIES)
   const shuffled = allCategories.sort(() => Math.random() - 0.5)
-  const selected = shuffled.slice(0, 3)
+  const selected = shuffled.slice(0, count)
   return selected.map(([catName, queries]) => {
     const query = queries[Math.floor(Math.random() * queries.length)]
     return { category: catName, query: query.query, goal: query.goal }
@@ -7339,10 +7414,11 @@ async function sendLearningReport(state: any, results: any) {
   message += `  כללים נצחיים: ${(trends.evergreenRules || []).length}\n\n`
 
   // Costs
-  message += `💰 עלויות:\n`
+  message += `💰 תקציב:\n`
+  message += `  היום: $${(state.dailyGptCost || 0).toFixed(3)} / $${DAILY_GPT_COST_LIMIT.toFixed(2)}\n`
+  message += `  קריאות: ${state.dailyGptCalls || 0} / ${DAILY_GPT_CALLS_LIMIT}\n`
+  message += `  החודש: $${(state.monthlyGptCost || 0).toFixed(2)} / $${MONTHLY_GPT_COST_LIMIT.toFixed(0)}\n`
   message += `  YouTube API: ${state.dailyYoutubeUnits || 0} יחידות (היום)\n`
-  message += `  GPT: ${state.dailyGptCalls || 0} קריאות (היום)\n`
-  message += `  עלות חודשית: $${(state.monthlyGptCost || 0).toFixed(2)}\n`
 
   // Next session
   message += '\n' + '─'.repeat(30) + '\n'
@@ -7353,7 +7429,22 @@ async function sendLearningReport(state: any, results: any) {
   await sendTelegram(message)
 }
 
-async function runServerLearning() {
+async function runServerLearning(options?: { budget?: number }) {
+  const sessionBudget = options?.budget || 0.10
+  const maxGptCalls = Math.floor(sessionBudget / 0.02)
+  const numCategories = Math.min(5, Math.max(3, Math.ceil(maxGptCalls / 8)))
+
+  console.log(`[LEARN] Budget: $${sessionBudget} | Max GPT calls: ~${maxGptCalls} | Categories: ${numCategories}`)
+
+  if (options?.budget) {
+    await sendTelegram(
+      `📚 התחלתי ללמוד\n` +
+      `💰 תקציב: $${sessionBudget.toFixed(2)}\n` +
+      `🏷️ קטגוריות: ${numCategories}\n` +
+      `⏱️ זמן משוער: ${numCategories * 2}-${numCategories * 3} דקות`
+    )
+  }
+
   // Snapshot BEFORE learning
   const stateBefore = loadLearningState()
   const rulesBefore: Record<string, Set<string>> = {}
@@ -7391,16 +7482,16 @@ async function runServerLearning() {
     return
   }
 
-  // Check monthly cost
-  if (state.monthlyGptCost >= 5) {
-    console.log('[LEARN] Monthly $5 limit reached, skipping')
+  // Check budget
+  if (!hasBudget(state)) {
+    console.log('[LEARN] Budget limit reached, skipping')
     return
   }
 
   console.log('[LEARN] Starting learning session...')
 
   // Use diverse categories with random selection
-  const sessionCategories = getSessionCategories()
+  const sessionCategories = getSessionCategories(numCategories)
   const todayCategories = sessionCategories.map(sc => sc.category)
   const sessionGoals = sessionCategories.map(sc => sc.goal)
 
@@ -7442,7 +7533,7 @@ async function runServerLearning() {
     const { category, query: searchQuery, goal: sessionGoal } = sessionCategories[catIdx]
 
     // Check limits before each category
-    if (state.dailyYoutubeUnits >= 5000 || state.dailyGptCalls >= 15) {
+    if (state.dailyYoutubeUnits >= 5000 || !hasBudget(state)) {
       console.log('[LEARN] Daily limit reached, stopping')
       break
     }
@@ -7592,20 +7683,48 @@ Return JSON:
 }`
 
       if (!ytdlpAvailable) {
-        // Metadata-only analysis with deep prompt
-        if (state.dailyGptCalls < 15) {
+        // Thumbnail + metadata analysis (Railway fallback when yt-dlp unavailable)
+        if (hasBudget(state)) {
+          // Try to fetch thumbnails for top 2 videos
+          const thumbnailImages: Array<{base64: string; videoTitle: string}> = []
+          for (const video of videos.slice(0, 2)) {
+            try {
+              const thumbUrl = `https://img.youtube.com/vi/${video.id}/maxresdefault.jpg`
+              const thumbRes = await fetch(thumbUrl)
+              if (thumbRes.ok) {
+                const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
+                thumbnailImages.push({
+                  base64: thumbBuffer.toString('base64'),
+                  videoTitle: video.title,
+                })
+              }
+            } catch {}
+          }
+
+          const userContent: any[] = [
+            { type: 'text' as const, text: `Category: ${category}\nGoal: ${sessionGoal}\nVideos:\n${videos.slice(0, 5).map((v: any) => `- "${v.title}" (${v.views} views, ${v.likes} likes, tags: ${v.tags?.join(', ')})`).join('\n')}` },
+          ]
+
+          // Add thumbnails if available
+          thumbnailImages.forEach(thumb => {
+            userContent.push({
+              type: 'image_url' as const,
+              image_url: { url: `data:image/jpeg;base64,${thumb.base64}`, detail: 'low' as const },
+            })
+          })
+
           const synthRes = await ai.chat.completions.create({
             model: 'gpt-5.4',
             messages: [
-              { role: 'system', content: `You are a world-class video editor analyzing videos. Goal: ${sessionGoal}. Analyze based on metadata only. Return JSON: {"editing_rules":[{"rule":"Specific actionable rule with parameters","when_to_use":"when to apply","when_NOT_to_use":"when not to apply","applies_to":"all/social/marketing","confidence":0.7}],"trend_techniques":[{"technique":"specific technique","trend_name":"trend name","lifecycle":"rising/peak/declining","shelf_life_weeks":4,"adaptation_for_business":"business use"}],"evergreen_techniques":[{"technique":"technique","why_evergreen":"reason"}],"system_optimization":[{"idea":"improvement idea","why":"connection to learned insight","impact":"high/medium/low","category":"new_feature/improve_existing/automation/ai_quality","implementation_hint":"brief approach"}],"sop_update":"Updated SOP","patterns":{"hook":{"avg_seconds":2,"rule":"rule"},"pacing":{"avg_cuts":12,"rule":"rule"},"subtitles":{"style":"classic","rule":"rule","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":80,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"subtitle rule"}}}}` },
-              { role: 'user', content: `Category: ${category}\nGoal: ${sessionGoal}\nVideos (metadata only):\n${videos.slice(0, 5).map((v: any) => `- "${v.title}" (${v.views} views, ${v.likes} likes, tags: ${v.tags?.join(', ')})`).join('\n')}` }
+              { role: 'system', content: `You are a world-class video editor analyzing videos. Goal: ${sessionGoal}. Analyze based on ${thumbnailImages.length > 0 ? 'thumbnails and metadata' : 'metadata only'}. Return JSON: {"editing_rules":[{"rule":"Specific actionable rule with parameters","when_to_use":"when to apply","when_NOT_to_use":"when not to apply","applies_to":"all/social/marketing","confidence":0.7}],"trend_techniques":[{"technique":"specific technique","trend_name":"trend name","lifecycle":"rising/peak/declining","shelf_life_weeks":4,"adaptation_for_business":"business use"}],"evergreen_techniques":[{"technique":"technique","why_evergreen":"reason"}],"system_optimization":[{"idea":"improvement idea","why":"connection to learned insight","impact":"high/medium/low","category":"new_feature/improve_existing/automation/ai_quality","implementation_hint":"brief approach"}],"sop_update":"Updated SOP","patterns":{"hook":{"avg_seconds":2,"rule":"rule"},"pacing":{"avg_cuts":12,"rule":"rule"},"subtitles":{"style":"classic","rule":"rule","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":80,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"subtitle rule"}}}}` },
+              { role: 'user', content: userContent }
             ],
             response_format: { type: 'json_object' },
             max_completion_tokens: 2000,
           })
-          state.dailyGptCalls++
-          state.monthlyGptCost += 0.01
-          results.totalCost += 0.01
+          trackCost(state, 'gpt-5.4', synthRes.usage)
+          results.totalCost += estimateCallCost('gpt-5.4', synthRes.usage?.prompt_tokens || 500, synthRes.usage?.completion_tokens || 500)
+          state.totalVideosAnalyzed += thumbnailImages.length || 1
           try {
             const synthesis = JSON.parse(synthRes.choices[0]?.message?.content || '{}')
             if (synthesis.editing_rules) {
@@ -7635,7 +7754,7 @@ Return JSON:
               }
 
               results.categories[category] = {
-                videosAnalyzed: 0,
+                videosAnalyzed: thumbnailImages.length,
                 rulesLearned: added,
               }
             }
@@ -7645,7 +7764,7 @@ Return JSON:
       }
 
       for (const video of videos.slice(0, 2)) {
-        if (state.dailyGptCalls >= 15) break
+        if (!hasBudget(state)) break
 
         const tmpDir = path.join(__dirname, 'uploads', `viral_${Date.now()}`)
         try {
@@ -7689,9 +7808,8 @@ Return JSON:
           const analysis = JSON.parse(analysisRes.choices[0]?.message?.content || '{}')
           analysis.title = video.title
           analyses.push(analysis)
-          state.dailyGptCalls++
-          state.monthlyGptCost += 0.02
-          results.totalCost += 0.02
+          trackCost(state, 'gpt-5.4', analysisRes.usage)
+          results.totalCost += estimateCallCost('gpt-5.4', analysisRes.usage?.prompt_tokens || 500, analysisRes.usage?.completion_tokens || 500)
           state.totalVideosAnalyzed++
         } catch (e: any) {
           console.warn(`[LEARN] Video analysis failed: ${e.message}`)
@@ -7703,7 +7821,7 @@ Return JSON:
       if (analyses.length === 0) continue
 
       // --- STEP 4: Deep synthesis - pattern detection across videos ---
-      if (state.dailyGptCalls < 15) {
+      if (hasBudget(state)) {
         const videoAnalyses = analyses
         const synthesisPrompt = `You are a master video editor who has analyzed ${videoAnalyses.length} videos.
 Here are the individual analyses:
@@ -7792,9 +7910,8 @@ Return JSON:
         state.learnedPatterns[category].sop_update = patterns.sop_update
         state.learnedPatterns[category].learnedAt = Date.now()
         const rulesAdded = addRulesToCategory(state, category, patterns.editing_rules || [])
-        state.dailyGptCalls++
-        state.monthlyGptCost += 0.02
-        results.totalCost += 0.02
+        trackCost(state, 'gpt-5.4', synthRes.usage)
+        results.totalCost += estimateCallCost('gpt-5.4', synthRes.usage?.prompt_tokens || 500, synthRes.usage?.completion_tokens || 500)
 
         // Classify into expertise domains
         ;(patterns.editing_rules || []).forEach((rule: any) => {
@@ -7868,9 +7985,8 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
 
       const missing = JSON.parse(missingRes.choices[0]?.message?.content || '{}')
       state.missingFeatures = missing.missing_features || []
-      state.dailyGptCalls++
-      state.monthlyGptCost += 0.02
-      results.totalCost += 0.02
+      trackCost(state, 'gpt-5.4', missingRes.usage)
+      results.totalCost += estimateCallCost('gpt-5.4', missingRes.usage?.prompt_tokens || 500, missingRes.usage?.completion_tokens || 500)
       results.missingFeatures = state.missingFeatures.length
 
       if (state.missingFeatures.length > 0 && process.env.TELEGRAM_BOT_TOKEN) {
@@ -8049,6 +8165,43 @@ app.get('/api/learning/rules', (_req, res) => {
   })
 })
 
+// ==================== LEARNING STATUS ENDPOINT ====================
+
+app.get('/api/learning/status', (_req, res) => {
+  const state = loadLearningState()
+
+  const israelTime = new Date().toLocaleString('he-IL', {
+    timeZone: 'Asia/Jerusalem',
+    hour: '2-digit', minute: '2-digit',
+  })
+
+  const totalRules = Object.values(state.learnedPatterns || {}).reduce(
+    (sum: number, cat: any) => sum + (cat.editing_rules?.length || 0), 0
+  )
+
+  res.json({
+    status: 'running',
+    serverTime: new Date().toISOString(),
+    israelTime,
+    lastLearnDate: state.lastLearnDate ? new Date(state.lastLearnDate).toISOString() : null,
+    lastLearnDateIsrael: state.lastLearnDateIsrael,
+    totalVideosAnalyzed: state.totalVideosAnalyzed || 0,
+    totalRules,
+    totalSessions: state.learningMetrics?.totalSessions || 0,
+    telegramConfigured: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
+    nextSession: getNextSessionInfo(),
+    budget: {
+      dailyCost: state.dailyGptCost || 0,
+      dailyLimit: DAILY_GPT_COST_LIMIT,
+      dailyCalls: state.dailyGptCalls || 0,
+      dailyCallsLimit: DAILY_GPT_CALLS_LIMIT,
+      monthlyCost: state.monthlyGptCost || 0,
+      monthlyLimit: MONTHLY_GPT_COST_LIMIT,
+    },
+    uptime: process.uptime(),
+  })
+})
+
 // ==================== DAILY LEARNING SCHEDULER ====================
 
 function scheduleDailyLearning() {
@@ -8085,12 +8238,35 @@ function scheduleDailyLearning() {
 
   function hasLearnedThisSession(): boolean {
     try {
-      const state = JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, 'utf-8'))
+      const state = loadLearningState()
       if (!state.lastLearnDate) return false
       const hoursSince = (Date.now() - new Date(state.lastLearnDate).getTime()) / (1000 * 60 * 60)
       return hoursSince < 6
     } catch {
       return false
+    }
+  }
+
+  // On startup: check if we missed a session (Railway restart catch-up)
+  const israelHour = parseInt(new Date().toLocaleString('en-US', {
+    timeZone: ISRAEL_TIMEZONE, hour: 'numeric', hour12: false
+  }))
+
+  if (!hasLearnedThisSession()) {
+    const shouldRunNow = RUN_TIMES.some(rt => {
+      const hoursSince = israelHour - rt.hour
+      return hoursSince >= 0 && hoursSince < 6
+    })
+
+    if (shouldRunNow) {
+      console.log('[LEARN] Missed scheduled session after restart, running now (30s delay)...')
+      setTimeout(async () => {
+        try {
+          await runServerLearning()
+        } catch (e: any) {
+          console.error('[LEARN] Catch-up session failed:', e.message)
+        }
+      }, 30000)
     }
   }
 
@@ -8154,6 +8330,50 @@ function startTelegramBotListener() {
           if (text === 'דוח' || text === 'report' || text === 'סטטוס' || text === 'status') {
             console.log('[TELEGRAM BOT] Report requested')
             await sendFullReport()
+          } else if (text === 'צא ללמוד' || text === 'למד' || text === 'learn') {
+            console.log('[TELEGRAM BOT] Manual learning triggered')
+            await sendTelegram('🚀 יוצא ללמוד עכשיו... (תקציב: $1)')
+            // Run learning in background
+            ;(async () => {
+              try {
+                await runServerLearning({ budget: 1.0 })
+              } catch (e: any) {
+                await sendTelegram(`❌ הלמידה נכשלה: ${e.message?.substring(0, 300)}`)
+              }
+            })()
+          } else if (text === 'שרת' || text === 'server' || text === 'ping') {
+            console.log('[TELEGRAM BOT] Server status requested')
+            const uptime = process.uptime()
+            const hours = Math.floor(uptime / 3600)
+            const minutes = Math.floor((uptime % 3600) / 60)
+
+            const srvState = loadLearningState()
+            const totalRules = Object.values(srvState.learnedPatterns || {}).reduce(
+              (sum: number, cat: any) => sum + (cat.editing_rules?.length || 0), 0
+            )
+
+            const israelTime = new Date().toLocaleString('he-IL', {
+              timeZone: 'Asia/Jerusalem',
+              hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit',
+            })
+
+            await sendTelegram(
+              `🖥️ סטטוס שרת - ${israelTime}\n` +
+              `─────────────\n` +
+              `✅ שרת פעיל: ${hours}:${String(minutes).padStart(2, '0')} שעות\n` +
+              `📚 תובנות: ${totalRules}\n` +
+              `🎬 סרטונים שנותחו: ${srvState.totalVideosAnalyzed || 0}\n` +
+              `📅 למידה אחרונה: ${srvState.lastLearnDateIsrael || 'טרם'}\n` +
+              `⏰ למידה הבאה: ${getNextSessionInfo()}\n` +
+              `🧠 סשנים: ${srvState.learningMetrics?.totalSessions || 0}\n` +
+              `💰 היום: $${(srvState.dailyGptCost || 0).toFixed(3)}/$${DAILY_GPT_COST_LIMIT}\n` +
+              `💰 החודש: $${(srvState.monthlyGptCost || 0).toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}\n` +
+              `\nפקודות:\n` +
+              `  📊 דוח - דוח מלא\n` +
+              `  📈 סטטוס - סטטוס מהיר\n` +
+              `  🖥️ שרת - סטטוס שרת\n` +
+              `  🚀 צא ללמוד - למידה מיידית ($1)`
+            )
           }
         }
       }
@@ -8165,7 +8385,7 @@ function startTelegramBotListener() {
     setTimeout(pollUpdates, 5000)
   }
 
-  console.log('[TELEGRAM BOT] Listening for commands (דוח/סטטוס)')
+  console.log('[TELEGRAM BOT] Listening for commands (דוח / סטטוס / שרת / צא ללמוד)')
   pollUpdates()
 }
 
@@ -8298,13 +8518,13 @@ async function sendFullReport() {
     message += '\n'
 
     // Cost report
-    message += `💰 דוח עלויות:\n`
+    message += `💰 תקציב:\n`
     message += `  📅 היום (${state.dailyDate || '?'}):\n`
-    message += `    YouTube API: ${state.dailyYoutubeUnits || 0} / 2,500 יחידות\n`
-    message += `    GPT קריאות: ${state.dailyGptCalls || 0} / 15\n\n`
+    message += `    עלות: $${(state.dailyGptCost || 0).toFixed(3)} / $${DAILY_GPT_COST_LIMIT.toFixed(2)}\n`
+    message += `    קריאות: ${state.dailyGptCalls || 0} / ${DAILY_GPT_CALLS_LIMIT}\n`
+    message += `    YouTube API: ${state.dailyYoutubeUnits || 0} / 2,500 יחידות\n\n`
     message += `  📅 החודש (${state.monthlyDate || '?'}):\n`
-    message += `    עלות GPT: $${(state.monthlyGptCost || 0).toFixed(2)} / $5.00\n`
-    message += `    YouTube API: ${state.dailyYoutubeUnits || 0} יחידות (היום)\n\n`
+    message += `    עלות GPT: $${(state.monthlyGptCost || 0).toFixed(2)} / $${MONTHLY_GPT_COST_LIMIT.toFixed(0)}\n\n`
 
     // Missing features summary
     const missing = state.missingFeatures || []
@@ -8368,40 +8588,27 @@ app.listen(PORT, () => {
   }
 
   // Social Learning Agent
-  console.log('[LEARN] Social Learning Agent configured:')
+  console.log('[LEARN] Social Learning Agent: ✅ Active')
+  console.log(`[LEARN]   Environment: ${process.env.NODE_ENV || 'development'}`)
   console.log('[LEARN]   Schedule: 07:00 + 19:00 Israel time')
-  console.log('[LEARN]   Telegram: ' + (process.env.TELEGRAM_BOT_TOKEN ? '✅ Enabled' : '❌ Not configured'))
-  console.log('[LEARN]   Chat ID: ' + (process.env.TELEGRAM_CHAT_ID || 'NOT SET'))
+  console.log(`[LEARN]   Budget: $${DAILY_GPT_COST_LIMIT}/day, ${DAILY_GPT_CALLS_LIMIT} calls/day, $${MONTHLY_GPT_COST_LIMIT}/month`)
+  console.log(`[LEARN]   Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? '✅' : '❌'}`)
   console.log(`[LEARN]   Categories: ${Object.keys(LEARNING_CATEGORIES).length} diverse categories across 4 domains`)
-  logBrainStatus()
 
-  // Check if we missed a session
-  console.log('[LEARN] Checking if learning session was missed...')
-  if (!hasLearnedThisSessionGlobal()) {
-    const israelHour = parseInt(new Date().toLocaleString('en-US', {
-      timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false
-    }))
-
-    // If it's past 7 AM or past 7 PM Israel time and we haven't learned recently, run now
-    if (israelHour >= 7) {
-      console.log('[LEARN] Missed session, running now (30s delay)...')
-      setTimeout(() => {
-        runServerLearning().catch(e => {
-          console.error('[LEARN] Failed:', e.message)
-          sendTelegram(`❌ שגיאה בלמידה:\n${e.message?.substring(0, 500)}`).catch(() => {})
-        })
-      }, 30000)
-    } else {
-      console.log('[LEARN] Before 7:00 AM Israel time, will wait for scheduled time')
-    }
-  } else {
-    console.log('[LEARN] Already learned this session (within 6 hours)')
+  // Check yt-dlp availability
+  try {
+    execSync('which yt-dlp', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] })
+    console.log('[LEARN]   yt-dlp: ✅ Available (full video analysis)')
+  } catch {
+    console.log('[LEARN]   yt-dlp: ❌ Not available (thumbnail-only analysis)')
   }
 
-  // Schedule learning at 7:00 + 19:00 Israel time
+  logBrainStatus()
+
+  // Schedule learning at 7:00 + 19:00 Israel time (handles restart catch-up internally)
   scheduleDailyLearning()
 
   // Start Telegram bot listener for commands
-  console.log('[TELEGRAM BOT] Commands: דוח / סטטוס / report')
+  console.log('[TELEGRAM BOT] Commands: דוח / סטטוס / שרת / צא ללמוד / report')
   startTelegramBotListener()
 })
