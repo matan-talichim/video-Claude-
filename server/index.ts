@@ -5539,6 +5539,17 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
     const outputFiles: any[] = []
 
+    // Step tracking for process completion summary
+    let brollInserted = 0
+    let anglesApplied = 0
+    let blurApplied = false
+    let zoomsApplied = 0
+    let audioCleanApplied = false
+    let musicApplied = false
+    let subtitlesApplied = false
+    let lowerThirdsApplied = 0
+    let graphicsApplied = 0
+
     // ============================================
     // STEP B: GET SOURCE VIDEO INFO
     // ============================================
@@ -5931,6 +5942,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
           if (fs.existsSync(output) && fs.statSync(output).size > 50000) {
             currentFile = output
+            brollInserted++
             console.log(`[B-ROLL] Clip ${i} inserted at ${insertAt}s`)
           }
         } catch (e: any) {
@@ -6040,6 +6052,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
                 { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
               )
               currentFile = camFile
+              anglesApplied = mcSegments.length
               console.log('[PROCESS] Step 2 done: Multi-cam applied (' + mcSegments.length + ' segments)')
             } catch (concatErr: any) {
               console.warn('[MULTI-CAM] Concat failed:', concatErr.stderr?.toString().substring(0, 300))
@@ -6081,6 +6094,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
         if (fs.existsSync(blurOutput) && fs.statSync(blurOutput).size > 50000) {
           currentFile = blurOutput
+          blurApplied = true
           console.log('[PROCESS] Step H done: Background blur / DOF applied')
         } else {
           console.warn('[PROCESS] Step H: Output invalid, keeping previous')
@@ -6097,6 +6111,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
           if (fs.existsSync(blurOutput) && fs.statSync(blurOutput).size > 50000) {
             currentFile = blurOutput
+            blurApplied = true
             console.log('[PROCESS] Step H done: Subtle DOF effect applied')
           }
         } catch {
@@ -6171,7 +6186,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           return {
             start: relativeStart,
             duration: z.duration || 3,
-            scale: z.scale || 1.05,
+            scale: z.scale || z.intensity || 1.05,
             direction: z.direction || 'in',
           }
         })
@@ -6210,6 +6225,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
             fs.copyFileSync(zoomCurrent, zoomFile)
           }
           currentFile = zoomFile
+          zoomsApplied = limitedZooms.length
           console.log('[PROCESS] Step 3.5 done: Zoom effects applied')
         } else {
           console.log('[PROCESS] Step 3.5: All zoom effects failed, continuing without')
@@ -6260,6 +6276,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
             { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
           )
           currentFile = audioFile
+          audioCleanApplied = true
+          musicApplied = true
           console.log('[PROCESS] Step 4 done: Audio processed with music + sidechain ducking')
         } else {
           // No music file - just clean the voice
@@ -6268,6 +6286,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
             { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
           )
           currentFile = audioFile
+          audioCleanApplied = true
           console.log('[PROCESS] Step 4 done: Audio cleaned (no music)')
         }
       } catch (e: any) {
@@ -6288,6 +6307,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
         )
         currentFile = audioFile
+        audioCleanApplied = true
         console.log('[PROCESS] Step 4 done: Audio cleaned')
       } catch (e: any) {
         console.log('[PROCESS] Audio clean failed, continuing:', e.message?.slice(0, 100))
@@ -6318,6 +6338,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           currentFile, segments, cuts, animationStyle || 'karaoke',
           uploadsDir, ffmpegPath, timestamp, filesToCleanup
         )
+        subtitlesApplied = true
         console.log('[PROCESS] Step 5 done: Animated subtitles added')
       } catch (e: any) {
         console.warn('[PROCESS] Animated subtitles failed, falling back to standard:', e.stderr?.toString().substring(0, 300) || e.message?.slice(0, 200))
@@ -6336,6 +6357,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
             { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           currentFile = subFile
+          subtitlesApplied = true
           console.log('[PROCESS] Step 5 done: Standard subtitles fallback')
         } catch (e2: any) {
           console.warn('[PROCESS] Standard ASS fallback also failed:', e2.stderr?.toString().substring(0, 300))
@@ -6363,6 +6385,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
         )
         currentFile = subFile
+        subtitlesApplied = true
         console.log('[PROCESS] Step 5 done: Styled subtitles added')
       } catch (e: any) {
         console.warn('[PROCESS] ASS subtitles filter failed:', e.stderr?.toString().substring(0, 300))
@@ -6375,6 +6398,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           )
           currentFile = subFile
           assWorked = true
+          subtitlesApplied = true
           console.log('[PROCESS] Step 5 done: ASS filter subtitles added')
         } catch (e1: any) {
           console.warn('[PROCESS] ASS filter also failed:', e1.stderr?.toString().substring(0, 200))
@@ -6410,6 +6434,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
                 { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
               )
               currentFile = subFile
+              subtitlesApplied = true
               console.log('[PROCESS] Step 5 done: SRT fallback subtitles added')
             }
           } catch (srtErr: any) {
@@ -6459,6 +6484,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
                 if (dtCurrent !== currentFile) {
                   fs.copyFileSync(dtCurrent, subFile)
                   currentFile = subFile
+                  subtitlesApplied = true
                   console.log('[PROCESS] Step 5 done: Drawtext fallback subtitles added')
                 }
               }
@@ -6555,6 +6581,7 @@ ${dialogueLines.join('\n')}
 
         if (ltApplied) {
           currentFile = lowerFile
+          lowerThirdsApplied = speakers.length
           console.log('[PROCESS] Step 6 done: Speaker names added (ASS)')
         } else {
           console.log('[PROCESS] Step 6: ASS lower thirds failed, skipping')
@@ -6655,6 +6682,7 @@ ${gfxDialogueLines.join('\n')}
 
         if (gfxApplied) {
           currentFile = gfxFile
+          graphicsApplied = graphics.length
           console.log('[PROCESS] Step 7 done: Graphics overlays added (ASS)')
         } else {
           console.log('[PROCESS] Step 7: ASS graphics failed, skipping')
@@ -6670,6 +6698,28 @@ ${gfxDialogueLines.join('\n')}
     } else {
       console.log('[PROCESS] Step 7 skipped: No graphics in plan')
     }
+
+    // ============================================
+    // PROCESS COMPLETE SUMMARY
+    // ============================================
+    const cutRanges = cuts
+    console.log('========== PROCESS COMPLETE ==========')
+    console.log(`Input: ${path.basename(sourceFile)} (${sourceDuration.toFixed(1)}s)`)
+    console.log(`Output: ${path.basename(currentFile)} (${(fs.statSync(currentFile).size/1024/1024).toFixed(1)}MB)`)
+    console.log(`Steps executed:`)
+    console.log(`  Clean transcript: ${job?.transcript?.cleaningSummary ? 'YES - removed ' + (job.transcript.cleaningSummary.removed || 0) : 'NO'}`)
+    console.log(`  Presenter filter: ${mainPresenter || 'NONE'} (${cutRanges?.length || 0} cut ranges)`)
+    console.log(`  B-Roll inserted: ${brollInserted} clips`)
+    console.log(`  Camera angles: ${anglesApplied}`)
+    console.log(`  Background blur: ${blurApplied ? 'YES' : 'NO'}`)
+    console.log(`  Color grade: ${planColorGrade || 'NONE'}`)
+    console.log(`  Zooms: ${zoomsApplied}`)
+    console.log(`  Audio cleaned: ${audioCleanApplied ? 'YES' : 'NO'}`)
+    console.log(`  Music mixed: ${musicApplied ? 'YES' : 'NO'}`)
+    console.log(`  Subtitles: ${subtitlesApplied ? 'YES' : 'NO'} (${filteredSubtitleSegments?.length || 0} lines)`)
+    console.log(`  Lower thirds: ${lowerThirdsApplied}`)
+    console.log(`  Graphics: ${graphicsApplied}`)
+    console.log('======================================')
 
     // ============================================
     // STEP 8: EXPORT FOR EACH PLATFORM (SMART FRAMING)
@@ -6817,11 +6867,20 @@ ${gfxDialogueLines.join('\n')}
     // Cleanup speaker samples
     cleanupSpeakerSamples(uploadsDir)
 
+    // Calculate quality score for platform export
+    const { score: qualityScore, report: qualityReport } = calculateQualityScore(job, currentFile, {
+      cuts, planZooms, filteredSubtitleSegments, brollAssets, musicUrl,
+      planColorGrade, mainPresenter, planCameraAngles,
+    })
+
     console.log('[PROCESS] Done! Created', outputFiles.length, 'files with professional effects')
 
     res.json({
       success: true,
       files: outputFiles,
+      qualityScore,
+      qualityReport,
+      processingTime: Date.now() - timestamp,
       message: `נוצרו ${outputFiles.length} קבצים מקצועיים`,
     })
   } catch (error: any) {
