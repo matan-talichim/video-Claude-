@@ -8,6 +8,7 @@ import { execSync } from 'child_process'
 import { createRequire } from 'module'
 import dotenv from 'dotenv'
 import { GoogleGenAI } from '@google/genai'
+import { AssemblyAI } from 'assemblyai'
 
 // Load .env from project root
 const __filename = fileURLToPath(import.meta.url)
@@ -31,6 +32,11 @@ function getGemini() {
   if (!key) return null
   return new GoogleGenAI({ apiKey: key })
 }
+
+// AssemblyAI client (transcription + speaker diarization)
+const assemblyai = new AssemblyAI({
+  apiKey: process.env.ASSEMBLYAI_API_KEY || '',
+})
 
 const app = express()
 const PORT = 3001
@@ -82,6 +88,12 @@ app.use('/uploads', express.static(uploadsDir, {
 app.get('/api/status', async (_req, res) => {
   const status = {
     openai: { connected: !!process.env.OPENAI_API_KEY, chatModel: 'gpt-5.4', transcribeModel: 'gpt-4o-transcribe-diarize', features: ['Chat (GPT-5.4)', 'Transcribe (Diarize)', 'DALL-E', 'Whisper'] },
+    assemblyai: {
+      connected: !!process.env.ASSEMBLYAI_API_KEY,
+      provider: 'AssemblyAI',
+      model: 'Universal-2 + Speaker Diarization',
+      note: process.env.ASSEMBLYAI_API_KEY ? 'Premium diarization active' : 'Not configured - using GPT-4o fallback',
+    },
     elevenlabs: { connected: !!process.env.ELEVENLABS_API_KEY },
     deepl: { connected: !!process.env.DEEPL_API_KEY },
     gemini: { connected: !!process.env.GEMINI_API_KEY, features: ['Nano Banana', 'Veo 3.1'] },
@@ -211,6 +223,122 @@ function applySubtitleFilter(
 
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
   console.log('=== TRANSCRIBE HANDLER V2 ===')
+
+  // If AssemblyAI is configured, use it for better diarization
+  if (process.env.ASSEMBLYAI_API_KEY && req.file) {
+    try {
+      const inputPath = req.file.path
+      const timestamp = Date.now()
+
+      console.log('[TRANSCRIBE] Using AssemblyAI for:', req.file.originalname, (req.file.size / 1024 / 1024).toFixed(1) + 'MB')
+
+      // Extract audio as MP3
+      const mp3Path = inputPath.replace(/\.[^.]+$/, '') + '_audio.mp3'
+      const ffmpeg = getFFmpeg()
+      try {
+        execSync(`"${ffmpeg}" -i "${inputPath}" -vn -c:a libmp3lame -b:a 128k -ar 16000 -ac 1 "${mp3Path}" -y`, {
+          timeout: 60000, maxBuffer: 10 * 1024 * 1024,
+        })
+      } catch {
+        // Use original file if extraction fails
+      }
+
+      const fileToUpload = fs.existsSync(mp3Path) ? mp3Path : inputPath
+
+      console.log('[TRANSCRIBE] Sending to AssemblyAI (transcription + speaker diarization)...')
+
+      const transcript = await assemblyai.transcripts.transcribe({
+        audio: fileToUpload,
+        speaker_labels: true,
+        language_code: 'he',
+        punctuate: true,
+        format_text: true,
+      })
+
+      if (transcript.status === 'error') {
+        throw new Error(transcript.error || 'Transcription failed')
+      }
+
+      console.log(`[TRANSCRIBE] AssemblyAI done: ${transcript.words?.length || 0} words, ${transcript.utterances?.length || 0} utterances`)
+
+      const utterances = transcript.utterances || []
+
+      // Build segments from utterances
+      const rawSegments = utterances.map((utt: any, i: number) => ({
+        id: i,
+        start: utt.start / 1000,
+        end: utt.end / 1000,
+        text: utt.text,
+        speaker: `דובר ${utt.speaker}`,
+        words: (utt.words || []).map((w: any) => ({
+          word: w.text,
+          start: w.start / 1000,
+          end: w.end / 1000,
+        })),
+      }))
+
+      // Calculate speaker times and rename to sequential numbers
+      const speakerTimes: Record<string, number> = {}
+      rawSegments.forEach((seg: any) => {
+        speakerTimes[seg.speaker] = (speakerTimes[seg.speaker] || 0) + (seg.end - seg.start)
+      })
+
+      const sortedSpeakerEntries = Object.entries(speakerTimes)
+        .sort((a, b) => (b[1] as number) - (a[1] as number))
+
+      const speakerRenameMap: Record<string, string> = {}
+      sortedSpeakerEntries.forEach(([speaker], i) => {
+        speakerRenameMap[speaker] = `דובר ${i + 1}`
+      })
+
+      const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
+      const segments = rawSegments.map((seg: any) => ({
+        ...seg,
+        speaker: speakerRenameMap[seg.speaker] || seg.speaker,
+        speakerId: sortedSpeakerEntries.findIndex(([s]) => s === seg.speaker) + 1,
+      }))
+
+      const speakers = sortedSpeakerEntries.map(([speaker], i) => ({
+        id: i + 1,
+        name: speakerRenameMap[speaker] || speaker,
+        color: speakerColors[i % speakerColors.length],
+      }))
+
+      let duration = segments.length > 0 ? Math.max(...segments.map((s: any) => s.end || 0)) : 0
+      if (duration === 0 && inputPath) {
+        try {
+          const ffprobePath = ffmpeg === 'ffmpeg' ? 'ffprobe' : ffmpeg.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+          const probeResult = execSync(
+            `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${inputPath}"`,
+            { timeout: 30000 }
+          ).toString().trim()
+          duration = parseFloat(probeResult) || 0
+        } catch {}
+      }
+
+      console.log('[TRANSCRIBE] Done:', segments.length, 'segments,', speakers.length, 'speakers, model: assemblyai')
+      console.log(`[TRANSCRIBE] Confidence: ${((transcript.confidence || 0) * 100).toFixed(1)}%`)
+
+      // Cleanup
+      try { fs.unlinkSync(inputPath) } catch {}
+      try { if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path) } catch {}
+
+      return res.json({
+        text: transcript.text || '',
+        duration,
+        language: 'he',
+        segments,
+        speakers,
+        model: 'assemblyai',
+        confidence: transcript.confidence || 0,
+      })
+    } catch (assemblyErr: any) {
+      console.warn('[TRANSCRIBE] AssemblyAI failed, falling back to GPT-4o:', assemblyErr.message)
+      // Fall through to GPT-4o logic below
+    }
+  }
+
+  // GPT-4o fallback (original logic)
   let inputPath = ''
   let mp3Path = ''
 
@@ -4238,7 +4366,10 @@ app.post('/api/upload-temp', upload.single('file'), (req, res) => {
 
 // POST /api/auto-editor/transcribe — Proxy transcription for auto-editor
 // Supports: local server URLs (http://localhost:3001/uploads/...) and remote URLs (R2, etc.)
-app.post('/api/auto-editor/transcribe', async (req, res) => {
+// Uses AssemblyAI for premium speaker diarization when configured, falls back to GPT-4o
+
+// GPT-4o fallback for auto-editor transcription
+async function handleGPTAutoTranscribe(req: any, res: any) {
   try {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
@@ -4246,19 +4377,17 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
     const { fileUrl } = req.body
     if (!fileUrl) return res.status(400).json({ message: 'חסר fileUrl' })
 
-    console.log('[AUTO-TRANSCRIBE] Processing:', fileUrl)
+    console.log('[AUTO-TRANSCRIBE-GPT] Processing:', fileUrl)
 
     let filePath: string
     let isTemp = false
 
     if (fileUrl.startsWith(`http://localhost:${PORT}/uploads/`) || fileUrl.startsWith('/uploads/')) {
-      // LOCAL FILE — already on server, resolve to disk path
       const filename = path.basename(new URL(fileUrl, `http://localhost:${PORT}`).pathname)
       filePath = path.join(uploadsDir, filename)
-      console.log('[AUTO-TRANSCRIBE] Local file:', filePath)
+      console.log('[AUTO-TRANSCRIBE-GPT] Local file:', filePath)
     } else if (fileUrl.startsWith('http')) {
-      // REMOTE URL (R2 or other) — download first
-      console.log('[AUTO-TRANSCRIBE] Downloading from remote URL...')
+      console.log('[AUTO-TRANSCRIBE-GPT] Downloading from remote URL...')
       const fileResponse = await fetch(fileUrl)
       if (!fileResponse.ok) {
         return res.status(400).json({ message: `שגיאה בהורדת הקובץ: ${fileResponse.statusText}` })
@@ -4275,9 +4404,8 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       return res.status(404).json({ message: 'הקובץ לא נמצא בשרת' })
     }
 
-    console.log('[AUTO-TRANSCRIBE] File path:', filePath, '| Size:', (fs.statSync(filePath).size / 1024 / 1024).toFixed(1), 'MB')
+    console.log('[AUTO-TRANSCRIBE-GPT] File path:', filePath, '| Size:', (fs.statSync(filePath).size / 1024 / 1024).toFixed(1), 'MB')
 
-    // Extract audio as compressed MP3
     const mp3Path = filePath.replace(/\.[^.]+$/, '') + '_audio.mp3'
     const ffmpeg = getFFmpeg()
     try {
@@ -4291,9 +4419,8 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
     const audioPath = fs.existsSync(mp3Path) ? mp3Path : filePath
 
-    console.log('[AUTO-TRANSCRIBE] Sending to gpt-4o-transcribe-diarize...')
+    console.log('[AUTO-TRANSCRIBE-GPT] Sending to gpt-4o-transcribe-diarize...')
 
-    // Transcribe with diarize model (fallback chain)
     let transcription: any
     let usedModel = 'gpt-4o-transcribe-diarize'
     try {
@@ -4305,7 +4432,7 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
         chunking_strategy: 'auto',
       } as any)
     } catch (diarizeErr: any) {
-      console.warn('[AUTO-TRANSCRIBE] Diarize failed, falling back:', diarizeErr.message)
+      console.warn('[AUTO-TRANSCRIBE-GPT] Diarize failed, falling back:', diarizeErr.message)
       usedModel = 'gpt-4o-transcribe (fallback)'
       try {
         transcription = await ai.audio.transcriptions.create({
@@ -4326,10 +4453,8 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       }
     }
 
-    // Clean up mp3 temp file (keep source for speaker sample extraction below)
     if (fs.existsSync(mp3Path)) try { fs.unlinkSync(mp3Path) } catch {}
 
-    // Map speaker IDs to Hebrew names
     const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
     const speakerMap: Record<string, string> = {}
     let speakerCount = 0
@@ -4351,16 +4476,10 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       name, color: speakerColors[i % speakerColors.length],
     }))
 
-    // Calculate duration from segments (gpt-4o-transcribe-diarize may not return top-level duration)
     let totalDuration = transcription.duration || 0
-
-    // Method 1: Use the last segment's end time
     if (totalDuration === 0 && segments.length > 0) {
       totalDuration = Math.max(...segments.map((s: any) => s.end || 0))
-      if (totalDuration > 0) console.log('[AUTO-TRANSCRIBE] Duration from segments:', totalDuration)
     }
-
-    // Method 2: Use ffprobe to get exact duration
     if (totalDuration === 0) {
       try {
         const ffprobePath = getFFmpeg().replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
@@ -4369,19 +4488,12 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
           { timeout: 30000 }
         ).toString().trim()
         totalDuration = parseFloat(probeResult) || 0
-        if (totalDuration > 0) console.log('[AUTO-TRANSCRIBE] Duration from ffprobe:', totalDuration)
-      } catch (e) {
-        console.warn('[AUTO-TRANSCRIBE] ffprobe failed, estimating from segments')
-      }
+      } catch {}
     }
-
-    // Method 3: Fallback - estimate from segment count (~3 seconds per segment)
     if (totalDuration === 0 && segments.length > 0) {
       totalDuration = segments.length * 3
-      console.log('[AUTO-TRANSCRIBE] Estimated duration:', totalDuration)
     }
 
-    // Identify speakers - return ALL speakers sorted by time so UI can allow manual selection
     const speakerTimes: Record<string, number> = {}
     segments.forEach((seg: any) => {
       const speaker = seg.speaker || 'unknown'
@@ -4389,40 +4501,30 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       speakerTimes[speaker] += ((seg.end || 0) - (seg.start || 0))
     })
 
-    // Sort speakers by time (most talking first) but don't assume most-talking = presenter
     const sortedSpeakers = Object.entries(speakerTimes)
       .sort(([, a], [, b]) => (b as number) - (a as number))
       .map(([speaker, time]) => ({ speaker, time: Math.round((time as number) * 10) / 10 }))
 
-    // Temporarily default to most-talking speaker — will be overridden by identify-presenter endpoint
-    // which cross-references visual analysis with speaker diarization
     const mainSpeaker = sortedSpeakers[0]?.speaker || segments[0]?.speaker || 'unknown'
 
-    console.log('[AUTO-TRANSCRIBE] All speakers:', JSON.stringify(sortedSpeakers))
-    console.log('[AUTO-TRANSCRIBE] Preliminary main speaker (most talking):', mainSpeaker, '(will be refined by visual cross-reference)')
-
-    // Mark each segment with isPresenter flag (preliminary, will be updated after visual analysis)
     segments.forEach((seg: any) => {
       seg.isPresenter = matchesSpeaker(seg.speaker, mainSpeaker)
     })
 
-    console.log('[AUTO-TRANSCRIBE] Done:', segments.length, 'segments,', speakerCount, 'speakers,', totalDuration.toFixed(1), 'sec, model:', usedModel)
+    console.log('[AUTO-TRANSCRIBE-GPT] Done:', segments.length, 'segments,', speakerCount, 'speakers,', totalDuration.toFixed(1), 'sec, model:', usedModel)
 
-    // Extract audio samples for each speaker (for UI preview)
     const speakerSamples: Record<string, string> = {}
     const uniqueSpeakersForSample = [...new Set(segments.map((s: any) => s.speaker))].filter(Boolean) as string[]
     const sampleTimestamp = Date.now()
     const ffmpegForSamples = getFFmpeg()
 
     for (const speaker of uniqueSpeakersForSample) {
-      // Find the LONGEST segment for this speaker (best sample)
       const speakerSegments = segments
         .filter((s: any) => s.speaker === speaker)
         .sort((a: any, b: any) => (b.end - b.start) - (a.end - a.start))
 
       if (speakerSegments.length === 0) continue
 
-      // Take the longest segment, but cap at 5 seconds
       const bestSegment = speakerSegments[0]
       const sampleStart = bestSegment.start
       const sampleDuration = Math.min(bestSegment.end - bestSegment.start, 5)
@@ -4438,14 +4540,10 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
         if (fs.existsSync(sampleFile) && fs.statSync(sampleFile).size > 1000) {
           const sampleUrl = `http://localhost:${PORT}/uploads/${path.basename(sampleFile)}`
           speakerSamples[speaker] = sampleUrl
-          console.log(`[TRANSCRIBE] Audio sample for ${speaker}: ${sampleDuration.toFixed(1)}s from ${sampleStart.toFixed(1)}s`)
         }
-      } catch (e: any) {
-        console.warn(`[TRANSCRIBE] Failed to extract sample for ${speaker}:`, e.message?.substring(0, 100))
-      }
+      } catch {}
     }
 
-    // Clean up temp source file now that samples are extracted
     if (isTemp && fs.existsSync(filePath)) try { fs.unlinkSync(filePath) } catch {}
 
     res.json({
@@ -4464,8 +4562,246 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       model: usedModel,
     })
   } catch (err: any) {
-    console.error('[AUTO-TRANSCRIBE ERROR]', err.message)
+    console.error('[AUTO-TRANSCRIBE-GPT ERROR]', err.message)
     res.status(500).json({ message: 'שגיאה בתמלול: ' + err.message })
+  }
+}
+
+app.post('/api/auto-editor/transcribe', async (req, res) => {
+  const { fileUrl } = req.body
+  const timestamp = Date.now()
+
+  console.log('[TRANSCRIBE] Starting with AssemblyAI...')
+  console.log('[TRANSCRIBE] File:', fileUrl)
+
+  if (!process.env.ASSEMBLYAI_API_KEY) {
+    console.error('[TRANSCRIBE] ASSEMBLYAI_API_KEY not set, falling back to GPT-4o')
+    return handleGPTAutoTranscribe(req, res)
+  }
+
+  try {
+    if (!fileUrl) return res.status(400).json({ message: 'חסר fileUrl' })
+
+    // Step 1: Get the local file path
+    let localFilePath = ''
+    let isTemp = false
+
+    if (fileUrl.startsWith(`http://localhost:${PORT}/uploads/`) || fileUrl.startsWith('/uploads/')) {
+      const filename = path.basename(new URL(fileUrl, `http://localhost:${PORT}`).pathname)
+      localFilePath = path.join(uploadsDir, filename)
+    } else if (fileUrl.startsWith('http')) {
+      console.log('[TRANSCRIBE] Downloading from remote URL...')
+      const fileResponse = await fetch(fileUrl)
+      if (!fileResponse.ok) {
+        return res.status(400).json({ message: `שגיאה בהורדת הקובץ: ${fileResponse.statusText}` })
+      }
+      const fileBuffer = Buffer.from(await fileResponse.arrayBuffer())
+      localFilePath = path.join(uploadsDir, `temp-${timestamp}-download.mp4`)
+      fs.writeFileSync(localFilePath, fileBuffer)
+      isTemp = true
+    } else {
+      return res.status(400).json({ message: 'פורמט URL לא תקין: ' + fileUrl })
+    }
+
+    if (!fs.existsSync(localFilePath)) {
+      return res.status(400).json({ error: 'File not found: ' + localFilePath })
+    }
+
+    const fileSize = (fs.statSync(localFilePath).size / (1024 * 1024)).toFixed(1)
+    console.log(`[TRANSCRIBE] File: ${localFilePath} | Size: ${fileSize}MB`)
+
+    // Step 2: Extract audio from video (AssemblyAI works best with audio files)
+    const audioPath = path.join(uploadsDir, `audio_extract_${timestamp}.mp3`)
+
+    try {
+      const ffmpeg = getFFmpeg()
+      execSync(
+        `"${ffmpeg}" -i "${localFilePath}" -vn -c:a libmp3lame -b:a 128k -ar 16000 -ac 1 "${audioPath}" -y`,
+        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+      )
+      console.log(`[TRANSCRIBE] Audio extracted: ${(fs.statSync(audioPath).size / (1024 * 1024)).toFixed(1)}MB`)
+    } catch (e: any) {
+      console.warn('[TRANSCRIBE] Audio extraction failed, using original file:', e.message?.substring(0, 100))
+    }
+
+    const fileToUpload = fs.existsSync(audioPath) ? audioPath : localFilePath
+
+    // Step 3: Transcribe with AssemblyAI (transcription + diarization in one call)
+    console.log('[TRANSCRIBE] Sending to AssemblyAI (transcription + speaker diarization)...')
+
+    const transcript = await assemblyai.transcripts.transcribe({
+      audio: fileToUpload,
+      speaker_labels: true,
+      language_code: 'he',
+      punctuate: true,
+      format_text: true,
+    })
+
+    if (transcript.status === 'error') {
+      console.error('[TRANSCRIBE] AssemblyAI error:', transcript.error)
+      throw new Error(transcript.error || 'Transcription failed')
+    }
+
+    console.log(`[TRANSCRIBE] AssemblyAI done: ${transcript.words?.length || 0} words, ${transcript.utterances?.length || 0} utterances`)
+
+    // Step 4: Convert AssemblyAI format to our format
+    const utterances = transcript.utterances || []
+    const words = transcript.words || []
+
+    // Build segments from utterances (each utterance = one speaker's continuous speech)
+    const segments = utterances.map((utt: any, i: number) => ({
+      id: i,
+      start: utt.start / 1000,
+      end: utt.end / 1000,
+      text: utt.text,
+      speaker: `דובר ${utt.speaker}`,
+      words: (utt.words || []).map((w: any) => ({
+        word: w.text,
+        start: w.start / 1000,
+        end: w.end / 1000,
+        confidence: w.confidence,
+        speaker: `דובר ${w.speaker}`,
+      })),
+    }))
+
+    // Step 5: Calculate speaker times
+    const speakerTimes: Record<string, number> = {}
+    segments.forEach((seg: any) => {
+      const speaker = seg.speaker
+      speakerTimes[speaker] = (speakerTimes[speaker] || 0) + (seg.end - seg.start)
+    })
+
+    // Sort speakers by time (most speaking first)
+    const sortedSpeakers = Object.entries(speakerTimes)
+      .sort((a, b) => (b[1] as number) - (a[1] as number))
+      .map(([speaker, time]) => ({
+        speaker,
+        time: Math.round((time as number) * 10) / 10,
+      }))
+
+    const uniqueSpeakers = [...new Set(segments.map((s: any) => s.speaker))]
+    const totalDuration = segments.length > 0
+      ? segments[segments.length - 1].end
+      : 0
+
+    console.log(`[TRANSCRIBE] Speakers: ${uniqueSpeakers.length}`)
+    console.log('[TRANSCRIBE] Speaker times:', speakerTimes)
+    console.log(`[TRANSCRIBE] Total duration: ${totalDuration.toFixed(1)}s`)
+
+    // Step 6: Rename speakers to sequential Hebrew names (דובר 1, דובר 2, etc.)
+    const speakerRenameMap: Record<string, string> = {}
+    sortedSpeakers.forEach((s, i) => {
+      speakerRenameMap[s.speaker] = `דובר ${i + 1}`
+    })
+
+    const renamedSegments = segments.map((seg: any) => ({
+      ...seg,
+      speaker: speakerRenameMap[seg.speaker] || seg.speaker,
+      isPresenter: false,
+      words: seg.words?.map((w: any) => ({
+        ...w,
+        speaker: speakerRenameMap[w.speaker] || w.speaker,
+      })),
+    }))
+
+    const renamedSpeakerTimes: Record<string, number> = {}
+    Object.entries(speakerTimes).forEach(([speaker, time]) => {
+      renamedSpeakerTimes[speakerRenameMap[speaker] || speaker] = time as number
+    })
+
+    const renamedSortedSpeakers = sortedSpeakers.map(s => ({
+      speaker: speakerRenameMap[s.speaker] || s.speaker,
+      time: s.time,
+    }))
+
+    console.log('[TRANSCRIBE] Renamed speakers:', renamedSortedSpeakers)
+
+    // Step 7: Preliminary presenter detection (most speaking time)
+    const mainSpeaker = renamedSortedSpeakers[0]?.speaker || 'דובר 1'
+    console.log(`[TRANSCRIBE] Preliminary main speaker: ${mainSpeaker} (will be refined by visual cross-reference)`)
+
+    // Mark preliminary presenter
+    renamedSegments.forEach((seg: any) => {
+      seg.isPresenter = matchesSpeaker(seg.speaker, mainSpeaker)
+    })
+
+    // Step 8: Extract audio samples for each speaker
+    const speakerSamples: Record<string, string> = {}
+    const ffmpegForSamples = getFFmpeg()
+
+    for (const speaker of renamedSortedSpeakers) {
+      const speakerSegs = renamedSegments
+        .filter((s: any) => s.speaker === speaker.speaker)
+        .sort((a: any, b: any) => (b.end - b.start) - (a.end - a.start))
+
+      if (speakerSegs.length === 0) continue
+
+      const bestSeg = speakerSegs[0]
+      const sampleStart = bestSeg.start
+      const sampleDuration = Math.min(bestSeg.end - bestSeg.start, 5)
+
+      const safeName = speaker.speaker.replace(/[^a-zA-Z0-9\u0590-\u05FF]/g, '_')
+      const sampleFile = path.join(uploadsDir, `speaker_sample_${timestamp}_${safeName}.mp3`)
+
+      try {
+        execSync(
+          `"${ffmpegForSamples}" -i "${localFilePath}" -ss ${sampleStart.toFixed(3)} -t ${sampleDuration.toFixed(3)} -vn -c:a libmp3lame -b:a 128k "${sampleFile}" -y`,
+          { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
+        )
+
+        if (fs.existsSync(sampleFile) && fs.statSync(sampleFile).size > 1000) {
+          const sampleUrl = `http://localhost:${process.env.PORT || PORT}/uploads/${path.basename(sampleFile)}`
+          speakerSamples[speaker.speaker] = sampleUrl
+          console.log(`[TRANSCRIBE] ✅ Audio sample for ${speaker.speaker}: ${sampleDuration.toFixed(1)}s`)
+        }
+      } catch (e: any) {
+        console.warn(`[TRANSCRIBE] ❌ Sample failed for ${speaker.speaker}:`, e.message?.substring(0, 100))
+      }
+    }
+
+    // Build speakers array for response
+    const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
+    const speakers = renamedSortedSpeakers.map((s, i) => ({
+      name: s.speaker,
+      color: speakerColors[i % speakerColors.length],
+    }))
+
+    // Step 9: Build response
+    const response = {
+      segments: renamedSegments,
+      speakers,
+      speakerTimes: renamedSpeakerTimes,
+      sortedSpeakers: renamedSortedSpeakers.map(s => ({
+        ...s,
+        sampleUrl: speakerSamples[s.speaker] || null,
+        sampleText: renamedSegments.find((seg: any) => seg.speaker === s.speaker)?.text?.substring(0, 80) || '',
+      })),
+      mainSpeaker,
+      totalDuration,
+      duration: totalDuration,
+      text: transcript.text || '',
+      model: 'assemblyai',
+      wordCount: words.length,
+      confidence: transcript.confidence || 0,
+      autoDetected: true,
+    }
+
+    console.log(`[TRANSCRIBE] Done: ${renamedSegments.length} segments, ${uniqueSpeakers.length} speakers, ${totalDuration.toFixed(1)}s, model: assemblyai`)
+    console.log(`[TRANSCRIBE] Confidence: ${((transcript.confidence || 0) * 100).toFixed(1)}%`)
+
+    // Clean up extracted audio
+    try { if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath) } catch {}
+    // Clean up temp source file
+    if (isTemp && fs.existsSync(localFilePath)) try { fs.unlinkSync(localFilePath) } catch {}
+
+    res.json(response)
+
+  } catch (error: any) {
+    console.error('[TRANSCRIBE] AssemblyAI failed:', error.message)
+
+    // Fallback to GPT-4o-transcribe-diarize
+    console.log('[TRANSCRIBE] Falling back to GPT-4o-transcribe-diarize...')
+    return handleGPTAutoTranscribe(req, res)
   }
 })
 
@@ -9149,6 +9485,12 @@ app.listen(PORT, () => {
   console.log(`   OpenAI:      ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log('   OpenAI Chat Model: gpt-5.4')
   console.log('   OpenAI Transcribe Model: gpt-4o-transcribe-diarize')
+  const hasAssemblyAI = !!process.env.ASSEMBLYAI_API_KEY
+  console.log(`   Transcription: ${hasAssemblyAI ? '✅ AssemblyAI (premium diarization)' : '⚠️ GPT-4o-transcribe (basic diarization)'}`)
+  if (!hasAssemblyAI) {
+    console.log('   💡 Tip: Add ASSEMBLYAI_API_KEY to .env for much better speaker detection')
+    console.log('   💡 Sign up free at https://www.assemblyai.com ($50 free credit)')
+  }
   console.log(`   ElevenLabs:  ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   DeepL:       ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Gemini (Nano Banana + Veo): ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
