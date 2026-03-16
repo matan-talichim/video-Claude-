@@ -112,13 +112,16 @@ const esmRequire = createRequire(import.meta.url)
 
 // Get ffmpeg path: prefer system ffmpeg, fall back to ffmpeg-static
 function getFFmpeg(): string {
-  // Try homebrew path first (macOS)
+  // Try system ffmpeg first (Railway/Linux)
+  try {
+    const systemPath = execSync('which ffmpeg', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+    if (systemPath) return systemPath
+  } catch {}
+  // Try homebrew (Mac local dev)
   if (fs.existsSync('/opt/homebrew/bin/ffmpeg')) return '/opt/homebrew/bin/ffmpeg'
-  // Try system path
-  try { execSync('which ffmpeg', { stdio: 'pipe' }); return 'ffmpeg' } catch {}
   // Try ffmpeg-static as last resort
   try { return esmRequire('ffmpeg-static') as string } catch {}
-  throw new Error('FFmpeg not found')
+  return 'ffmpeg' // Hope it's in PATH
 }
 
 // Detect which text overlay filter is available in FFmpeg
