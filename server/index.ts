@@ -8771,29 +8771,98 @@ Return JSON:
           }))
 
           // Deep GPT Vision analysis
-          const analysisRes = await ai.chat.completions.create({
-            model: 'gpt-5.4',
-            messages: [
-              { role: 'system', content: deepAnalysisPrompt },
-              { role: 'user', content: [
-                { type: 'text' as const, text: `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}` },
-                ...frameImages.map((f: any) => ({
-                  type: 'image_url' as const,
-                  image_url: { url: `data:image/jpeg;base64,${f.base64}`, detail: 'low' as const }
-                }))
-              ]}
-            ],
-            response_format: { type: 'json_object' },
-            max_completion_tokens: 2000,
-          })
+          let analysisSucceeded = false
+          try {
+            const analysisRes = await ai.chat.completions.create({
+              model: 'gpt-5.4',
+              messages: [
+                { role: 'system', content: deepAnalysisPrompt },
+                { role: 'user', content: [
+                  { type: 'text' as const, text: `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}` },
+                  ...frameImages.map((f: any) => ({
+                    type: 'image_url' as const,
+                    image_url: { url: `data:image/jpeg;base64,${f.base64}`, detail: 'low' as const }
+                  }))
+                ]}
+              ],
+              response_format: { type: 'json_object' },
+              max_completion_tokens: 2000,
+            })
 
-          const analysis = JSON.parse(analysisRes.choices[0]?.message?.content || '{}')
-          analysis.title = video.title
-          analyses.push(analysis)
-          trackCost(state, 'gpt-5.4', analysisRes.usage)
-          results.totalCost += estimateCallCost('gpt-5.4', analysisRes.usage?.prompt_tokens || 500, analysisRes.usage?.completion_tokens || 500)
-          state.totalVideosAnalyzed++
-          console.log(`[LEARN] Video ${video.id}: ${(analysis.editing_rules || []).length} rules | Method: ${analysisMethod}`)
+            const analysis = JSON.parse(analysisRes.choices[0]?.message?.content || '{}')
+            analysis.title = video.title
+            analyses.push(analysis)
+            trackCost(state, 'gpt-5.4', analysisRes.usage)
+            results.totalCost += estimateCallCost('gpt-5.4', analysisRes.usage?.prompt_tokens || 500, analysisRes.usage?.completion_tokens || 500)
+            state.totalVideosAnalyzed++
+            analysisSucceeded = true
+            console.log(`[LEARN] Video ${video.id}: ${(analysis.editing_rules || []).length} rules | Method: ${analysisMethod}`)
+          } catch (visionErr: any) {
+            console.warn(`[LEARN] GPT Vision failed for ${video.id}: ${visionErr.message?.substring(0, 150)}`)
+          }
+
+          // Fallback: if GPT Vision failed (e.g. connection error), try thumbnail + metadata-only analysis
+          if (!analysisSucceeded && hasBudget(state)) {
+            console.log(`[LEARN] Falling back to thumbnail metadata analysis for ${video.id}`)
+            try {
+              // Try to get a thumbnail if we used video frames before
+              let thumbBase64 = ''
+              if (analysisMethod === 'video_frames') {
+                const thumbnailUrls = [
+                  `https://img.youtube.com/vi/${video.id}/hqdefault.jpg`,
+                  `https://img.youtube.com/vi/${video.id}/mqdefault.jpg`,
+                ]
+                for (const thumbUrl of thumbnailUrls) {
+                  try {
+                    const thumbRes = await fetch(thumbUrl, { signal: AbortSignal.timeout(10000) })
+                    if (thumbRes.ok) {
+                      const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
+                      if (thumbBuffer.length > 5000) {
+                        thumbBase64 = thumbBuffer.toString('base64')
+                        break
+                      }
+                    }
+                  } catch {}
+                }
+              } else {
+                // Already had thumbnail frames, reuse them
+                const existingFrames = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort()
+                if (existingFrames.length > 0) {
+                  thumbBase64 = fs.readFileSync(path.join(framesDir, existingFrames[0])).toString('base64')
+                }
+              }
+
+              const fallbackContent: Array<any> = [
+                { type: 'text' as const, text: `Analyze this video based on metadata and thumbnail.\n"${video.title}" | ${category} | Goal: ${sessionGoal}\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}\nProvide editing rules based on what you can infer.` },
+              ]
+              if (thumbBase64) {
+                fallbackContent.push({
+                  type: 'image_url' as const,
+                  image_url: { url: `data:image/jpeg;base64,${thumbBase64}`, detail: 'low' as const }
+                })
+              }
+
+              const fallbackRes = await ai.chat.completions.create({
+                model: 'gpt-5.4',
+                messages: [
+                  { role: 'system', content: deepAnalysisPrompt },
+                  { role: 'user', content: fallbackContent }
+                ],
+                response_format: { type: 'json_object' },
+                max_completion_tokens: 2000,
+              })
+
+              const fallbackAnalysis = JSON.parse(fallbackRes.choices[0]?.message?.content || '{}')
+              fallbackAnalysis.title = video.title
+              analyses.push(fallbackAnalysis)
+              trackCost(state, 'gpt-5.4', fallbackRes.usage)
+              results.totalCost += estimateCallCost('gpt-5.4', fallbackRes.usage?.prompt_tokens || 500, fallbackRes.usage?.completion_tokens || 500)
+              state.totalVideosAnalyzed++
+              console.log(`[LEARN] Video ${video.id}: ${(fallbackAnalysis.editing_rules || []).length} rules | Method: thumbnail_fallback`)
+            } catch (fallbackErr: any) {
+              console.warn(`[LEARN] Thumbnail fallback also failed for ${video.id}: ${fallbackErr.message?.substring(0, 150)}`)
+            }
+          }
         } catch (e: any) {
           console.warn(`[LEARN] Video analysis failed for ${video.id}: ${e.message?.substring(0, 150)}`)
         } finally {
@@ -9638,6 +9707,23 @@ app.listen(PORT, () => {
     console.log('[LEARN]   yt-dlp: ✅ Available (full video analysis)')
   } catch {
     console.log('[LEARN]   yt-dlp: ❌ Not available (thumbnail-only analysis)')
+  }
+
+  // Test OpenAI API connectivity at startup
+  try {
+    const ai = await getOpenAI()
+    if (ai) {
+      const testRes = await ai.chat.completions.create({
+        model: 'gpt-5.4',
+        max_completion_tokens: 10,
+        messages: [{ role: 'user', content: 'Say OK' }],
+      })
+      console.log('[LEARN]   OpenAI API: ✅ Connected (GPT Vision ready)')
+    } else {
+      console.log('[LEARN]   OpenAI API: ❌ No API key configured')
+    }
+  } catch (e: any) {
+    console.error(`[LEARN]   OpenAI API: ❌ FAILED - ${e.message?.substring(0, 150)}`)
   }
 
   logBrainStatus()
