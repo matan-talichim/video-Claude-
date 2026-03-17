@@ -9459,7 +9459,12 @@ function startTelegramBotListener() {
       clearTimeout(timeoutId)
 
       if (!res.ok) {
-        console.warn(`[TELEGRAM BOT] Poll response: ${res.status}`)
+        if (res.status === 409) {
+          // 409 = another instance is polling - this is normal, don't spam logs
+          setTimeout(pollUpdates, 15000)
+          return
+        }
+        console.warn(`[TELEGRAM BOT] Poll error: ${res.status}`)
         setTimeout(pollUpdates, 10000)
         return
       }
