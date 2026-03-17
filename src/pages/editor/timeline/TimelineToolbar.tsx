@@ -25,14 +25,17 @@ export default function TimelineToolbar() {
   const editHistory = useEditorStore((s) => s.editHistory)
 
   const handleSplit = () => {
+    console.log('[TOOLBAR] Split at playhead', currentTime)
     splitAtPlayhead()
   }
 
   const handleDelete = () => {
+    console.log('[TOOLBAR] Delete selected clips', selectedClipIds)
     removeSelectedClips()
   }
 
   const handlePaste = () => {
+    console.log('[TOOLBAR] Paste at', currentTime)
     pasteAtTime(currentTime)
   }
 
