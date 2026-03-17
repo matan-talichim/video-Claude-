@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useAutoEditorStore, type QualityReport } from '../store/autoEditorStore'
 import { selectABVersion } from '../orchestrator'
 
@@ -42,8 +42,14 @@ export default function CompareVersions() {
   const versionAUrl = versionA[0]?.files[0]?.url ? ensureFullUrl(versionA[0].files[0].url) : ''
   const versionBUrl = versionB[0]?.files[0]?.url ? ensureFullUrl(versionB[0].files[0].url) : ''
 
-  console.log('[COMPARE] Version A URL:', versionAUrl)
-  console.log('[COMPARE] Version B URL:', versionBUrl)
+  const hasLoggedRef = useRef(false)
+  useEffect(() => {
+    if (!hasLoggedRef.current && versionAUrl && versionBUrl) {
+      console.log('[COMPARE] Version A URL:', versionAUrl)
+      console.log('[COMPARE] Version B URL:', versionBUrl)
+      hasLoggedRef.current = true
+    }
+  }, [versionAUrl, versionBUrl])
 
   const isDisabled = selected.size === 0 || (selected.size === 2 && !preferredForDesign) || exporting
 

@@ -455,7 +455,7 @@ function buildEditJobForProcessing(
     subtitles: {
       ...job.subtitles,
       segments: subtitleSegments,
-      animated: finalInput.animatedSubtitles ?? false,
+      animated: finalInput.animatedSubtitles !== false,
       style: (finalInput.animationStyle as any) || job.subtitles.style,
     },
     output: {
@@ -618,7 +618,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     enrichedInput.videoUrls[0],
   )
   job.subtitles.enabled = enrichedInput.includeSubtitles !== false
-  job.subtitles.animated = enrichedInput.animatedSubtitles || false
+  job.subtitles.animated = enrichedInput.animatedSubtitles !== false
   job.subtitles.style = (enrichedInput.animationStyle as any) || 'auto'
 
   try {

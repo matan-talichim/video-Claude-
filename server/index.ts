@@ -4919,11 +4919,11 @@ const colorGrades: Record<string, string> = {
 // Use "Sans" as font name for maximum cross-platform compatibility (maps to system sans-serif)
 const subtitleStyles: Record<string, string> = {
   // MarginV=120 positions subtitles below chin, not at very bottom of screen
-  modern: 'Style: Default,Sans,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,1',
-  karaoke: 'Style: Default,Sans,26,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,1',
-  bold_white: 'Style: Default,Sans,28,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,120,1',
-  minimal: 'Style: Default,Sans,22,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,120,1',
-  colorful: 'Style: Default,Sans,26,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,1',
+  modern: 'Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,177',
+  karaoke: 'Style: Default,Arial,26,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,177',
+  bold_white: 'Style: Default,Arial,28,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,120,177',
+  minimal: 'Style: Default,Arial,22,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,120,177',
+  colorful: 'Style: Default,Arial,26,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,177',
 }
 
 // Generate styled ASS subtitles
@@ -4982,25 +4982,25 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 `
   switch (style) {
     case 'karaoke':
-      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1\n`
+      ass += `Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,177\n`
       break
     case 'pop':
-      ass += `Style: Default,Sans,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\nStyle: Pop,Sans,70,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,20,20,120,1\n`
+      ass += `Style: Default,Arial,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,177\nStyle: Pop,Arial,70,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,20,20,120,177\n`
       break
     case 'typewriter':
-      ass += `Style: Default,Sans,50,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,120,1\n`
+      ass += `Style: Default,Arial,50,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,120,177\n`
       break
     case 'glow':
-      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,20,20,120,1\n`
+      ass += `Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,20,20,120,177\n`
       break
     case 'bounce':
-      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,200,1\n`
+      ass += `Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,200,177\n`
       break
     case 'slide':
-      ass += `Style: Default,Sans,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1\n`
+      ass += `Style: Default,Arial,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,177\n`
       break
     default:
-      ass += `Style: Default,Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1\n`
+      ass += `Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,177\n`
   }
   ass += `\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`
 
@@ -5708,21 +5708,22 @@ function buildPresenterCutRanges(
       if (gap <= 0) {
         // Overlapping - extend
         last.end = Math.max(last.end, segEnd)
-      } else if (gap < 0.5) {
+      } else if (gap < 0.3) {
         // Very small gap (natural pause) - merge
         last.end = segEnd
       } else {
         // Check if another speaker talks in this gap
         const otherInGap = otherSegs.some((other: any) =>
-          other.start < segStart && other.end > last.end
+          other.start < segStart && other.end > last.end &&
+          (other.end - other.start) > 0.3
         )
 
         if (otherInGap) {
           // Another speaker in the gap - DON'T merge, create new range
           console.log(`[SPEAKER] Gap ${last.end.toFixed(1)}-${segStart.toFixed(1)}: other speaker detected, cutting`)
           ranges.push({ start: segStart, end: segEnd })
-        } else if (gap < 2.0) {
-          // Silence gap under 2s - merge for smooth flow
+        } else if (gap < 0.8) {
+          // Short silence gap - merge for smooth flow
           last.end = segEnd
         } else {
           // Long gap - new range
@@ -6081,12 +6082,19 @@ app.post('/api/auto-editor/process', async (req, res) => {
     } : req.body.videoPlan
     const targetDuration = (job?.plan?.targetDuration === 'auto' ? 60 : job?.plan?.targetDuration) || req.body.targetDuration
     const platforms = (job?.output?.platforms || []).map((p: any) => p.name || p) || req.body.platforms
-    const musicUrl = job?.assets?.musicTrack || req.body.musicUrl
+    const musicUrl = job?.assets?.musicTrack || req.body.musicUrl || req.body.backgroundMusic || req.body.assets?.musicTrack || null
     const backgroundImage = job?.assets?.backgroundImage || req.body.backgroundImage
+    // Music debug
+    console.log('[MUSIC] === Debug ===', {
+      'job.assets.musicTrack': job?.assets?.musicTrack?.substring(0, 80) || 'none',
+      'body.musicUrl': req.body.musicUrl?.substring(0, 80) || 'none',
+      'body.backgroundMusic': req.body.backgroundMusic?.substring(0, 80) || 'none',
+      resolved: musicUrl?.substring(0, 80) || 'NONE',
+    })
     const captionStyle = req.body.captionStyle
     const includeSubtitles = job ? job.subtitles?.enabled !== false : (req.body.includeSubtitles ?? true)
     const includeBackground = req.body.includeBackground ?? true
-    const animatedSubtitles = job ? job.subtitles?.animated || false : (req.body.animatedSubtitles ?? false)
+    const animatedSubtitles = job ? job.subtitles?.animated !== false : (req.body.animatedSubtitles !== false)
     const animationStyle = job ? job.subtitles?.style || 'karaoke' : (req.body.animationStyle || 'karaoke')
     const skipPlatformExport = job ? job.output?.skipPlatformExport : (req.body.skipPlatformExport ?? false)
     const transcript = job?.transcript ? {
@@ -6103,6 +6111,31 @@ app.post('/api/auto-editor/process', async (req, res) => {
         keepAudio: p.keepAudio !== false,
       }
     }).filter((b: any) => b.url) : (req.body.brollAssets || [])
+
+    // B-Roll debug: log what data arrived and file resolution
+    console.log('[B-ROLL] === Debug ===')
+    console.log(`[B-ROLL] Raw data:`, {
+      'job.plan.brollPlacements': job?.plan?.brollPlacements?.length || 0,
+      'job.assets.brollClips': job?.assets?.brollClips?.length || 0,
+      'body.brollAssets': req.body.brollAssets?.length || 0,
+      'resolved': brollAssets.length,
+    })
+    brollAssets.forEach((asset: any, i: number) => {
+      const url = asset.url || asset.localPath || ''
+      let resolved = ''
+      if (url.includes('localhost')) {
+        try {
+          const fn = path.basename(new URL(url, `http://localhost:${PORT}`).pathname)
+          const fp = path.join(uploadsDir, fn)
+          resolved = fs.existsSync(fp) ? `FOUND (${(fs.statSync(fp).size/1024).toFixed(0)}KB)` : 'NOT FOUND'
+        } catch { resolved = 'URL_PARSE_ERROR' }
+      } else if (url.startsWith('http')) {
+        resolved = 'REMOTE (will download)'
+      } else {
+        resolved = fs.existsSync(url) ? 'FOUND' : 'NOT FOUND'
+      }
+      console.log(`[B-ROLL] Asset ${i}: ${path.basename(url || 'unknown')} → ${resolved}`)
+    })
 
     const ffmpegPath = getFFmpeg()
     const timestamp = Date.now()
@@ -7069,7 +7102,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
               fs.writeFileSync(srtFile, '\ufeff' + srtContent, 'utf-8')
               const srtBase = path.basename(srtFile)
               execSync(
-                `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${srtBase}:force_style='FontName=Arial,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+                `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${srtBase}:force_style='FontName=Arial,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30,Encoding=177'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
                 { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
               )
               currentFile = subFile
@@ -7405,6 +7438,16 @@ ${gfxDialogueLines.join('\n')}
       } else {
         console.warn('[LOGO] File not found:', logoFile)
       }
+    }
+
+    // ============================================
+    // EFFECTS VERIFICATION
+    // ============================================
+    const effectCount = [anglesApplied > 0, blurApplied, zoomsApplied > 0, brollInserted > 0, musicApplied, subtitlesApplied].filter(Boolean).length
+    if (effectCount < 3) {
+      console.warn(`[EFFECTS] WARNING: Only ${effectCount}/6 effects applied! Video may look unedited.`)
+    } else {
+      console.log(`[EFFECTS] ${effectCount}/6 effects applied`)
     }
 
     // ============================================
