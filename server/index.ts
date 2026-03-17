@@ -4297,11 +4297,10 @@ app.post('/api/generate-broll', async (req, res) => {
 
       console.log('[SEEDANCE] Saved:', videoPath, (videoBuffer.length / 1024 / 1024).toFixed(1) + 'MB')
 
-      // Send file to client
-      res.setHeader('Content-Type', 'video/mp4')
-      const readStream = fs.createReadStream(videoPath)
-      readStream.pipe(res)
-      readStream.on('end', () => { try { fs.unlinkSync(videoPath) } catch {} })
+      // Return server URL (same pattern as VEO) so server-side FFmpeg can access the file later
+      const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(videoPath)}`
+      console.log('[SEEDANCE] Serving at:', serverUrl)
+      res.json({ url: serverUrl })
 
     } catch (error: any) {
       console.error('[SEEDANCE ERROR]', error.message)

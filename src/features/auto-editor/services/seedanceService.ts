@@ -25,8 +25,9 @@ export async function generateBrollSeedance(prompt: string, duration: number = 5
     throw new Error(`שגיאת Seedance: ${err.message || response.statusText}`)
   }
 
-  const blob = await response.blob()
+  // Server returns JSON with server-accessible URL (not a blob)
+  const data = await response.json()
   log('B-Roll (Seedance) נוצר בהצלחה')
 
-  return URL.createObjectURL(blob)
+  return data.url
 }

@@ -156,6 +156,9 @@
 | 8 | B-Roll `keepAudio` flag ignored — presenter audio lost during B-Roll | MEDIUM | **FIXED** - Now extracts original audio and mixes under B-Roll video |
 | 9 | No auto-editor dependency check on server startup | LOW | **FIXED** - Added FFmpeg filter + API key verification logging |
 | 10 | Lower thirds and graphics ASS use "Sans" font | LOW | **FIXED** - Changed to "Arial" for consistency with subtitles |
+| 11 | Seedance B-Roll returns browser-only `blob:` URL — server FFmpeg can't access | CRITICAL | **FIXED** - Server now returns JSON `{url}` instead of streaming binary; client parses URL |
+| 12 | Speaker audio double-play race condition (play() called twice) | MEDIUM | **FIXED** - Removed `canplay` listener, single `play()` call |
+| 13 | Store array mutation in ExportScreen (`.push()` on store reference) | MEDIUM | **FIXED** - Spread copy before mutation |
 
 ## Known Issues (Not Fixed — Low Priority)
 

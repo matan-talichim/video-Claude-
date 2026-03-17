@@ -176,7 +176,8 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
   const [openingEditor, setOpeningEditor] = useState(false)
 
   // Use processedVideos (new format) if available, otherwise fallback to legacy results
-  const videos: VideoResult[] = processedVideos || []
+  // Spread to avoid mutating the store's array directly
+  let videos: VideoResult[] = processedVideos ? [...processedVideos] : []
 
   // If we only have legacy results, convert them
   if (videos.length === 0 && results && results.length > 0) {
@@ -194,7 +195,7 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
       })
       return acc
     }, {})
-    videos.push(...Object.values(grouped))
+    videos = Object.values(grouped)
   }
 
   if (videos.length === 0) return null
