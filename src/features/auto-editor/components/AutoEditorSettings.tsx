@@ -230,66 +230,117 @@ interface ProfessionalOption {
   description: string
   icon: string
   promptAddition: string
+  defaultOn?: boolean
 }
 
 const PROFESSIONAL_OPTIONS: ProfessionalOption[] = [
+  // === VISUAL ===
+  {
+    id: 'background_image',
+    label: 'תמונת רקע AI',
+    description: 'יצירת תמונת רקע מותאמת לתוכן הסרטון',
+    icon: '🖼️',
+    promptAddition: 'צור תמונת רקע מקצועית שמתאימה לתוכן הסרטון. התמונה צריכה להיות בסגנון soft-focus, ללא אנשים, ללא טקסט.',
+  },
+  {
+    id: 'background_blur',
+    label: 'טשטוש רקע',
+    description: 'אפקט עומק שדה - הפרזנטור בולט מהרקע',
+    icon: '🔍',
+    promptAddition: 'הוסף אפקט עומק שדה (DOF): טשטוש עדין על הרקע כדי שהפרזנטור יבלוט. שמור על חדות הפנים.',
+  },
+  {
+    id: 'cinematic',
+    label: 'סינמטי',
+    description: 'צבע קולנועי, מעברים חלקים, פסים שחורים',
+    icon: '🎬',
+    promptAddition: 'סגנון קולנועי: color grade חם עם כחולים בצללים, טשטוש רקע חזק, מעברים dissolve.',
+  },
   {
     id: 'eye_contact',
     label: 'שמירה על קשר עין',
-    description: 'יישר את העיניים של הדובר למרכז המצלמה',
+    description: 'העדפת קטעים שהדובר מסתכל למצלמה',
     icon: '👁️',
-    promptAddition: 'חשוב: שמור על קשר עין עם המצלמה. אם הדובר מסתכל הצידה, העדף קטעים שבהם הוא מסתכל ישר למצלמה.',
+    promptAddition: 'העדף קטעים שבהם הדובר מסתכל ישר למצלמה. אם יש קטע שהדובר מסתכל הצידה, העדף קטע חלופי.',
   },
-  {
-    id: 'remove_silence',
-    label: 'הסרת שתיקות',
-    description: 'קצר שתיקות ארוכות מעל 1.5 שניות',
-    icon: '🔇',
-    promptAddition: 'הסר כל שתיקה ארוכה מ-1.5 שניות. קצר הפסקות בין משפטים ל-0.3 שניות מקסימום.',
-  },
+
+  // === PACE & ENERGY ===
   {
     id: 'energy_boost',
     label: 'הגברת אנרגיה',
-    description: 'קצב מהיר יותר, חיתוכים תכופים, זומים דינמיים',
+    description: 'קצב מהיר, חיתוכים תכופים, זומים דינמיים',
     icon: '⚡',
-    promptAddition: 'הגבר את האנרגיה: חיתוכים כל 2 שניות, זומים אגרסיביים 1.3x כל 4 שניות, מוזיקה קצבית 18%.',
+    promptAddition: 'הגבר אנרגיה: חיתוכים כל 2 שניות, זומים 1.3x כל 4 שניות, מוזיקה קצבית 18%.',
   },
   {
     id: 'calm_professional',
     label: 'רגוע ומקצועי',
     description: 'קצב מתון, עריכה נקייה, מינימליסטי',
     icon: '🎩',
-    promptAddition: 'שמור על קצב רגוע ומקצועי: חיתוכים כל 5-6 שניות, זומים עדינים 1.1x, מוזיקה שקטה 10%, צבע נקי.',
+    promptAddition: 'שמור על קצב רגוע: חיתוכים כל 5-6 שניות, זומים עדינים 1.1x, מוזיקה שקטה 10%.',
   },
   {
-    id: 'cinematic',
-    label: 'סינמטי',
-    description: 'צבע קולנועי, טשטוש רקע חזק, מעברים חלקים',
-    icon: '🎬',
-    promptAddition: 'סגנון קולנועי: color grade חם עם כחולים בצללים, טשטוש רקע חזק, מעברים dissolve, יחס 2.35:1 עם פסים שחורים.',
+    id: 'remove_silence',
+    label: 'הסרת שתיקות',
+    description: 'קיצור שתיקות ארוכות מעל 1.5 שניות',
+    icon: '🔇',
+    promptAddition: 'הסר שתיקות ארוכות מ-1.5 שניות. קצר הפסקות בין משפטים ל-0.3 שניות.',
   },
-  {
-    id: 'trending',
-    label: 'טרנדי',
-    description: 'סגנון עדכני לפי הטרנדים האחרונים',
-    icon: '🔥',
-    promptAddition: 'השתמש בסגנון העריכה הכי טרנדי: אפקטים פופולריים, חיתוכים על הביט, טקסט מונפש, אפקטי zoom מהירים.',
-  },
+
+  // === TEXT & SUBTITLES ===
   {
     id: 'subtitles_hebrew',
     label: 'כתוביות בעברית',
-    description: 'כתוביות מונפשות בעברית עם הדגשות',
+    description: 'כתוביות מונפשות עם הדגשת מילות מפתח',
     icon: '📝',
-    promptAddition: 'חובה: כתוביות בעברית עם אנימציית pop, מילות מפתח מודגשות בצבע, ממוקמות באמצע מתחת לסנטר.',
+    promptAddition: 'כתוביות בעברית מונפשות, מילות מפתח מודגשות בצבע, ממוקמות מתחת לסנטר.',
+    defaultOn: true,
   },
+
+  // === AUDIO ===
   {
     id: 'music_energetic',
     label: 'מוזיקת רקע אנרגטית',
     description: 'מוזיקה קצבית ומעוררת',
     icon: '🎵',
-    promptAddition: 'מוזיקת רקע אנרגטית וקצבית, ווליום 15-18%, חיתוכים מסונכרנים עם הביט.',
+    promptAddition: 'מוזיקת רקע אנרגטית, ווליום 15-18%, חיתוכים מסונכרנים עם הביט.',
+  },
+  {
+    id: 'music_calm',
+    label: 'מוזיקת רקע רגועה',
+    description: 'מוזיקה שקטה ונעימה ברקע',
+    icon: '🎶',
+    promptAddition: 'מוזיקת רקע רגועה ונעימה, ווליום 8-12%, לא מפריעה לדיבור.',
+  },
+
+  // === STYLE ===
+  {
+    id: 'trending',
+    label: 'טרנדי',
+    description: 'סגנון עדכני לפי הטרנדים האחרונים',
+    icon: '🔥',
+    promptAddition: 'סגנון עריכה טרנדי: אפקטים פופולריים, חיתוכים על הביט, טקסט מונפש, זום מהיר.',
   },
 ]
+
+const CONTENT_TYPE_RECOMMENDATIONS: Record<string, string[]> = {
+  // Business
+  company_intro: ['background_blur', 'cinematic', 'calm_professional', 'subtitles_hebrew', 'music_calm', 'background_image'],
+  product_sales: ['energy_boost', 'subtitles_hebrew', 'music_energetic', 'background_image', 'eye_contact'],
+  customer_testimonial: ['background_blur', 'calm_professional', 'subtitles_hebrew', 'music_calm', 'eye_contact'],
+  employee_training: ['calm_professional', 'subtitles_hebrew', 'remove_silence', 'eye_contact'],
+
+  // Social
+  tiktok_reels: ['energy_boost', 'subtitles_hebrew', 'music_energetic', 'trending'],
+  youtube_shorts: ['energy_boost', 'subtitles_hebrew', 'music_energetic', 'background_blur'],
+  story: ['energy_boost', 'subtitles_hebrew', 'trending', 'music_energetic'],
+
+  // Content
+  podcast: ['calm_professional', 'subtitles_hebrew', 'music_calm', 'remove_silence'],
+  interview: ['background_blur', 'calm_professional', 'subtitles_hebrew', 'eye_contact'],
+  presentation: ['calm_professional', 'subtitles_hebrew', 'remove_silence', 'background_image'],
+  tutorial: ['subtitles_hebrew', 'remove_silence', 'calm_professional', 'eye_contact'],
+}
 
 export interface LogoData {
   file: File | null
@@ -469,7 +520,6 @@ function PromptBuilder({ prompt, setPrompt, onContentTypeSelect }: {
             {CONTENT_TYPES[cat.key].map(ct => (
               <button key={ct.id} onClick={() => {
                 onContentTypeSelect(ct)
-                setPrompt(ct.prompt)
               }}
                 className="bg-white/5 border border-white/10 text-gray-300 text-xs px-3 py-1.5 rounded-full hover:border-purple-500/30 hover:bg-purple-500/10 transition">
                 {ct.label}
@@ -528,11 +578,10 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       : 'seedance'
   )
   const [selectedFormats, setSelectedFormats] = useState<string[]>(['portrait'])
-  const [selectedOptions, setSelectedOptions] = useState<string[]>([])
-  const [includeSubtitles, setIncludeSubtitles] = useState(true)
-  const [includeBackground, setIncludeBackground] = useState(true)
-  const [animatedSubtitles, setAnimatedSubtitles] = useState(false)
-  const [animationStyle, setAnimationStyle] = useState('auto')
+  const [selectedOptions, setSelectedOptions] = useState<string[]>(
+    PROFESSIONAL_OPTIONS.filter(opt => opt.defaultOn).map(opt => opt.id)
+  )
+  const [recommendedOptions, setRecommendedOptions] = useState<string[]>([])
   const [logo, setLogo] = useState<LogoData | null>(null)
 
   const closeHandler = onClose || onBack
@@ -555,9 +604,40 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
   }
 
   const toggleOption = (id: string) => {
-    setSelectedOptions(prev =>
-      prev.includes(id) ? prev.filter(o => o !== id) : [...prev, id]
-    )
+    setSelectedOptions(prev => {
+      let next = prev.includes(id)
+        ? prev.filter(o => o !== id)
+        : [...prev, id]
+
+      // Music options are mutually exclusive
+      if (id === 'music_energetic' && next.includes('music_energetic')) {
+        next = next.filter(o => o !== 'music_calm')
+      }
+      if (id === 'music_calm' && next.includes('music_calm')) {
+        next = next.filter(o => o !== 'music_energetic')
+      }
+
+      // Energy options are mutually exclusive
+      if (id === 'energy_boost' && next.includes('energy_boost')) {
+        next = next.filter(o => o !== 'calm_professional')
+      }
+      if (id === 'calm_professional' && next.includes('calm_professional')) {
+        next = next.filter(o => o !== 'energy_boost')
+      }
+
+      return next
+    })
+  }
+
+  const handleContentTypeChange = (ct: ContentTypeItem) => {
+    setSelectedContentType(ct)
+    setUserPrompt(ct.prompt)
+
+    const recommendations = CONTENT_TYPE_RECOMMENDATIONS[ct.id] || []
+    setSelectedOptions(recommendations)
+    setRecommendedOptions(recommendations)
+
+    console.log(`[SETTINGS] Content type: ${ct.id} → recommended: ${recommendations.join(', ')}`)
   }
 
   // Derive platforms from selected formats
@@ -572,6 +652,10 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
     const finalPrompt = userPrompt || fullPrompt
     console.log('[AUTO-EDITOR] Generated prompt:', finalPrompt.substring(0, 200) + '...')
 
+    // Derive subtitle/background flags from selectedOptions
+    const includeSubtitles = selectedOptions.includes('subtitles_hebrew')
+    const includeBackground = selectedOptions.includes('background_image')
+
     onStart({
       userPrompt: finalPrompt,
       targetDuration: effectiveDuration,
@@ -580,8 +664,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       platforms: derivedPlatforms,
       includeSubtitles,
       includeBackground,
-      animatedSubtitles,
-      animationStyle,
+      animatedSubtitles: includeSubtitles,
+      animationStyle: 'auto',
       selectedFormats,
       selectedOptions,
       logo: logo ? {
@@ -652,7 +736,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           <PromptBuilder
             prompt={userPrompt}
             setPrompt={setUserPrompt}
-            onContentTypeSelect={setSelectedContentType}
+            onContentTypeSelect={handleContentTypeChange}
           />
 
           {/* Format selection (replaces platform selection) */}
@@ -688,26 +772,45 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           {/* Professional options */}
           <div className="space-y-3">
             <h4 className="text-white text-sm font-bold">אפשרויות מקצועיות</h4>
-            <p className="text-gray-500 text-xs">בחר אפשרויות נוספות:</p>
+            {recommendedOptions.length > 0 && (
+              <p className="text-purple-400 text-xs">
+                ✨ {recommendedOptions.length} אפשרויות מומלצות לסגנון שבחרת - אפשר לשנות
+              </p>
+            )}
 
             <div className="grid grid-cols-2 gap-2">
-              {PROFESSIONAL_OPTIONS.map(opt => (
-                <button
-                  key={opt.id}
-                  onClick={() => toggleOption(opt.id)}
-                  className={`flex items-center gap-2 p-3 rounded-lg border text-right transition ${
-                    selectedOptions.includes(opt.id)
-                      ? 'border-purple-500 bg-purple-500/10'
-                      : 'border-white/10 bg-white/5 hover:border-white/30'
-                  }`}
-                >
-                  <span className="text-lg">{opt.icon}</span>
-                  <div>
-                    <div className="text-white text-xs font-medium">{opt.label}</div>
-                    <div className="text-gray-500 text-[10px]">{opt.description}</div>
-                  </div>
-                </button>
-              ))}
+              {PROFESSIONAL_OPTIONS.map(opt => {
+                const isSelected = selectedOptions.includes(opt.id)
+                const isRecommended = recommendedOptions.includes(opt.id)
+
+                return (
+                  <button
+                    key={opt.id}
+                    onClick={() => toggleOption(opt.id)}
+                    className={`flex items-center gap-2 p-3 rounded-lg border text-right transition relative ${
+                      isSelected
+                        ? 'border-purple-500 bg-purple-500/10'
+                        : 'border-white/10 bg-white/5 hover:border-white/30'
+                    }`}
+                  >
+                    <span className="text-lg flex-shrink-0">{opt.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-white text-xs font-medium">{opt.label}</span>
+                        {isRecommended && (
+                          <span className="text-[9px] bg-purple-600/60 text-purple-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                            מומלץ לסגנון
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-gray-500 text-[10px] truncate">{opt.description}</div>
+                    </div>
+                    {isSelected && (
+                      <span className="text-purple-400 text-sm flex-shrink-0">✓</span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
@@ -823,79 +926,6 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           {/* Logo upload */}
           <LogoUpload logo={logo} onLogoChange={setLogo} />
 
-          {/* Additional options */}
-          <div className="space-y-3">
-            <h4 className="text-sm font-medium text-text-primary">אפשרויות נוספות:</h4>
-
-            <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition">
-              <div>
-                <span className="text-white text-sm">&#x1F4AC; כתוביות</span>
-                <span className="text-gray-500 text-xs block">הוסף כתוביות אוטומטיות לסרטון</span>
-              </div>
-              <input
-                type="checkbox"
-                checked={includeSubtitles}
-                onChange={e => setIncludeSubtitles(e.target.checked)}
-                className="accent-purple-500 w-5 h-5"
-              />
-            </label>
-
-            {includeSubtitles && (
-              <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition mr-6 border-r-2 border-purple-500">
-                <div>
-                  <span className="text-white text-sm">&#x2728; כתוביות מונפשות</span>
-                  <span className="text-gray-500 text-xs block">מילה-מילה עם אנימציה (סגנון TikTok/Reels)</span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={animatedSubtitles}
-                  onChange={e => setAnimatedSubtitles(e.target.checked)}
-                  className="accent-purple-500 w-5 h-5"
-                />
-              </label>
-            )}
-
-            {includeSubtitles && animatedSubtitles && (
-              <div className="mr-6 border-r-2 border-purple-500 pr-3 space-y-2">
-                <span className="text-xs text-gray-400">סגנון אנימציה:</span>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { id: 'auto', label: '\uD83E\uDD16 אוטומטי', desc: 'לפי מה שעובד ברשתות' },
-                    { id: 'karaoke', label: '\uD83C\uDFA4 קריוקי', desc: 'מילה מודגשת בזמן אמת' },
-                    { id: 'pop', label: '\uD83D\uDCA5 פופ', desc: 'מילים קופצות אחת-אחת' },
-                    { id: 'typewriter', label: '\u2328\uFE0F מכונת כתיבה', desc: 'אות-אות' },
-                    { id: 'glow', label: '\u2728 זוהר', desc: 'מילה זוהרת בזמן אמת' },
-                    { id: 'bounce', label: '\uD83C\uDFC0 קפיצה', desc: 'מילים קופצות מלמטה' },
-                    { id: 'slide', label: '\u27A1\uFE0F החלקה', desc: 'מילים נכנסות מהצד' },
-                  ].map(style => (
-                    <button key={style.id}
-                      onClick={() => setAnimationStyle(style.id)}
-                      className={`text-xs px-3 py-2 rounded-lg transition ${
-                        animationStyle === style.id
-                          ? 'bg-purple-600 text-white'
-                          : 'bg-white/5 text-gray-300 hover:bg-white/10'
-                      }`}
-                      title={style.desc}>
-                      {style.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <label className="flex items-center justify-between p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition">
-              <div>
-                <span className="text-white text-sm">תמונת רקע</span>
-                <span className="text-gray-500 text-xs block">צור תמונת רקע ב-AI לסרטון (ל-9:16 ו-1:1)</span>
-              </div>
-              <input
-                type="checkbox"
-                checked={includeBackground}
-                onChange={e => setIncludeBackground(e.target.checked)}
-                className="accent-purple-500 w-5 h-5"
-              />
-            </label>
-          </div>
 
           {/* Personalization indicator */}
           {profile.confidenceScore >= 0.3 && (
