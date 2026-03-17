@@ -203,6 +203,22 @@ export interface StickerOverlay {
   endTime: number
 }
 
+export interface ImageOverlay {
+  id: string
+  src: string
+  x: number
+  y: number
+  width: number
+  height: number
+  opacity: number
+  rotation: number
+  startTime: number
+  endTime: number
+  type: 'logo' | 'image'
+  draggable: boolean
+  resizable: boolean
+}
+
 export interface ColorCorrection {
   brightness: number
   contrast: number
@@ -524,6 +540,11 @@ interface EditorState {
   updateSticker: (id: string, updates: Partial<StickerOverlay>) => void
   removeSticker: (id: string) => void
 
+  imageOverlays: ImageOverlay[]
+  addImageOverlay: (overlay: ImageOverlay) => void
+  updateImageOverlay: (id: string, updates: Partial<ImageOverlay>) => void
+  removeImageOverlay: (id: string) => void
+
   colorCorrection: ColorCorrection
   setColorCorrection: (correction: Partial<ColorCorrection>) => void
   resetColorCorrection: () => void
@@ -611,6 +632,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   textOverlays: [],
   shapes: [],
   stickers: [],
+  imageOverlays: [],
   colorCorrection: { brightness: 0, contrast: 0, saturation: 0, warmth: 0, highlights: 0, shadows: 0, sharpness: 0, vignette: 0 },
   clipSpeed: 1,
   clipReversed: false,
@@ -1501,6 +1523,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   })),
   removeSticker: (id) => set((s) => ({
     stickers: s.stickers.filter((st) => st.id !== id),
+    selectedCanvasItem: s.selectedCanvasItem?.id === id ? null : s.selectedCanvasItem,
+    isDirty: true,
+  })),
+
+  addImageOverlay: (overlay) => set((s) => ({ imageOverlays: [...s.imageOverlays, overlay], isDirty: true })),
+  updateImageOverlay: (id, updates) => set((s) => ({
+    imageOverlays: s.imageOverlays.map((o) => o.id === id ? { ...o, ...updates } : o),
+    isDirty: true,
+  })),
+  removeImageOverlay: (id) => set((s) => ({
+    imageOverlays: s.imageOverlays.filter((o) => o.id !== id),
     selectedCanvasItem: s.selectedCanvasItem?.id === id ? null : s.selectedCanvasItem,
     isDirty: true,
   })),

@@ -73,6 +73,43 @@ export default function Editor() {
       }
       localStorage.removeItem('autoEditorTranscript')
 
+      // Load auto-editor logo as image overlay
+      const storedLogo = localStorage.getItem('autoEditorLogo')
+      if (storedLogo) {
+        try {
+          const logoData = JSON.parse(storedLogo)
+          if (logoData.url) {
+            const { addImageOverlay } = useEditorStore.getState()
+            const posMap: Record<string, { x: number; y: number }> = {
+              'top-right': { x: 80, y: 5 },
+              'top-left': { x: 5, y: 5 },
+              'bottom-right': { x: 80, y: 85 },
+              'bottom-left': { x: 5, y: 85 },
+            }
+            const pos = posMap[logoData.position] || posMap['top-right']
+            const sizeMap: Record<string, number> = { small: 60, medium: 100, large: 150 }
+            const dim = sizeMap[logoData.size] || 100
+            addImageOverlay({
+              id: `logo_${Date.now()}`,
+              type: 'logo',
+              src: logoData.url,
+              x: pos.x,
+              y: pos.y,
+              width: dim,
+              height: dim,
+              opacity: logoData.opacity || 0.9,
+              rotation: 0,
+              startTime: 0,
+              endTime: 9999,
+              draggable: true,
+              resizable: true,
+            })
+            console.log('[EDITOR] Loaded auto-editor logo overlay')
+          }
+        } catch { /* ignore */ }
+      }
+      localStorage.removeItem('autoEditorLogo')
+
       loadProject({
         id: project.id,
         name: project.name,

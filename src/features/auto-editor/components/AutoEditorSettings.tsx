@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Video, Music, Sparkles, Film, ArrowRight, X } from 'lucide-react'
 import type { AutoEditorInput } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
@@ -34,71 +34,451 @@ const BROLL_OPTIONS: { value: 'seedance' | 'veo'; label: string; desc: string }[
   { value: 'veo', label: 'Google VEO', desc: 'ריאליסטי במיוחד' },
 ]
 
-const PLATFORM_OPTIONS = [
-  { id: 'tiktok', name: 'TikTok', ratio: '9:16', icon: '📱' },
-  { id: 'reels', name: 'Instagram Reels', ratio: '9:16', icon: '📸' },
-  { id: 'shorts', name: 'YouTube Shorts', ratio: '9:16', icon: '🎬' },
-  { id: 'youtube', name: 'YouTube', ratio: '16:9', icon: '▶️' },
-  { id: 'linkedin', name: 'LinkedIn', ratio: '1:1', icon: '💼' },
-  { id: 'facebook', name: 'Facebook', ratio: '16:9', icon: '👤' },
-  { id: 'twitter', name: 'X / Twitter', ratio: '16:9', icon: '🐦' },
-  { id: 'story', name: 'Story', ratio: '9:16', icon: '📲' },
+const FORMAT_OPTIONS = [
+  {
+    id: 'portrait',
+    label: '9:16 עמודי',
+    description: 'Reels, TikTok, Shorts, Stories',
+    ratio: '9:16',
+    icon: '📱',
+    platforms: ['reels', 'tiktok', 'shorts', 'story'],
+  },
+  {
+    id: 'landscape',
+    label: '16:9 רחב',
+    description: 'YouTube, Facebook, X/Twitter',
+    ratio: '16:9',
+    icon: '🖥️',
+    platforms: ['youtube', 'facebook', 'twitter'],
+  },
+  {
+    id: 'square',
+    label: '1:1 מרובע',
+    description: 'LinkedIn, Instagram Feed',
+    ratio: '1:1',
+    icon: '⬜',
+    platforms: ['linkedin'],
+  },
 ]
 
-const PRESET_CATEGORIES = [
+interface ContentTypeItem {
+  id: string
+  label: string
+  prompt: string
+}
+
+const CONTENT_TYPES: Record<string, ContentTypeItem[]> = {
+  business: [
+    {
+      id: 'company_intro',
+      label: 'סרטון תדמית לחברה',
+      prompt: `ערוך סרטון תדמית מקצועי לחברה.
+פתיחה: הוק חזק ב-2 שניות הראשונות - תוצאה מרשימה או הבטחה ברורה.
+מבנה: בעיה → פתרון → הוכחה → קריאה לפעולה.
+קצב: עריכה דינמית עם חיתוכים כל 3-4 שניות.
+B-Roll: הכנס קטעי הדגמה/תוצאות בין דברי הפרזנטור.
+צבע: גווני צבע חמים ומקצועיים, קונטרסט גבוה.
+מוזיקה: מוזיקת רקע תאגידית מעוררת השראה, ווליום 12-15%.
+כתוביות: בולטות עם הדגשת מילות מפתח בצבע.
+סיום: CTA ברור וחזק עם לוגו.`,
+    },
+    {
+      id: 'product_sales',
+      label: 'סרטון מכירות למוצר',
+      prompt: `ערוך סרטון מכירות ממיר למוצר.
+פתיחה: הוק רגשי - בעיה שהצופה מזדהה איתה, או תוצאה "לפני/אחרי".
+מבנה: כאב → הגדלת הכאב → הצגת הפתרון → הוכחה חברתית → דחיפות → CTA.
+קצב: מהיר עם חיתוכים כל 2-3 שניות בחלק הראשון, איטי יותר בהסבר המוצר.
+B-Roll: הדגמות מוצר, תגובות לקוחות, שימוש בפועל.
+זומים: זום על המוצר בכל פעם שמוזכר שם או תכונה חשובה.
+צבע: חי ומושך, גוון שמתאים למיתוג המוצר.
+כתוביות: מילות מפתח מודגשות בצבע, מספרים ונתונים בולטים.
+סיום: CTA עם תחושת דחיפות ("עכשיו", "מוגבל", "היום").`,
+    },
+    {
+      id: 'customer_testimonial',
+      label: 'סרטון לקוחות ממליצים',
+      prompt: `ערוך סרטון עדויות לקוחות שבונה אמון.
+פתיחה: ציטוט חזק של לקוח או תוצאה מספרית מרשימה.
+מבנה: ציטוט פתיחה → הצגת הבעיה → איך השירות עזר → תוצאות → המלצה.
+קצב: רגוע יותר, חיתוכים כל 4-5 שניות. תנו למילים לנשום.
+B-Roll: תמונות של הלקוח, התוצאות שלו, לפני/אחרי.
+זומים: זום עדין כשהלקוח אומר משהו רגשי או חזק.
+צבע: חם וטבעי, מרגיש אותנטי ולא "מלוטש מדי".
+כתוביות: ציטוטים חשובים מודגשים בצבע שונה.
+סיום: "גם אתה יכול" + CTA.`,
+    },
+    {
+      id: 'employee_training',
+      label: 'סרטון הדרכה לעובדים',
+      prompt: `ערוך סרטון הדרכה ברור ומסודר.
+פתיחה: מה הצופה ילמד ולמה זה חשוב - ב-3 שניות.
+מבנה: מבוא → שלב 1 → שלב 2 → שלב 3 → סיכום.
+קצב: מתון ויציב, חיתוכים כל 5-6 שניות. לא למהר.
+B-Roll: הדגמות מעשיות, מסכים, דיאגרמות.
+זומים: זום על פרטים חשובים (כפתורים, טקסט, פעולות).
+צבע: נקי ומקצועי, לא דרמטי.
+כתוביות: כל שלב ממוספר, מילות מפתח מודגשות.
+גרפיקות: מספור שלבים על המסך, חיצים, הדגשות.
+סיום: סיכום 3 הנקודות העיקריות.`,
+    },
+  ],
+  social: [
+    {
+      id: 'tiktok_reels',
+      label: 'TikTok / Reels',
+      prompt: `ערוך סרטון ויראלי לרילס/טיקטוק.
+פתיחה: הוק ב-1 שנייה! שאלה מסקרנת, מספר מפתיע, או ויזואל תופס עין.
+מבנה: הוק → תוכן מפתיע → תפנית → סיום שגורם לשיתוף.
+קצב: מהיר מאוד! חיתוכים כל 1.5-2 שניות. אנרגיה גבוהה.
+B-Roll: ויזואלים דינמיים, אפקטים, תנועה מתמדת.
+זומים: זומים תכופים כל 3-4 שניות, אינטנסיביות 1.2-1.4x.
+צבע: צבעוני וחי, קונטרסט גבוה, רוויה 110%.
+כתוביות: גדולות ובולטות, מילה-מילה עם אנימציית pop.
+מוזיקה: טרנדית וקצבית, ווליום 15-20%.
+סיום: loop - חזרה חלקה לתחילת הסרטון, או CTA "שמור/שתף".`,
+    },
+    {
+      id: 'youtube_shorts',
+      label: 'YouTube Shorts',
+      prompt: `ערוך YouTube Short שמושך צפיות.
+פתיחה: הוק ויזואלי ב-2 שניות - טקסט על המסך + דיבור.
+מבנה: הבטחה → תוכן → הפתעה → CTA להירשם.
+קצב: מהיר אבל קצת יותר נשימה מטיקטוק, חיתוכים כל 2-3 שניות.
+B-Roll: הדגמות, תמונות, אנימציות קלות.
+זומים: זום על נקודות חשובות, אלטרנטיבה בין wide ו-closeup.
+צבע: מקצועי ונקי, מתאים ל-YouTube.
+כתוביות: ברורות עם רקע שקוף, ממוקמות מתחת לסנטר.
+סיום: "Subscribe" + תוכן נוסף שמעניין.`,
+    },
+    {
+      id: 'story',
+      label: 'סטורי',
+      prompt: `ערוך סטורי קצר ותופס.
+פתיחה: ויזואל מלא מסך ב-0.5 שנייה ראשונה.
+מבנה: רגע אחד חזק → הסבר קצר → CTA.
+קצב: מהיר מאוד, כל פריים חשוב. מקסימום 15 שניות.
+צבע: חי, פילטרים אינסטגרמיים.
+כתוביות: גדולות, מרכז מסך, מקסימום 4 מילים בפריים.
+סיום: "החלק למעלה" או "הקש לעוד".`,
+    },
+  ],
+  content: [
+    {
+      id: 'podcast',
+      label: 'פודקאסט',
+      prompt: `ערוך קליפ מפודקאסט לסושיאל.
+פתיחה: הרגע הכי מעניין/מצחיק/מפתיע מהשיחה.
+מבנה: ציטוט חזק → הקשר → פיתוח → תובנה.
+קצב: טבעי, לא לחתוך יותר מדי. חיתוכים רק על החלפת דובר או נקודה חדשה.
+זוויות מצלמה: החלפת זווית כל 2-3 משפטים בין הדוברים.
+זומים: זום עדין כשמישהו אומר משהו חזק.
+צבע: חם וביתי, מרגיש אינטימי.
+כתוביות: חובה! 90% צופים בלי סאונד. הדגשת ציטוטים חזקים.
+מוזיקה: מינימלית, רק ברקע ובמעברים.`,
+    },
+    {
+      id: 'interview',
+      label: 'ראיון',
+      prompt: `ערוך ראיון מקצועי וזורם.
+פתיחה: התשובה הכי מעניינת של המרואיין, לא השאלה.
+מבנה: תשובה חזקה → שאלה + תשובה → שאלה + תשובה → תובנת סיום.
+קצב: הסר את השאלות הארוכות, השאר רק תשובות עם שאלות קצרות.
+זוויות: החלפת זווית בין שואל למרואיין, קלוזאפ על רגעות רגשיים.
+B-Roll: הכנס בין תשובות למעברים חלקים.
+כתוביות: שם + תפקיד של כל דובר בתחילת הופעתו.
+צבע: מקצועי וחד.`,
+    },
+    {
+      id: 'presentation',
+      label: 'הרצאה / וובינר',
+      prompt: `ערוך הרצאה לסרטון קצר ומרוכז.
+פתיחה: התובנה המרכזית או ההבטחה של ההרצאה ב-3 שניות.
+מבנה: תובנה מרכזית → 3 נקודות תומכות → סיכום → CTA.
+קצב: מתון, חיתוכים כל 5-6 שניות. הסר חלקים שחוזרים על עצמם.
+זומים: זום על הדובר בנקודות מפתח.
+B-Roll: שקפים, גרפים, דוגמאות ויזואליות.
+כתוביות: כל נקודה מפתח מופיעה כטקסט על המסך.
+גרפיקות: מספור נקודות (1/3, 2/3, 3/3).
+סיום: סיכום + קישור להרצאה המלאה.`,
+    },
+    {
+      id: 'tutorial',
+      label: 'הדרכה / טוטוריאל',
+      prompt: `ערוך טוטוריאל ברור וקל לעקוב.
+פתיחה: "בסוף הסרטון תדע איך ל..." + תוצאה סופית (1-2 שניות).
+מבנה: תוצאה → שלב 1 → שלב 2 → שלב 3 → תוצאה סופית.
+קצב: ברור ומתון, חיתוכים בין שלבים. הסר היסוסים ומילוי.
+זומים: זום חזק על פרטים (מסכים, כפתורים, פעולות ידיים).
+B-Roll: צילומי מסך, הדגמות, לפני/אחרי.
+כתוביות: כל שלב ממוספר, highlight על מילות מפתח.
+גרפיקות: חיצים, עיגולים, הדגשות על אזורים חשובים.
+סיום: "עכשיו תורך! נסה בעצמך" + CTA.`,
+    },
+  ],
+}
+
+const CONTENT_CATEGORIES = [
+  { key: 'business', title: 'עסקי' },
+  { key: 'social', title: 'סושיאל' },
+  { key: 'content', title: 'תוכן' },
+]
+
+interface ProfessionalOption {
+  id: string
+  label: string
+  description: string
+  icon: string
+  promptAddition: string
+}
+
+const PROFESSIONAL_OPTIONS: ProfessionalOption[] = [
   {
-    title: 'עסקי',
-    presets: [
-      { label: 'סרטון תדמית לחברה', prompt: 'סרטון תדמית מקצועי לחברה' },
-      { label: 'סרטון מכירות למוצר', prompt: 'סרטון מכירות שמציג את המוצר ויתרונותיו' },
-      { label: 'סרטון לקוחות ממליצים', prompt: 'סרטון עדויות לקוחות מרוצים' },
-      { label: 'סרטון הדרכה לעובדים', prompt: 'סרטון הדרכה פנימי ברור ומקצועי' },
-    ]
+    id: 'eye_contact',
+    label: 'שמירה על קשר עין',
+    description: 'יישר את העיניים של הדובר למרכז המצלמה',
+    icon: '👁️',
+    promptAddition: 'חשוב: שמור על קשר עין עם המצלמה. אם הדובר מסתכל הצידה, העדף קטעים שבהם הוא מסתכל ישר למצלמה.',
   },
   {
-    title: 'סושיאל',
-    presets: [
-      { label: 'TikTok / Reels', prompt: 'סרטון קצר וקצבי לרשתות חברתיות' },
-      { label: 'YouTube Shorts', prompt: 'קליפ קצר ליוטיוב עם פתיחה חזקה' },
-      { label: 'סטורי', prompt: 'סטורי קצר ומושך לאינסטגרם' },
-      { label: 'פרסומת ממומנת', prompt: 'פרסומת קצרה ואנרגטית לקמפיין' },
-    ]
+    id: 'remove_silence',
+    label: 'הסרת שתיקות',
+    description: 'קצר שתיקות ארוכות מעל 1.5 שניות',
+    icon: '🔇',
+    promptAddition: 'הסר כל שתיקה ארוכה מ-1.5 שניות. קצר הפסקות בין משפטים ל-0.3 שניות מקסימום.',
   },
   {
-    title: 'תוכן',
-    presets: [
-      { label: 'פודקאסט', prompt: 'עריכת פודקאסט נקייה ומקצועית' },
-      { label: 'ראיון', prompt: 'עריכת ראיון עם מעברים חלקים' },
-      { label: 'הרצאה / וובינר', prompt: 'עריכת הרצאה עם הדגשות ויזואליות' },
-      { label: 'הדרכה / טוטוריאל', prompt: 'סרטון הדרכה ברור עם שלבים' },
-    ]
+    id: 'energy_boost',
+    label: 'הגברת אנרגיה',
+    description: 'קצב מהיר יותר, חיתוכים תכופים, זומים דינמיים',
+    icon: '⚡',
+    promptAddition: 'הגבר את האנרגיה: חיתוכים כל 2 שניות, זומים אגרסיביים 1.3x כל 4 שניות, מוזיקה קצבית 18%.',
+  },
+  {
+    id: 'calm_professional',
+    label: 'רגוע ומקצועי',
+    description: 'קצב מתון, עריכה נקייה, מינימליסטי',
+    icon: '🎩',
+    promptAddition: 'שמור על קצב רגוע ומקצועי: חיתוכים כל 5-6 שניות, זומים עדינים 1.1x, מוזיקה שקטה 10%, צבע נקי.',
+  },
+  {
+    id: 'cinematic',
+    label: 'סינמטי',
+    description: 'צבע קולנועי, טשטוש רקע חזק, מעברים חלקים',
+    icon: '🎬',
+    promptAddition: 'סגנון קולנועי: color grade חם עם כחולים בצללים, טשטוש רקע חזק, מעברים dissolve, יחס 2.35:1 עם פסים שחורים.',
+  },
+  {
+    id: 'trending',
+    label: 'טרנדי',
+    description: 'סגנון עדכני לפי הטרנדים האחרונים',
+    icon: '🔥',
+    promptAddition: 'השתמש בסגנון העריכה הכי טרנדי: אפקטים פופולריים, חיתוכים על הביט, טקסט מונפש, אפקטי zoom מהירים.',
+  },
+  {
+    id: 'subtitles_hebrew',
+    label: 'כתוביות בעברית',
+    description: 'כתוביות מונפשות בעברית עם הדגשות',
+    icon: '📝',
+    promptAddition: 'חובה: כתוביות בעברית עם אנימציית pop, מילות מפתח מודגשות בצבע, ממוקמות באמצע מתחת לסנטר.',
+  },
+  {
+    id: 'music_energetic',
+    label: 'מוזיקת רקע אנרגטית',
+    description: 'מוזיקה קצבית ומעוררת',
+    icon: '🎵',
+    promptAddition: 'מוזיקת רקע אנרגטית וקצבית, ווליום 15-18%, חיתוכים מסונכרנים עם הביט.',
   },
 ]
+
+export interface LogoData {
+  file: File | null
+  url: string | null
+  position: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'
+  size: 'small' | 'medium' | 'large'
+  opacity: number
+}
+
+function LogoUpload({ logo, onLogoChange }: {
+  logo: LogoData | null
+  onLogoChange: (logo: LogoData | null) => void
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      return
+    }
+
+    const url = URL.createObjectURL(file)
+    onLogoChange({
+      file,
+      url,
+      position: 'top-right',
+      size: 'medium',
+      opacity: 0.9,
+    })
+  }
+
+  function removeLogo() {
+    if (logo?.url) {
+      URL.revokeObjectURL(logo.url)
+    }
+    onLogoChange(null)
+  }
+
+  return (
+    <div className="space-y-3" dir="rtl">
+      <div className="flex items-center gap-2">
+        <span className="text-lg">🏷️</span>
+        <h4 className="text-white text-sm font-bold">לוגו</h4>
+        <span className="text-gray-500 text-xs">(אופציונלי)</span>
+      </div>
+
+      {logo?.url ? (
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
+          <img
+            src={logo.url}
+            alt="Logo"
+            className="w-12 h-12 object-contain rounded bg-white/10 p-1"
+          />
+          <div className="flex-1">
+            <div className="text-white text-sm">{logo.file?.name}</div>
+
+            <div className="flex gap-1 mt-2">
+              {([
+                { id: 'top-right' as const, label: '↗ ימין למעלה' },
+                { id: 'top-left' as const, label: '↖ שמאל למעלה' },
+                { id: 'bottom-right' as const, label: '↘ ימין למטה' },
+                { id: 'bottom-left' as const, label: '↙ שמאל למטה' },
+              ]).map(pos => (
+                <button
+                  key={pos.id}
+                  onClick={() => onLogoChange({ ...logo, position: pos.id })}
+                  className={`px-2 py-1 rounded text-[10px] ${
+                    logo.position === pos.id
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-white/10 text-gray-400'
+                  }`}
+                >
+                  {pos.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex gap-1 mt-1">
+              {([
+                { id: 'small' as const, label: 'קטן' },
+                { id: 'medium' as const, label: 'בינוני' },
+                { id: 'large' as const, label: 'גדול' },
+              ]).map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => onLogoChange({ ...logo, size: s.id })}
+                  className={`px-2 py-1 rounded text-[10px] ${
+                    logo.size === s.id
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-white/10 text-gray-400'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={removeLogo}
+            className="text-gray-500 hover:text-red-400 text-sm"
+          >
+            ✕
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full p-4 rounded-xl border-2 border-dashed border-white/20 hover:border-purple-500/50 text-center transition"
+        >
+          <span className="text-gray-400 text-sm">📎 לחץ להעלאת לוגו</span>
+          <div className="text-gray-600 text-xs mt-1">PNG, JPG, SVG</div>
+        </button>
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/svg+xml,image/webp"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+    </div>
+  )
+}
+
+export function buildAutoEditorPrompt(
+  contentType: ContentTypeItem | null,
+  selectedFormats: string[],
+  selectedOptions: string[],
+): string {
+  let prompt = ''
+
+  if (contentType?.prompt) {
+    prompt += contentType.prompt + '\n\n'
+  }
+
+  if (selectedFormats.includes('portrait')) {
+    prompt += 'פורמט: 9:16 עמודי (Reels/TikTok/Shorts). כתוביות גדולות, אלמנטים במרכז.\n'
+  }
+  if (selectedFormats.includes('landscape')) {
+    prompt += 'פורמט: 16:9 רחב (YouTube/Facebook). יש מרחב לגרפיקות בצדדים.\n'
+  }
+  if (selectedFormats.includes('square')) {
+    prompt += 'פורמט: 1:1 מרובע (LinkedIn/Feed). כתוביות בתחתית, תמונה מרוכזת.\n'
+  }
+
+  const optionPrompts = selectedOptions
+    .map(id => PROFESSIONAL_OPTIONS.find(o => o.id === id)?.promptAddition)
+    .filter(Boolean)
+
+  if (optionPrompts.length > 0) {
+    prompt += '\nהנחיות נוספות:\n'
+    prompt += optionPrompts.join('\n')
+  }
+
+  return prompt
+}
 
 function EvolutionBadge() {
-  // Learning insights are sent only via Telegram - hidden from user UI
   return null
 }
 
-function PromptBuilder({ prompt, setPrompt }: { prompt: string; setPrompt: (p: string) => void }) {
+function PromptBuilder({ prompt, setPrompt, onContentTypeSelect }: {
+  prompt: string
+  setPrompt: (p: string) => void
+  onContentTypeSelect: (ct: ContentTypeItem) => void
+}) {
   return (
     <div dir="rtl" className="space-y-4">
-      {/* Practical preset categories */}
-      {PRESET_CATEGORIES.map(cat => (
-        <div key={cat.title}>
+      {CONTENT_CATEGORIES.map(cat => (
+        <div key={cat.key}>
           <h4 className="text-xs text-gray-500 mb-2">{cat.title}</h4>
           <div className="flex flex-wrap gap-2">
-            {cat.presets.map(p => (
-              <button key={p.label} onClick={() => setPrompt(p.prompt)}
+            {CONTENT_TYPES[cat.key].map(ct => (
+              <button key={ct.id} onClick={() => {
+                onContentTypeSelect(ct)
+                setPrompt(ct.prompt)
+              }}
                 className="bg-white/5 border border-white/10 text-gray-300 text-xs px-3 py-1.5 rounded-full hover:border-purple-500/30 hover:bg-purple-500/10 transition">
-                {p.label}
+                {ct.label}
               </button>
             ))}
           </div>
         </div>
       ))}
 
-      {/* Prompt textarea */}
       <div>
         <div className="flex justify-between items-center mb-2">
           <h4 className="text-sm font-medium text-white">הפרומפט שלך:</h4>
@@ -112,7 +492,7 @@ function PromptBuilder({ prompt, setPrompt }: { prompt: string; setPrompt: (p: s
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
           placeholder="תאר בקצרה מה אתה רוצה. אחרי התמלול ה-AI ישפר אוטומטית..."
-          className="w-full h-20 bg-black/30 text-white rounded-xl p-4 text-sm resize-none border border-white/10 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition"
+          className="w-full h-24 bg-black/30 text-white rounded-xl p-4 text-sm resize-none border border-white/10 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition"
           dir="rtl"
         />
         <p className="text-xs text-gray-600 text-center mt-1">
@@ -138,6 +518,7 @@ function estimateMaxVideos(files: LocalFile[], targetDuration: number): number {
 export default function AutoEditorSettings({ files, onStart, onBack, onClose }: AutoEditorSettingsProps) {
   const profile = useUserProfileStore()
   const [userPrompt, setUserPrompt] = useState('')
+  const [selectedContentType, setSelectedContentType] = useState<ContentTypeItem | null>(null)
   const [targetDuration, setTargetDuration] = useState(-1)
   const [customDuration, setCustomDuration] = useState('')
   const [numberOfVideos, setNumberOfVideos] = useState(1)
@@ -146,13 +527,13 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       ? profile.preferredBrollProvider
       : 'seedance'
   )
-  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(
-    new Set(['tiktok', 'reels', 'shorts'])
-  )
+  const [selectedFormats, setSelectedFormats] = useState<string[]>(['portrait'])
+  const [selectedOptions, setSelectedOptions] = useState<string[]>([])
   const [includeSubtitles, setIncludeSubtitles] = useState(true)
   const [includeBackground, setIncludeBackground] = useState(true)
   const [animatedSubtitles, setAnimatedSubtitles] = useState(false)
   const [animationStyle, setAnimationStyle] = useState('auto')
+  const [logo, setLogo] = useState<LogoData | null>(null)
 
   const closeHandler = onClose || onBack
 
@@ -167,30 +548,49 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
   const effectiveDuration = targetDuration === 0 ? (parseInt(customDuration) || 60) : targetDuration
   const maxVideos = estimateMaxVideos(files, effectiveDuration)
 
-  const togglePlatform = (id: string) => {
-    setSelectedPlatforms(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
+  const toggleFormat = (id: string) => {
+    setSelectedFormats(prev =>
+      prev.includes(id) ? prev.filter(f => f !== id) : [...prev, id]
+    )
   }
 
+  const toggleOption = (id: string) => {
+    setSelectedOptions(prev =>
+      prev.includes(id) ? prev.filter(o => o !== id) : [...prev, id]
+    )
+  }
+
+  // Derive platforms from selected formats
+  const derivedPlatforms = selectedFormats.flatMap(
+    fId => FORMAT_OPTIONS.find(f => f.id === fId)?.platforms || []
+  )
+
   const handleStart = () => {
-    if (selectedPlatforms.size === 0) return
+    if (selectedFormats.length === 0) return
+
+    const fullPrompt = buildAutoEditorPrompt(selectedContentType, selectedFormats, selectedOptions)
+    const finalPrompt = userPrompt || fullPrompt
+    console.log('[AUTO-EDITOR] Generated prompt:', finalPrompt.substring(0, 200) + '...')
+
     onStart({
-      userPrompt,
+      userPrompt: finalPrompt,
       targetDuration: effectiveDuration,
       numberOfVideos,
       brollGenerator,
-      platforms: Array.from(selectedPlatforms),
+      platforms: derivedPlatforms,
       includeSubtitles,
       includeBackground,
       animatedSubtitles,
       animationStyle,
+      selectedFormats,
+      selectedOptions,
+      logo: logo ? {
+        file: logo.file,
+        url: logo.url,
+        position: logo.position,
+        size: logo.size,
+        opacity: logo.opacity,
+      } : undefined,
     })
   }
 
@@ -248,34 +648,67 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
             </div>
           </div>
 
-          {/* Prompt Builder with chips */}
-          <PromptBuilder prompt={userPrompt} setPrompt={setUserPrompt} />
+          {/* Prompt Builder with content type chips */}
+          <PromptBuilder
+            prompt={userPrompt}
+            setPrompt={setUserPrompt}
+            onContentTypeSelect={setSelectedContentType}
+          />
 
-          {/* Platform selection */}
+          {/* Format selection (replaces platform selection) */}
           <div className="space-y-3">
-            <h4 className="text-sm font-medium text-text-primary">פלטפורמות לייצוא:</h4>
-            <div className="grid grid-cols-2 gap-2">
-              {PLATFORM_OPTIONS.map(platform => (
-                <label key={platform.id} className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer border transition ${
-                  selectedPlatforms.has(platform.id) ? 'border-purple-500 bg-purple-500/15' : 'border-white/10 bg-white/5'
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={selectedPlatforms.has(platform.id)}
-                    onChange={() => togglePlatform(platform.id)}
-                    className="accent-purple-500"
-                  />
-                  <span>{platform.icon}</span>
-                  <div>
-                    <div className="text-white text-sm">{platform.name}</div>
-                    <div className="text-gray-500 text-xs">{platform.ratio}</div>
-                  </div>
-                </label>
+            <h4 className="text-white text-sm font-bold">פורמט ייצוא</h4>
+            <p className="text-gray-500 text-xs">בחר פורמט אחד או יותר:</p>
+
+            <div className="grid grid-cols-3 gap-3">
+              {FORMAT_OPTIONS.map(format => (
+                <button
+                  key={format.id}
+                  onClick={() => toggleFormat(format.id)}
+                  className={`p-4 rounded-xl border-2 text-center transition ${
+                    selectedFormats.includes(format.id)
+                      ? 'border-purple-500 bg-purple-500/10'
+                      : 'border-white/10 bg-white/5 hover:border-white/30'
+                  }`}
+                >
+                  <span className="text-2xl">{format.icon}</span>
+                  <div className="text-white text-sm font-bold mt-1">{format.label}</div>
+                  <div className="text-gray-400 text-xs mt-1">{format.description}</div>
+                  {selectedFormats.includes(format.id) && (
+                    <span className="text-purple-400 text-xs mt-1 block">✓</span>
+                  )}
+                </button>
               ))}
             </div>
-            {selectedPlatforms.size === 0 && (
-              <p className="text-xs text-red-400">יש לבחור לפחות פלטפורמה אחת</p>
+            {selectedFormats.length === 0 && (
+              <p className="text-xs text-red-400">יש לבחור לפחות פורמט אחד</p>
             )}
+          </div>
+
+          {/* Professional options */}
+          <div className="space-y-3">
+            <h4 className="text-white text-sm font-bold">אפשרויות מקצועיות</h4>
+            <p className="text-gray-500 text-xs">בחר אפשרויות נוספות:</p>
+
+            <div className="grid grid-cols-2 gap-2">
+              {PROFESSIONAL_OPTIONS.map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => toggleOption(opt.id)}
+                  className={`flex items-center gap-2 p-3 rounded-lg border text-right transition ${
+                    selectedOptions.includes(opt.id)
+                      ? 'border-purple-500 bg-purple-500/10'
+                      : 'border-white/10 bg-white/5 hover:border-white/30'
+                  }`}
+                >
+                  <span className="text-lg">{opt.icon}</span>
+                  <div>
+                    <div className="text-white text-xs font-medium">{opt.label}</div>
+                    <div className="text-gray-500 text-[10px]">{opt.description}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Duration selection */}
@@ -298,7 +731,6 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
               ))}
             </div>
 
-            {/* Custom duration input */}
             {targetDuration === 0 && (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-400">מותאם:</span>
@@ -315,7 +747,6 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
               </div>
             )}
 
-            {/* AI explanation when selected */}
             {targetDuration === -1 && (
               <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 mt-2">
                 <p className="text-purple-300 text-sm">
@@ -388,6 +819,9 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
               ))}
             </div>
           </div>
+
+          {/* Logo upload */}
+          <LogoUpload logo={logo} onLogoChange={setLogo} />
 
           {/* Additional options */}
           <div className="space-y-3">
@@ -474,7 +908,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           <div className="flex items-center gap-3 pt-4 pb-8">
             <button
               onClick={handleStart}
-              disabled={!userPrompt.trim() || selectedPlatforms.size === 0}
+              disabled={!userPrompt.trim() || selectedFormats.length === 0}
               className="flex items-center gap-2 px-8 py-3.5 bg-gradient-to-l from-accent-purple to-purple-600 hover:from-accent-purple/90 hover:to-purple-600/90 rounded-xl text-sm font-bold transition-all shadow-lg shadow-accent-purple/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Sparkles size={18} />

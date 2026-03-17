@@ -250,6 +250,21 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
           } catch { /* ignore serialization errors */ }
         }
 
+        // Store logo data for editor if available
+        const inputData = storeState.input
+        if (inputData?.logo?.serverUrl) {
+          try {
+            localStorage.setItem('autoEditorLogo', JSON.stringify({
+              url: inputData.logo.serverUrl,
+              position: inputData.logo.position,
+              size: inputData.logo.size,
+              opacity: inputData.logo.opacity,
+              editable: true,
+              type: 'logo',
+            }))
+          } catch { /* ignore serialization errors */ }
+        }
+
         try {
           const response = await fetch(videoUrl)
           if (!response.ok) {
