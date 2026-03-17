@@ -266,8 +266,9 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     try {
       const inputPath = req.file.path
       const timestamp = Date.now()
+      const language = (req.body?.language as string) || 'he'
 
-      console.log('[TRANSCRIBE] Using Deepgram Nova-3 for:', req.file.originalname, (req.file.size / 1024 / 1024).toFixed(1) + 'MB')
+      console.log(`[TRANSCRIBE] Using Deepgram Nova-3 for: ${req.file.originalname} ${(req.file.size / 1024 / 1024).toFixed(1)}MB (language: ${language})`)
 
       // Extract audio as MP3
       const mp3Path = inputPath.replace(/\.[^.]+$/, '') + '_audio.mp3'
@@ -282,21 +283,29 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
       const fileToUpload = fs.existsSync(mp3Path) ? mp3Path : inputPath
 
-      console.log('[TRANSCRIBE] Sending to Deepgram (Nova-3 + diarization + multi-language)...')
-
       const audioBuffer = fs.readFileSync(fileToUpload)
 
-      const dgResponse = await fetch('https://api.deepgram.com/v1/listen?model=nova-3&language=multi&smart_format=true&diarize=true&utterances=true', {
+      const apiKey = (process.env.DEEPGRAM_API_KEY || '').trim()
+      if (!apiKey) throw new Error('DEEPGRAM_API_KEY not set')
+
+      console.log(`[TRANSCRIBE] Sending ${(audioBuffer.length / 1024 / 1024).toFixed(1)}MB to Deepgram REST API...`)
+
+      const langParam = language === 'detect' ? 'detect_language=true' : `language=${language}`
+      const dgUrl = `https://api.deepgram.com/v1/listen?model=nova-3&${langParam}&smart_format=true&diarize=true&utterances=true&punctuate=true`
+      console.log(`[TRANSCRIBE] Deepgram URL: ${dgUrl}`)
+
+      const dgResponse = await fetch(dgUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
+          'Authorization': `Token ${apiKey}`,
           'Content-Type': 'audio/mp3',
         },
         body: audioBuffer,
       })
 
       if (!dgResponse.ok) {
-        throw new Error(`Deepgram API error: ${dgResponse.status} ${dgResponse.statusText}`)
+        const errorText = await dgResponse.text()
+        throw new Error(`Deepgram API ${dgResponse.status}: ${errorText.substring(0, 200)}`)
       }
 
       const result = await dgResponse.json() as any
@@ -4722,10 +4731,10 @@ async function handleGPTAutoTranscribe(req: any, res: any) {
 }
 
 app.post('/api/auto-editor/transcribe', async (req, res) => {
-  const { fileUrl } = req.body
+  const { fileUrl, language = 'he' } = req.body
   const timestamp = Date.now()
 
-  console.log('[TRANSCRIBE] Starting with Deepgram Nova-3...')
+  console.log(`[TRANSCRIBE] Starting with Deepgram Nova-3 (language: ${language})...`)
   console.log('[TRANSCRIBE] File:', fileUrl)
 
   if (!process.env.DEEPGRAM_API_KEY) {
@@ -4780,22 +4789,29 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
     const fileToSend = fs.existsSync(audioPath) ? audioPath : localFilePath
 
-    // Step 3: Transcribe with Deepgram Nova-3
-    console.log('[TRANSCRIBE] Sending to Deepgram (Nova-3 + diarization + multi-language)...')
+    // Step 3: Transcribe with Deepgram Nova-3 REST API
+    const apiKey = (process.env.DEEPGRAM_API_KEY || '').trim()
+    if (!apiKey) throw new Error('DEEPGRAM_API_KEY not set')
 
     const audioBuffer = fs.readFileSync(fileToSend)
+    console.log(`[TRANSCRIBE] Sending ${(audioBuffer.length / 1024 / 1024).toFixed(1)}MB to Deepgram REST API...`)
 
-    const dgResponse = await fetch('https://api.deepgram.com/v1/listen?model=nova-3&language=multi&smart_format=true&diarize=true&utterances=true', {
+    const langParam = language === 'detect' ? 'detect_language=true' : `language=${language}`
+    const dgUrl = `https://api.deepgram.com/v1/listen?model=nova-3&${langParam}&smart_format=true&diarize=true&utterances=true&punctuate=true`
+    console.log(`[TRANSCRIBE] Deepgram URL: ${dgUrl}`)
+
+    const dgResponse = await fetch(dgUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
+        'Authorization': `Token ${apiKey}`,
         'Content-Type': 'audio/mp3',
       },
       body: audioBuffer,
     })
 
     if (!dgResponse.ok) {
-      throw new Error(`Deepgram API error: ${dgResponse.status} ${dgResponse.statusText}`)
+      const errorText = await dgResponse.text()
+      throw new Error(`Deepgram API ${dgResponse.status}: ${errorText.substring(0, 200)}`)
     }
 
     const result = await dgResponse.json() as any
@@ -10660,22 +10676,27 @@ function scheduleDailyLearning() {
     timeZone: ISRAEL_TIMEZONE, hour: 'numeric', hour12: false
   }))
 
-  if (!hasLearnedThisSession()) {
-    const shouldRunNow = RUN_TIMES.some(rt => {
-      const hoursSince = israelHour - rt.hour
-      return rt.type === 'learn' && hoursSince >= 0 && hoursSince < 6
-    })
+  if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
+    // Only catch up missed sessions on Railway (production)
+    if (!hasLearnedThisSession()) {
+      const shouldRunNow = RUN_TIMES.some(rt => {
+        const hoursSince = israelHour - rt.hour
+        return rt.type === 'learn' && hoursSince >= 0 && hoursSince < 6
+      })
 
-    if (shouldRunNow) {
-      console.log('[LEARN] Missed scheduled session after restart, running now (30s delay)...')
-      setTimeout(async () => {
-        try {
-          await runServerLearning()
-        } catch (e: any) {
-          console.error('[LEARN] Catch-up session failed:', e.message)
-        }
-      }, 30000)
+      if (shouldRunNow) {
+        console.log('[LEARN] Missed scheduled session, running now (30s delay)...')
+        setTimeout(async () => {
+          try {
+            await runServerLearning()
+          } catch (e: any) {
+            console.error('[LEARN] Catch-up failed:', e.message)
+          }
+        }, 30000)
+      }
     }
+  } else {
+    console.log('[LEARN] Development mode: skipping catch-up, waiting for scheduled time')
   }
 
   function scheduleNext() {
