@@ -13,6 +13,17 @@ import { createEmptyEditJob } from './types/EditJob'
 
 const API_BASE = 'http://localhost:3001/api'
 
+// === Pipeline timing utility ===
+function timeLog(label: string) {
+  const start = Date.now()
+  return {
+    done: (detail?: string) => {
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+      console.log(`[PIPELINE] ⏱️ ${label}: ${elapsed}s${detail ? ` (${detail})` : ''}`)
+    },
+  }
+}
+
 // Client-side speaker matching (mirrors server's matchesSpeaker for consistency)
 function matchesSpeakerClient(segmentSpeaker: any, targetPresenter: string): boolean {
   if (!segmentSpeaker || !targetPresenter) return false
@@ -103,19 +114,44 @@ async function generateAllBroll(
     return []
   }
 
+  if (prompts.length === 0) return []
+
   const generateFn = generator === 'seedance' ? generateBrollSeedance : generateBrollVeo
+  const BATCH_SIZE = 3
+  const timer = timeLog(`B-Roll generation (${prompts.length} clips, batches of ${BATCH_SIZE})`)
+
+  console.log(`[PIPELINE] Starting: ${prompts.length} B-Roll clips (${BATCH_SIZE} parallel)...`)
+  addLog(`מייצר ${prompts.length} קטעי B-Roll (${BATCH_SIZE} במקביל)...`)
 
   const results: string[] = []
-  for (let i = 0; i < prompts.length; i++) {
-    addLog(`מייצר קטע B-Roll ${i + 1} מתוך ${prompts.length}`)
-    try {
-      const url = await generateFn(prompts[i].prompt, 4)
-      results.push(url)
-    } catch (err: any) {
-      addLog(`שגיאה ביצירת B-Roll ${i + 1}: ${err.message}. מדלג.`)
-      results.push('')
-    }
+  for (let i = 0; i < prompts.length; i += BATCH_SIZE) {
+    const batch = prompts.slice(i, i + BATCH_SIZE)
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1
+    const totalBatches = Math.ceil(prompts.length / BATCH_SIZE)
+    console.log(`[PIPELINE] B-Roll batch ${batchNum}/${totalBatches}: ${batch.length} clips`)
+    addLog(`B-Roll אצווה ${batchNum}/${totalBatches}: ${batch.length} קטעים במקביל`)
+
+    const batchResults = await Promise.all(
+      batch.map((item, batchIdx) => {
+        const globalIdx = i + batchIdx
+        return generateFn(item.prompt, 4)
+          .then(url => {
+            addLog(`B-Roll ${globalIdx + 1}/${prompts.length} הושלם ✓`)
+            return url
+          })
+          .catch((err: any) => {
+            console.warn(`[B-ROLL] Failed #${globalIdx + 1}: ${err.message?.substring(0, 100)}`)
+            addLog(`B-Roll ${globalIdx + 1}/${prompts.length} נכשל, ממשיך`)
+            return ''
+          })
+      })
+    )
+    results.push(...batchResults)
   }
+
+  const successCount = results.filter(Boolean).length
+  timer.done(`${successCount}/${prompts.length} succeeded`)
+  console.log(`[PIPELINE] Done: ${successCount}/${prompts.length} B-Roll clips generated`)
   return results.filter(Boolean)
 }
 
@@ -630,10 +666,12 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
   job.subtitles.style = (enrichedInput.animationStyle as any) || 'auto'
 
   try {
+    const phase1Timer = timeLog('Phase 1: Transcribe + Analyze + Enrich')
     const apis = await checkApiAvailability()
     addLog(`APIs: Gemini=${apis.gemini ? 'V' : 'X'} Seedance=${apis.seedance ? 'V' : 'X'} Pixabay=${apis.pixabay ? 'V' : 'X'}`)
 
     // Step 1 — Transcription
+    const transcribeTimer = timeLog('Transcription')
     let transcript = useAutoEditorStore.getState().cachedTranscript
     if (!transcript) {
       if (useAutoEditorStore.getState().step !== 'transcribing') {
@@ -644,6 +682,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     } else {
       addLog('משתמש בתמלול קיים מהמטמון')
     }
+    transcribeTimer.done(`${transcript.segments?.length || 0} segments`)
 
     // Store in EditJob
     const segments: TranscriptSegment[] = (transcript.segments || []).map((s: any) => ({
@@ -881,6 +920,8 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     // Save job to module-level variable for Phase 2
     currentJobA = job
 
+    phase1Timer.done(`${transcript.segments?.length || 0} segments, presenter: ${job.transcript?.mainPresenter || 'none'}`)
+
     setStep('review_enrichment')
     // PAUSE HERE - UI will show EnrichmentReview component
 
@@ -958,59 +999,140 @@ export async function continueAfterEnrichment(
   }
 
   try {
+    const pipelineStart = Date.now()
     const apis = await checkApiAvailability()
 
-    // Step 4 — Two-step AI planning: 2 versions (A and B)
+    // ========== STAGE 2: PLANNING + MUSIC + BACKGROUND (parallel) ==========
+    // Planning, music search, and background image are independent — run all at the same time
     const cachedPlan = useAutoEditorStore.getState().cachedEditingPlan
     let editingPlanA = cachedPlan?.planA || cachedPlan
     let editingPlanB: any = cachedPlan?.planB || null
-
-    // If cached plan is the new format with planA/planB, extract planA
     if (cachedPlan?.planA) editingPlanA = cachedPlan.planA
 
-    if (!editingPlanA) {
+    let backgroundImage: string = ''
+    let musicUrl: string = ''
+    let brollClips: string[] = []
+    const cachedAssets = useAutoEditorStore.getState().cachedAssets
+
+    if (!editingPlanA && !cachedAssets) {
+      // === Run planning + music + background ALL in parallel ===
       setStep('planning')
+      const stage2Timer = timeLog('Stage 2: Planning + Music + Background')
+
+      const shouldGenerateBackground = finalInput.includeBackground !== false
 
       const versionAStyle = getVersionAStyle(detectedType)
-      setProgress({ current: 0, total: 4, label: `גרסה A: ${versionAStyle}` })
-      addLog(`תכנון גרסה A: ${versionAStyle}`)
-
-      const inputA: AutoEditorInput = {
-        ...finalInput,
-        userPrompt: `${finalInput.userPrompt}\n\n=== VERSION A INSTRUCTIONS ===\nגישת עריכה: ${versionAStyle}\nThis is VERSION A — use a standard, proven editing approach.`,
-      }
-      editingPlanA = await planWithChatGPT(transcript, inputA, detectedType, visualAnalysis, energyAnalysis)
-      setCachedEditingPlan(editingPlanA)
-
       const versionBStyle = getVersionBStyle(detectedType)
-      setProgress({ current: 2, total: 4, label: `גרסה B: ${versionBStyle}` })
-      addLog(`תכנון גרסה B: ${versionBStyle}`)
+      addLog(`תכנון במקביל: גרסה A (${versionAStyle}) + B (${versionBStyle}) + מוזיקה + רקע`)
 
-      const inputB: AutoEditorInput = {
-        ...finalInput,
-        userPrompt: `${finalInput.userPrompt}\n\n=== VERSION B INSTRUCTIONS ===\nגישת עריכה: ${versionBStyle}\n\nIMPORTANT DIFFERENCES FROM VERSION A:\n- Use DIFFERENT cut points (start 2-3 seconds later or earlier)\n- Use DIFFERENT hook (pick a different strong moment)\n- Use DIFFERENT color grade\n- Use DIFFERENT subtitle style\n- Use DIFFERENT zoom timing\n- Pacing should be ${detectedType === 'ad_short' ? 'varied/dynamic' : 'different from standard'}\n- This MUST produce a noticeably different video from Version A`,
-      }
-      editingPlanB = await planWithChatGPT(transcript, inputB, detectedType, visualAnalysis, energyAnalysis)
-      // Cache both plans so B is available on retry
+      const [planAResult, planBResult, musicResult, bgResult] = await Promise.all([
+        // 🧠 Plan Version A
+        (async () => {
+          console.log('[PIPELINE] Starting: Plan A...')
+          try {
+            setProgress({ current: 0, total: 4, label: `גרסה A: ${versionAStyle}` })
+            const inputA: AutoEditorInput = {
+              ...finalInput,
+              userPrompt: `${finalInput.userPrompt}\n\n=== VERSION A INSTRUCTIONS ===\nגישת עריכה: ${versionAStyle}\nThis is VERSION A — use a standard, proven editing approach.`,
+            }
+            const plan = await planWithChatGPT(transcript, inputA, detectedType, visualAnalysis, energyAnalysis)
+            console.log('[PIPELINE] Done: Plan A')
+            return plan
+          } catch (e: any) {
+            console.error(`[PIPELINE] Plan A failed: ${e.message?.substring(0, 150)}`)
+            throw e // Planning A failure is critical
+          }
+        })(),
+
+        // 🧠 Plan Version B
+        (async () => {
+          console.log('[PIPELINE] Starting: Plan B...')
+          try {
+            const inputB: AutoEditorInput = {
+              ...finalInput,
+              userPrompt: `${finalInput.userPrompt}\n\n=== VERSION B INSTRUCTIONS ===\nגישת עריכה: ${versionBStyle}\n\nIMPORTANT DIFFERENCES FROM VERSION A:\n- Use DIFFERENT cut points (start 2-3 seconds later or earlier)\n- Use DIFFERENT hook (pick a different strong moment)\n- Use DIFFERENT color grade\n- Use DIFFERENT subtitle style\n- Use DIFFERENT zoom timing\n- Pacing should be ${detectedType === 'ad_short' ? 'varied/dynamic' : 'different from standard'}\n- This MUST produce a noticeably different video from Version A`,
+            }
+            const plan = await planWithChatGPT(transcript, inputB, detectedType, visualAnalysis, energyAnalysis)
+            console.log('[PIPELINE] Done: Plan B')
+            return plan
+          } catch (e: any) {
+            console.warn(`[PIPELINE] Plan B failed: ${e.message?.substring(0, 150)}`)
+            return null // Plan B failure is non-critical
+          }
+        })(),
+
+        // 🎵 Music search (independent, fast)
+        (async () => {
+          console.log('[PIPELINE] Starting: Music search...')
+          try {
+            const music = await findMusicSafe(
+              enrichment?.style?.music_search || finalInput.userPrompt,
+              apis.pixabay
+            )
+            console.log('[PIPELINE] Done: Music search')
+            return music
+          } catch (e: any) {
+            console.warn(`[PIPELINE] Music search failed: ${e.message?.substring(0, 150)}`)
+            return ''
+          }
+        })(),
+
+        // 🖼️ Background image (independent, ~10-20 seconds)
+        (async () => {
+          if (!shouldGenerateBackground) {
+            addLog('מדלג על תמונת רקע (כובה בהגדרות)')
+            return ''
+          }
+          console.log('[PIPELINE] Starting: Background image...')
+          try {
+            const bg = await generateBackgroundSafe(
+              enrichment?.background_prompt || finalInput.userPrompt,
+              apis.gemini, transcript, enrichment
+            )
+            console.log('[PIPELINE] Done: Background image')
+            return bg
+          } catch (e: any) {
+            console.warn(`[PIPELINE] Background image failed: ${e.message?.substring(0, 150)}`)
+            return ''
+          }
+        })(),
+      ])
+
+      editingPlanA = planAResult
+      editingPlanB = planBResult
+      musicUrl = musicResult
+      backgroundImage = bgResult
+
       setCachedEditingPlan({ planA: editingPlanA, planB: editingPlanB })
 
       // Validate A/B difference
       const cutsA = editingPlanA?.videos?.[0]?.cuts || []
       const cutsB = editingPlanB?.videos?.[0]?.cuts || []
-      const matchingCuts = cutsA.filter((ca: any) =>
-        cutsB.some((cb: any) => Math.abs((ca.keepStart ?? 0) - (cb.keepStart ?? 0)) < 1)
-      ).length
-      const diffScore = cutsA.length > 0 ? Math.round(100 - (matchingCuts / cutsA.length) * 100) : 100
-      addLog(`[A/B] Version A style: ${versionAStyle}, Version B style: ${versionBStyle}, Difference score: ${diffScore}%`)
-      if (diffScore < 20) {
-        addLog('[A/B] Warning: Plans are very similar, B may look nearly identical to A')
+      if (cutsB.length > 0) {
+        const matchingCuts = cutsA.filter((ca: any) =>
+          cutsB.some((cb: any) => Math.abs((ca.keepStart ?? 0) - (cb.keepStart ?? 0)) < 1)
+        ).length
+        const diffScore = cutsA.length > 0 ? Math.round(100 - (matchingCuts / cutsA.length) * 100) : 100
+        addLog(`[A/B] Version A: ${versionAStyle}, Version B: ${versionBStyle}, Difference: ${diffScore}%`)
+        if (diffScore < 20) {
+          addLog('[A/B] Warning: Plans are very similar, B may look nearly identical to A')
+        }
       }
 
-      setProgress({ current: 4, total: 4, label: 'שני התכנונים הושלמו!' })
+      stage2Timer.done(`planA: ${editingPlanA ? 'OK' : 'FAIL'}, planB: ${editingPlanB ? 'OK' : 'FAIL'}, music: ${musicUrl ? 'OK' : 'FAIL'}, bg: ${backgroundImage ? 'OK' : 'FAIL'}`)
+      setProgress({ current: 4, total: 4, label: 'תכנון + נכסים ראשוניים הושלמו!' })
     } else {
-      // Restore planB from cache if available
+      // Restore from cache
       if (cachedPlan?.planB) editingPlanB = cachedPlan.planB
+      if (!editingPlanA && cachedPlan && !cachedPlan.planA) editingPlanA = cachedPlan
       addLog('משתמש בתכנון קיים מהמטמון')
+
+      if (cachedAssets) {
+        addLog('משתמש בנכסים קיימים מהמטמון')
+        backgroundImage = cachedAssets.backgroundImage
+        brollClips = cachedAssets.brollClips
+        musicUrl = cachedAssets.music
+      }
     }
 
     if (finalInput.targetDuration === -1 && editingPlanA?.videos) {
@@ -1026,60 +1148,70 @@ export async function continueAfterEnrichment(
       addLog(`[אימות A] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${videoTarget}s)`)
     }
 
-    // Step 5 — Generate assets
-    let backgroundImage: string, brollClips: string[], musicUrl: string
-    const cachedAssets = useAutoEditorStore.getState().cachedAssets
-    if (cachedAssets) {
-      addLog('משתמש בנכסים קיימים מהמטמון')
-      backgroundImage = cachedAssets.backgroundImage
-      brollClips = cachedAssets.brollClips
-      musicUrl = cachedAssets.music
-    } else {
+    // ========== STAGE 3: B-ROLL (3 at a time) + LOGO UPLOAD (parallel) ==========
+    // B-Roll depends on planning (needs prompts), so runs after Stage 2
+    // Logo upload runs alongside since it's independent
+    if (!cachedAssets) {
       setStep('generating_assets')
+      const stage3Timer = timeLog('Stage 3: B-Roll + Logo upload')
 
-      const shouldGenerateBackground = finalInput.includeBackground !== false
-      if (!shouldGenerateBackground) {
-        addLog('מדלג על תמונת רקע (כובה בהגדרות)')
-      }
+      const [brollResult, _logoResult] = await Promise.all([
+        // 🎬 B-Roll generation (3 at a time in parallel!)
+        (async () => {
+          try {
+            const clips = await generateAllBroll(editingPlanA.prompts.broll, finalInput.brollGenerator, apis)
+            return clips
+          } catch (e: any) {
+            console.warn(`[PIPELINE] B-Roll generation failed: ${e.message?.substring(0, 150)}`)
+            addLog('יצירת B-Roll נכשלה, ממשיך ללא B-Roll')
+            return []
+          }
+        })(),
 
-      const assetResults = await Promise.allSettled([
-        shouldGenerateBackground
-          ? generateBackgroundSafe(editingPlanA.prompts.backgroundImage, apis.gemini, transcript, enrichment)
-          : Promise.resolve(''),
-        generateAllBroll(editingPlanA.prompts.broll, finalInput.brollGenerator, apis),
-        findMusicSafe(
-          enrichment?.style?.music_search || editingPlanA.prompts.musicSearch,
-          apis.pixabay
-        ),
+        // 📤 Upload logo if provided (runs alongside B-Roll)
+        (async () => {
+          if (finalInput.logo?.file && !finalInput.logo?.serverUrl) {
+            try {
+              addLog('מעלה לוגו לשרת...')
+              const formData = new FormData()
+              formData.append('file', finalInput.logo.file)
+              const uploadRes = await fetch(`${API_BASE}/upload-temp`, {
+                method: 'POST',
+                body: formData,
+              })
+              if (uploadRes.ok) {
+                const { url } = await uploadRes.json()
+                finalInput.logo = { ...finalInput.logo, serverUrl: url }
+                addLog(`לוגו הועלה: ${url}`)
+              }
+            } catch (e: any) {
+              addLog(`העלאת לוגו נכשלה: ${e.message}`)
+            }
+          }
+        })(),
       ])
-      backgroundImage = assetResults[0].status === 'fulfilled' ? assetResults[0].value : ''
-      brollClips = assetResults[1].status === 'fulfilled' ? assetResults[1].value : []
-      musicUrl = assetResults[2].status === 'fulfilled' ? assetResults[2].value : ''
-      setCachedAssets({ backgroundImage, brollClips, music: musicUrl })
-    }
 
-    // Upload logo if provided
-    if (finalInput.logo?.file && !finalInput.logo?.serverUrl) {
-      try {
-        addLog('מעלה לוגו לשרת...')
-        const formData = new FormData()
-        formData.append('file', finalInput.logo.file)
-        const uploadRes = await fetch(`${API_BASE}/upload-temp`, {
-          method: 'POST',
-          body: formData,
-        })
-        if (uploadRes.ok) {
-          const { url } = await uploadRes.json()
-          finalInput.logo = { ...finalInput.logo, serverUrl: url }
-          addLog(`לוגו הועלה: ${url}`)
+      brollClips = brollResult
+      // Now also get music prompt from plan if we didn't have it yet
+      if (!musicUrl) {
+        try {
+          musicUrl = await findMusicSafe(
+            enrichment?.style?.music_search || editingPlanA.prompts?.musicSearch || finalInput.userPrompt,
+            apis.pixabay
+          )
+        } catch {
+          musicUrl = ''
         }
-      } catch (e: any) {
-        addLog(`העלאת לוגו נכשלה: ${e.message}`)
       }
+
+      setCachedAssets({ backgroundImage, brollClips, music: musicUrl })
+      stage3Timer.done(`broll: ${brollClips.length} clips, music: ${musicUrl ? 'OK' : 'NONE'}, bg: ${backgroundImage ? 'OK' : 'NONE'}`)
     }
 
-    // Step 6 — Process videos with FFmpeg (2 versions if B plan exists)
+    // ========== STAGE 4: FFmpeg PROCESSING (sequential) ==========
+    // Everything is ready — send to server for FFmpeg processing
     setStep('editing')
+    const stage4Timer = timeLog('Stage 4: FFmpeg processing')
 
     const hasVersionB = !!editingPlanB
 
@@ -1103,6 +1235,8 @@ export async function continueAfterEnrichment(
         addLog(`גרסה B נכשלה: ${err.message}. ממשיך עם גרסה A בלבד.`)
       }
     }
+
+    stage4Timer.done(`A: ${processedA.length} videos, B: ${processedB?.length || 0} videos`)
 
     // === Quality metrics ===
     const videoPlanA = editingPlanA?.videos?.[0]
@@ -1130,6 +1264,11 @@ export async function continueAfterEnrichment(
       }
       evoStore.recordSuccess(modelId, qualityReport.score)
     })
+
+    // === Total pipeline time ===
+    const totalTime = ((Date.now() - pipelineStart) / 1000 / 60).toFixed(1)
+    console.log(`[PIPELINE] ✅ Total pipeline: ${totalTime} minutes`)
+    addLog(`Pipeline הושלם: ${totalTime} דקות סה"כ`)
 
     if (processedB && processedB.length > 0) {
       const versionAStyle = getVersionAStyle(detectedType)
