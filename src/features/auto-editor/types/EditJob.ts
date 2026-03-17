@@ -83,6 +83,14 @@ export interface EditJob {
     version: 'A' | 'B'
   }
 
+  // === LOGO ===
+  logo?: {
+    serverUrl: string | null
+    position: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'
+    size: 'small' | 'medium' | 'large'
+    opacity: number
+  } | null
+
   // === RESULTS ===
   results: {
     processedFile: string | null

@@ -480,6 +480,7 @@ function buildEditJobForProcessing(
   console.log(`Background: ${!!processJob.assets.backgroundImage}`)
   console.log(`Color grade: ${processJob.plan?.colorGrade}`)
   console.log(`Skip platform export: ${processJob.output.skipPlatformExport}`)
+  console.log(`Logo: ${processJob.logo?.serverUrl ? 'YES (' + processJob.logo.position + ')' : 'NO'}`)
 
   return processJob
 }
@@ -521,7 +522,17 @@ async function processVideosWithPlan(
       versionLabel, skipPlatformExport,
     )
 
-    addLog(`[${versionLabel}] Sending EditJob: transcript=${processJob.transcript?.segments?.length || 0} presenter=${processJob.transcript?.mainPresenter || 'none'} broll=${processJob.assets.brollClips.length} zooms=${processJob.plan?.zooms?.length || 0} music=${musicUrl ? 'YES' : 'NO'} bg=${backgroundImage ? 'YES' : 'NO'}`)
+    // Attach logo data if available
+    if (finalInput.logo?.serverUrl) {
+      processJob.logo = {
+        serverUrl: finalInput.logo.serverUrl,
+        position: finalInput.logo.position,
+        size: finalInput.logo.size,
+        opacity: finalInput.logo.opacity,
+      }
+    }
+
+    addLog(`[${versionLabel}] Sending EditJob: transcript=${processJob.transcript?.segments?.length || 0} presenter=${processJob.transcript?.mainPresenter || 'none'} broll=${processJob.assets.brollClips.length} zooms=${processJob.plan?.zooms?.length || 0} music=${musicUrl ? 'YES' : 'NO'} bg=${backgroundImage ? 'YES' : 'NO'} logo=${finalInput.logo?.serverUrl ? 'YES' : 'NO'}`)
 
     const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
       method: 'POST',
@@ -1017,6 +1028,26 @@ export async function continueAfterEnrichment(
       brollClips = assetResults[1].status === 'fulfilled' ? assetResults[1].value : []
       musicUrl = assetResults[2].status === 'fulfilled' ? assetResults[2].value : ''
       setCachedAssets({ backgroundImage, brollClips, music: musicUrl })
+    }
+
+    // Upload logo if provided
+    if (finalInput.logo?.file && !finalInput.logo?.serverUrl) {
+      try {
+        addLog('מעלה לוגו לשרת...')
+        const formData = new FormData()
+        formData.append('file', finalInput.logo.file)
+        const uploadRes = await fetch(`${API_BASE}/upload-temp`, {
+          method: 'POST',
+          body: formData,
+        })
+        if (uploadRes.ok) {
+          const { url } = await uploadRes.json()
+          finalInput.logo = { ...finalInput.logo, serverUrl: url }
+          addLog(`לוגו הועלה: ${url}`)
+        }
+      } catch (e: any) {
+        addLog(`העלאת לוגו נכשלה: ${e.message}`)
+      }
     }
 
     // Step 6 — Process videos with FFmpeg (2 versions if B plan exists)

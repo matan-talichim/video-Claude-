@@ -43,6 +43,15 @@ export interface ExportResult {
   height: number
 }
 
+export interface LogoInput {
+  file: File | null
+  url: string | null
+  serverUrl?: string | null
+  position: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'
+  size: 'small' | 'medium' | 'large'
+  opacity: number
+}
+
 export interface AutoEditorInput {
   videoUrls: string[]
   userPrompt: string
@@ -54,6 +63,9 @@ export interface AutoEditorInput {
   includeBackground: boolean
   animatedSubtitles: boolean
   animationStyle: string
+  selectedFormats?: string[]
+  selectedOptions?: string[]
+  logo?: LogoInput
 }
 
 export interface EditedFile {

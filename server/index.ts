@@ -6024,6 +6024,14 @@ function calculateQualityScore(job: any, outputFile: string, extraInfo: {
     score += 5
   }
 
+  // 11. Logo (5 points)
+  if ((extraInfo as any).logoApplied) {
+    score += 5
+    report.logo = 'לוגו הוסף'
+  } else if ((extraInfo as any).logoRequested) {
+    report.logo = '! לוגו תוכנן אך לא הוסף'
+  }
+
   return { score: Math.min(score, 100), report }
 }
 
@@ -6179,6 +6187,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
     let subtitlesApplied = false
     let lowerThirdsApplied = 0
     let graphicsApplied = 0
+    let logoApplied = false
 
     // ============================================
     // STEP B: GET SOURCE VIDEO INFO
@@ -7330,6 +7339,75 @@ ${gfxDialogueLines.join('\n')}
     }
 
     // ============================================
+    // STEP 7.5: LOGO OVERLAY
+    // ============================================
+    if (job?.logo?.serverUrl) {
+      console.log('[PROCESS] Step 7.5: Adding logo overlay...')
+      let logoFile = job.logo.serverUrl
+      // Convert localhost URL to local path
+      if (logoFile.startsWith('http://localhost')) {
+        logoFile = logoFile.replace(
+          /http:\/\/localhost:\d+\/uploads\//,
+          path.join(uploadsDir, '/')
+        )
+      }
+      if (fs.existsSync(logoFile)) {
+        const position = job.logo.position || 'top-right'
+        const size = job.logo.size || 'medium'
+        const opacity = job.logo.opacity ?? 0.9
+
+        const sizeMap: Record<string, number> = {
+          small: 0.08,
+          medium: 0.12,
+          large: 0.18,
+        }
+        const logoScale = sizeMap[size] || 0.12
+
+        const margin = 20
+        let overlayPosition = ''
+        switch (position) {
+          case 'top-right':
+            overlayPosition = `x=W-w-${margin}:y=${margin}`
+            break
+          case 'top-left':
+            overlayPosition = `x=${margin}:y=${margin}`
+            break
+          case 'bottom-right':
+            overlayPosition = `x=W-w-${margin}:y=H-h-${margin}`
+            break
+          case 'bottom-left':
+            overlayPosition = `x=${margin}:y=H-h-${margin}`
+            break
+          default:
+            overlayPosition = `x=W-w-${margin}:y=${margin}`
+        }
+
+        const logoOutput = path.join(uploadsDir, `logo_${timestamp}.mp4`)
+        filesToCleanup.push(logoOutput)
+
+        try {
+          let videoWidth = sourceWidth || 1080
+          const logoPixelWidth = Math.round(videoWidth * logoScale)
+
+          execSync(
+            `"${ffmpegPath}" -i "${currentFile}" -i "${logoFile}" -filter_complex "[1:v]scale=${logoPixelWidth}:-1,format=rgba,colorchannelmixer=aa=${opacity}[logo];[0:v][logo]overlay=${overlayPosition}[out]" -map "[out]" -map 0:a -c:a copy -preset fast -crf 18 "${logoOutput}" -y`,
+            { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+          )
+
+          if (fs.existsSync(logoOutput) && fs.statSync(logoOutput).size > 50000) {
+            currentFile = logoOutput
+            logoApplied = true
+            console.log(`[LOGO] Applied: ${position}, ${size} (${logoPixelWidth}px), opacity ${opacity}`)
+          }
+        } catch (e: any) {
+          console.warn('[LOGO] Overlay failed:', e.stderr?.toString().substring(0, 200))
+        }
+      } else {
+        console.warn('[LOGO] File not found:', logoFile)
+      }
+    }
+
+    // ============================================
     // PROCESS COMPLETE SUMMARY
     // ============================================
     const cutRanges = cuts
@@ -7349,6 +7427,7 @@ ${gfxDialogueLines.join('\n')}
     console.log(`  Subtitles: ${subtitlesApplied ? 'YES' : 'NO'} (${filteredSubtitleSegments?.length || 0} lines)`)
     console.log(`  Lower thirds: ${lowerThirdsApplied}`)
     console.log(`  Graphics: ${graphicsApplied}`)
+    console.log(`  Logo: ${logoApplied ? 'YES (' + (job?.logo?.position || 'top-right') + ')' : 'NO'}`)
     console.log('======================================')
 
     // ============================================
@@ -7365,6 +7444,7 @@ ${gfxDialogueLines.join('\n')}
       const { score: qualityScore, report: qualityReport } = calculateQualityScore(job, currentFile, {
         cuts, planZooms, filteredSubtitleSegments, brollAssets, musicUrl,
         planColorGrade, mainPresenter, planCameraAngles,
+        logoApplied, logoRequested: !!job?.logo?.serverUrl,
       })
 
       console.log(`[PROCESS] Done! Preview: ${fileUrl} (${fileSize.toFixed(1)}MB, quality: ${qualityScore})`)
@@ -7501,6 +7581,7 @@ ${gfxDialogueLines.join('\n')}
     const { score: qualityScore, report: qualityReport } = calculateQualityScore(job, currentFile, {
       cuts, planZooms, filteredSubtitleSegments, brollAssets, musicUrl,
       planColorGrade, mainPresenter, planCameraAngles,
+      logoApplied, logoRequested: !!job?.logo?.serverUrl,
     })
 
     console.log('[PROCESS] Done! Created', outputFiles.length, 'files with professional effects')
