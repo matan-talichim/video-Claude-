@@ -1,8 +1,30 @@
 import { useState, useEffect, useRef } from 'react'
-import { Video, Music, Sparkles, Film, ArrowRight, X } from 'lucide-react'
+import { Video, Music, Sparkles, Film, ArrowRight, X, Type } from 'lucide-react'
 import type { AutoEditorInput } from '../store/autoEditorStore'
 import { useAutoEditorStore } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
+
+const SUBTITLE_STYLE_OPTIONS = [
+  { id: 'bold_pop', label: 'Bold Pop', icon: Type, description: 'מילה-מילה עם אפקט פופ' },
+  { id: 'neon_glow', label: 'Neon Glow', icon: Sparkles, description: 'זוהר ניאון עם הזזה' },
+  { id: 'boxing', label: 'Boxing', icon: Film, description: 'כל מילה בקופסה צבעונית' },
+  { id: 'minimal', label: 'Minimal', icon: Type, description: 'נקי ומינימליסטי' },
+  { id: 'karaoke', label: 'Karaoke', icon: Music, description: 'מילים מוארות בזמן אמת' },
+] as const
+
+const CONTENT_TYPE_SUBTITLE_MAP: Record<string, string> = {
+  product_sales: 'bold_pop',
+  tiktok_reels: 'boxing',
+  youtube_shorts: 'neon_glow',
+  story: 'neon_glow',
+  tutorial: 'minimal',
+  podcast: 'minimal',
+  interview: 'minimal',
+  presentation: 'minimal',
+  company_intro: 'minimal',
+  customer_testimonial: 'minimal',
+  employee_training: 'minimal',
+}
 
 const LANGUAGE_OPTIONS = [
   { id: 'he', label: 'עברית', flag: '🇮🇱' },
@@ -658,7 +680,7 @@ function estimateMaxVideos(files: LocalFile[], targetDuration: number): number {
 
 export default function AutoEditorSettings({ files, onStart, onBack, onClose }: AutoEditorSettingsProps) {
   const profile = useUserProfileStore()
-  const { language: selectedLanguage, setLanguage: setSelectedLanguage, expectedSpeakers, setExpectedSpeakers } = useAutoEditorStore()
+  const { language: selectedLanguage, setLanguage: setSelectedLanguage, expectedSpeakers, setExpectedSpeakers, subtitleStyle, setSubtitleStyle } = useAutoEditorStore()
   const [userPrompt, setUserPrompt] = useState('')
   const [selectedContentType, setSelectedContentType] = useState<ContentTypeItem | null>(null)
   const [targetDuration, setTargetDuration] = useState(-1)
@@ -729,7 +751,11 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
     setSelectedOptions(recommendations)
     setRecommendedOptions(recommendations)
 
-    console.log(`[SETTINGS] Content type: ${ct.id} → recommended: ${recommendations.join(', ')}`)
+    // Set recommended subtitle style for content type
+    const recommendedStyle = CONTENT_TYPE_SUBTITLE_MAP[ct.id] || 'bold_pop'
+    setSubtitleStyle(recommendedStyle)
+
+    console.log(`[SETTINGS] Content type: ${ct.id} → recommended: ${recommendations.join(', ')}, subtitleStyle: ${recommendedStyle}`)
   }
 
   // Derive platforms from selected formats
@@ -759,7 +785,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       includeSubtitles,
       includeBackground,
       animatedSubtitles: includeSubtitles,
-      animationStyle: 'auto',
+      animationStyle: subtitleStyle || 'bold_pop',
+      subtitleStyle: subtitleStyle || 'bold_pop',
       selectedFormats,
       selectedOptions,
       logo: logo ? {
@@ -947,6 +974,34 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
               })}
             </div>
           </div>
+
+          {/* Subtitle style selector - only show when subtitles are enabled */}
+          {selectedOptions.includes('subtitles_hebrew') && (
+            <div className="space-y-3">
+              <h4 className="text-white text-sm font-bold">סגנון כתוביות</h4>
+              <div className="grid grid-cols-5 gap-2">
+                {SUBTITLE_STYLE_OPTIONS.map(opt => {
+                  const isSelected = subtitleStyle === opt.id
+                  const Icon = opt.icon
+                  return (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSubtitleStyle(opt.id)}
+                      className={`flex flex-col items-center gap-1 p-2.5 rounded-lg border text-center transition ${
+                        isSelected
+                          ? 'border-purple-500 bg-purple-500/10'
+                          : 'border-white/10 bg-white/5 hover:border-white/30'
+                      }`}
+                    >
+                      <Icon size={16} className={isSelected ? 'text-purple-400' : 'text-gray-400'} />
+                      <span className="text-white text-[10px] font-medium">{opt.label}</span>
+                      <span className="text-gray-500 text-[9px] leading-tight">{opt.description}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Duration selection */}
           <div className="space-y-3">
