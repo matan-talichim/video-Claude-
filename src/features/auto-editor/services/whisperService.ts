@@ -20,6 +20,9 @@ export interface Silence {
 export interface SpeakerInfo {
   speaker: string
   time: number
+  sampleUrl?: string | null
+  sampleText?: string
+  isPresenter?: boolean
 }
 
 export interface FullTranscript {
