@@ -489,6 +489,77 @@ function LogoUpload({ logo, onLogoChange }: {
   )
 }
 
+function BrandImageUpload() {
+  const { brandImages, addBrandImage, removeBrandImage, setBrandImages } = useAutoEditorStore()
+
+  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files
+    if (!files) return
+    const remaining = 5 - brandImages.length
+    const toAdd = Array.from(files).slice(0, remaining)
+    toAdd.forEach(file => {
+      if (!file.type.startsWith('image/')) return
+      addBrandImage({
+        file,
+        previewUrl: URL.createObjectURL(file),
+        description: '',
+      })
+    })
+    e.target.value = ''
+  }
+
+  function updateDescription(index: number, description: string) {
+    const updated = brandImages.map((img, i) =>
+      i === index ? { ...img, description } : img
+    )
+    setBrandImages(updated)
+  }
+
+  return (
+    <div className="space-y-2" dir="rtl">
+      <div className="flex items-center gap-2">
+        <span className="text-lg">🖼️</span>
+        <h4 className="text-white text-sm font-bold">תמונות למותג (אופציונלי)</h4>
+      </div>
+      <p className="text-gray-500 text-xs">
+        העלה תמונות מוצר, לוגו, או צוות - המערכת תהפוך אותן לקליפים מונפשים ותכניס אותם כ-B-Roll
+      </p>
+
+      <div className="grid grid-cols-3 gap-2">
+        {brandImages.map((img, i) => (
+          <div key={i} className="relative aspect-video rounded-lg border border-white/10 overflow-hidden">
+            <img src={img.previewUrl} className="w-full h-full object-cover" alt="" />
+            <input
+              placeholder="תיאור (אופציונלי)"
+              value={img.description}
+              onChange={e => updateDescription(i, e.target.value)}
+              className="absolute bottom-0 w-full bg-black/60 text-white text-xs p-1 border-none outline-none"
+            />
+            <button
+              onClick={() => removeBrandImage(i)}
+              className="absolute top-1 left-1 bg-black/50 rounded-full w-5 h-5 flex items-center justify-center text-red-400 text-xs hover:bg-black/80 transition"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        {brandImages.length < 5 && (
+          <label className="aspect-video rounded-lg border border-dashed border-white/20 flex items-center justify-center cursor-pointer hover:border-purple-500 transition">
+            <span className="text-gray-500 text-2xl">+</span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={handleUpload}
+            />
+          </label>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function buildAutoEditorPrompt(
   contentType: ContentTypeItem | null,
   selectedFormats: string[],
@@ -677,6 +748,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
     const includeSubtitles = selectedOptions.includes('subtitles_hebrew')
     const includeBackground = selectedOptions.includes('background_image')
 
+    const { brandImages } = useAutoEditorStore.getState()
+
     onStart({
       userPrompt: finalPrompt,
       targetDuration: effectiveDuration,
@@ -696,6 +769,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
         size: logo.size,
         opacity: logo.opacity,
       } : undefined,
+      brandImages: brandImages.length > 0 ? brandImages : undefined,
     })
   }
 
@@ -986,6 +1060,8 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           {/* Logo upload */}
           <LogoUpload logo={logo} onLogoChange={setLogo} />
 
+          {/* Brand images for B-Roll */}
+          <BrandImageUpload />
 
           {/* Personalization indicator */}
           {profile.confidenceScore >= 0.3 && (

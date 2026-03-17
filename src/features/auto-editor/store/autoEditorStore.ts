@@ -52,6 +52,13 @@ export interface LogoInput {
   opacity: number
 }
 
+export interface BrandImage {
+  file: File
+  previewUrl: string
+  serverUrl?: string
+  description: string
+}
+
 export interface AutoEditorInput {
   videoUrls: string[]
   userPrompt: string
@@ -66,6 +73,7 @@ export interface AutoEditorInput {
   selectedFormats?: string[]
   selectedOptions?: string[]
   logo?: LogoInput
+  brandImages?: BrandImage[]
 }
 
 export interface EditedFile {
@@ -136,6 +144,9 @@ interface AutoEditorStore {
   // Input saved for reference
   input: AutoEditorInput | null
 
+  // Brand images for B-Roll
+  brandImages: BrandImage[]
+
   // Cached intermediate results for reuse / resume on failure
   cachedTranscript: any | null
   cachedEditingPlan: any | null
@@ -169,6 +180,9 @@ interface AutoEditorStore {
   setLanguage: (lang: string) => void
   setExpectedSpeakers: (n: number) => void
   setEditedFiles: (files: EditedFile[]) => void
+  setBrandImages: (images: BrandImage[]) => void
+  addBrandImage: (image: BrandImage) => void
+  removeBrandImage: (index: number) => void
   reset: () => void
 }
 
@@ -197,6 +211,7 @@ const initialState = {
   selectedVersion: null as 'A' | 'B' | null,
   qualityReport: null as QualityReport | null,
   input: null as AutoEditorInput | null,
+  brandImages: [] as BrandImage[],
   cachedTranscript: null as any | null,
   cachedEditingPlan: null as any | null,
   cachedAssets: null as { backgroundImage: string; brollClips: string[]; music: string } | null,
@@ -258,6 +273,16 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
   setLanguage: (language) => set({ language }),
   setExpectedSpeakers: (expectedSpeakers) => set({ expectedSpeakers }),
   setEditedFiles: (editedFiles) => set({ editedFiles }),
+
+  setBrandImages: (brandImages) => set({ brandImages }),
+  addBrandImage: (image) => set((s) => ({
+    brandImages: s.brandImages.length < 5 ? [...s.brandImages, image] : s.brandImages,
+  })),
+  removeBrandImage: (index) => set((s) => {
+    const img = s.brandImages[index]
+    if (img?.previewUrl) URL.revokeObjectURL(img.previewUrl)
+    return { brandImages: s.brandImages.filter((_, i) => i !== index) }
+  }),
 
   reset: () => set(initialState),
 }))

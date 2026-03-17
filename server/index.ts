@@ -2489,7 +2489,14 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
 6. האם הפריימינג טוב (הדובר ממורכז? יש אוויר מיותר?)
 7. רגעים בולטים (הבעות פנים, מחוות ידיים, שינוי סצנה)
 8. בעיות טכניות (חושך, טשטוש, חיתוך לא טוב)
-9. זהה את הפרזנטור הראשי - האדם שמופיע מול המצלמה ומדבר אליה (לא צוות הפקה מאחורי המצלמה)`
+9. זהה את הפרזנטור הראשי - האדם שמופיע מול המצלמה ומדבר אליה (לא צוות הפקה מאחורי המצלמה)
+
+לכל פריים, גם זהה:
+10. ENERGY LEVEL: high/medium/low (מבוסס על מחוות, הבעות פנים, תנועה)
+11. BEST MOMENTS: סמן פריימים בהם הדובר הכי אנרגטי/מעניין
+12. WEAKEST MOMENTS: סמן פריימים בהם הדובר נראה מוסח/משועמם
+13. B-ROLL OPPORTUNITIES: רגעים שבהם הדובר מסתכל הצידה או עוצר (מושלם להכנסת B-Roll)
+14. LIGHTING CHANGES: שינויי בהירות משמעותיים בין פריימים`
 
     const brainContextVisual = getEditorBrainPrompt()
     console.log(`[AUTO-EDITOR] Visual analysis: brain injected = ${brainContextVisual.length > 0 ? 'YES' : 'NO'} (${brainContextVisual.length} chars)`)
@@ -2515,7 +2522,8 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
       "framing": "good/needs_crop_left/needs_crop_right/too_wide/too_tight",
       "notable": "משהו בולט - הבעה, מחווה, שינוי",
       "people_visible": 1,
-      "person_speaking_to_camera": true
+      "person_speaking_to_camera": true,
+      "energy_level": "high/medium/low"
     }
   ],
   "overall": {
@@ -2534,6 +2542,11 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
         "reason": "הדובר מסתכל למטה ומדבר על מוצר - הזדמנות לB-Roll של המוצר",
         "suggested_prompt_en": "Close-up of [specific product] on desk, warm lighting matching the video"
       }
+    ],
+    "highlight_reel": [
+      {"time": 5, "reason": "הדובר הכי אנרגטי - מחווה חזקה"},
+      {"time": 25, "reason": "רגע רגשי - הבעת פנים מרגשת"},
+      {"time": 40, "reason": "נקודת שיא - מסתכל ישר למצלמה בביטחון"}
     ]
   },
   "presenter_detection": {
@@ -3954,6 +3967,50 @@ CRITICAL RULES:
 13. Camera angles: change every 4-8 seconds for dynamic feel. Use closeup on emotional/important statements, wide for transitions.
 14. Graphics: ONLY for numbers, percentages, or key terms mentioned by presenter. Max 3 per 30 seconds.
 
+=== SMART EDITING RULES ===
+
+HOOK (first 3 seconds):
+- Find the MOST POWERFUL moment in the entire transcript
+- This is NOT necessarily the beginning - search the whole video
+- If the speaker says something surprising, emotional, or controversial later in the video - START with that
+- Show it as a "flash forward" then cut to "30 minutes earlier" or similar
+
+CUT DECISIONS:
+- Never cut mid-word. Always cut at silence points between words.
+- When cutting between segments, add 0.15s of silence (breathing room)
+- If a sentence is repeated (retake), keep ONLY the last version
+- Remove all "אממ", "אהה", "אז", "כאילו" at the start of sentences
+
+B-ROLL PLACEMENT:
+- Insert B-Roll when the speaker mentions a concept, product, or abstract idea
+- B-Roll should be 2-4 seconds, never longer than the speaker's sentence
+- Keep the speaker's AUDIO playing under the B-Roll
+- Match B-Roll aspect ratio to output format
+
+ZOOM TIMING:
+- Zoom IN (1.15x-1.3x) on key words and emotional moments
+- Zoom OUT to default when transitioning between topics
+- Never zoom during B-Roll
+- Zoom changes should take 0.3-0.5 seconds (ease-in-out)
+
+PACING BY CONTENT TYPE:
+- Sales/Ad: Fast cuts every 2-3s, lots of zooms, energetic music 15-18%
+- Tutorial: Slower cuts every 5-7s, minimal zooms, calm music 8-12%
+- Podcast: Cuts on speaker changes only, no zooms on B-Roll, music 5-8%
+- Testimonial: Medium cuts every 4-5s, subtle zooms on emotions, warm music 10-12%
+
+COLOR GRADE MATCHING:
+- Match color grade to the mood detected in the transcript
+- Happy/exciting content → warm/vibrant
+- Professional/corporate → clean/cold
+- Emotional/personal → film/cinematic
+- Energetic/youth → vibrant/trending
+
+SUBTITLE INTELLIGENCE:
+- Highlight the most important word in each subtitle line with a different color
+- The important word is: a number, a product name, an emotional word, or a call-to-action
+- Mark these words in the plan so FFmpeg can style them differently (wrap with ** like **word**)
+
 VALIDATION before returning:
 1. Sum all (keep_end - keep_start) for cuts = must match the target duration for each video ± 3
 2. All relative timestamps must be within 0 to total_duration
@@ -4283,12 +4340,181 @@ Style requirements:
 })
 
 // POST /api/generate-broll — B-Roll video generation proxy (Seedance via kie.ai or VEO)
+// Supports both text-to-video and image-to-video (when imageUrl is provided)
 app.post('/api/generate-broll', async (req, res) => {
-  const { prompt, provider, duration = '5', aspectRatio = '9:16', resolution = '720p', generateAudio = false, brollIndex } = req.body
+  const { prompt, provider, duration = '5', aspectRatio = '9:16', resolution = '720p', generateAudio = false, brollIndex, imageUrl } = req.body
   if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
   const clipLabel = brollIndex !== undefined ? `#${brollIndex}` : ''
-  console.log(`[B-ROLL ${clipLabel}] Starting: "${prompt.substring(0, 50)}..." (provider: ${provider})`)
+  const isImageToVideo = !!imageUrl
+  console.log(`[B-ROLL ${clipLabel}] Starting${isImageToVideo ? ' (Image-to-Video)' : ''}: "${prompt.substring(0, 50)}..." (provider: ${provider})`)
+
+  // === IMAGE-TO-VIDEO: Seedance ===
+  if (provider === 'seedance' && isImageToVideo) {
+    const kieKey = process.env.KIE_API_KEY
+    if (!kieKey) {
+      return res.status(400).json({ message: 'KIE API Key לא מוגדר. הוסף KIE_API_KEY ב-.env (מ-kie.ai)' })
+    }
+
+    try {
+      // Resolve image path from URL
+      const imagePath = imageUrl.startsWith('http://localhost')
+        ? path.join(uploadsDir, path.basename(new URL(imageUrl).pathname))
+        : imageUrl
+
+      if (!fs.existsSync(imagePath)) {
+        return res.status(400).json({ message: 'תמונת מותג לא נמצאה' })
+      }
+
+      const imageBuffer = fs.readFileSync(imagePath)
+      const base64Image = imageBuffer.toString('base64')
+
+      console.log(`[B-ROLL] Image-to-Video with Seedance: ${prompt.substring(0, 60)}`)
+
+      const createRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${kieKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'bytedance/seedance-1.5-pro',
+          input: {
+            prompt,
+            image: base64Image,
+            aspect_ratio: aspectRatio,
+            resolution,
+            duration: String(duration),
+            fixed_lens: false,
+            generate_audio: generateAudio,
+          },
+        }),
+      })
+
+      if (!createRes.ok) {
+        const err = await createRes.json().catch(() => ({}))
+        console.error('[SEEDANCE IMG2VID] Create task failed:', err)
+        return res.status(createRes.status).json({
+          message: 'שגיאה ביצירת סרטון מתמונה (Seedance): ' + (err.message || err.error || 'Unknown error')
+        })
+      }
+
+      const taskData = await createRes.json()
+      const taskId = taskData.data?.taskId || taskData.data?.task_id || taskData.data?.recordId || taskData.data?.id || taskData.taskId || taskData.task_id || taskData.id
+      console.log('[SEEDANCE IMG2VID] Task created:', taskId)
+
+      if (!taskId) {
+        return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai (image-to-video)' })
+      }
+
+      // Poll for result
+      const pollUrl = `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`
+      let videoUrl: string | null = null
+      const maxAttempts = 60
+
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(r => setTimeout(r, 5000))
+        try {
+          const statusRes = await fetch(pollUrl, {
+            headers: { 'Authorization': `Bearer ${kieKey}`, 'Content-Type': 'application/json' },
+          })
+          const statusData = await statusRes.json()
+          const state = statusData.data?.state || statusData.data?.status || ''
+
+          if (state === 'success') {
+            if (statusData.data?.resultJson) {
+              try {
+                const result = typeof statusData.data.resultJson === 'string'
+                  ? JSON.parse(statusData.data.resultJson)
+                  : statusData.data.resultJson
+                videoUrl = result?.resultUrls?.[0] || result?.url || null
+              } catch {}
+            }
+            if (!videoUrl) {
+              videoUrl = statusData.data?.resultUrl || statusData.data?.url || statusData.data?.videoUrl || null
+            }
+            break
+          }
+          if (state === 'fail' || state === 'failed' || state === 'error') break
+        } catch {}
+      }
+
+      if (!videoUrl) {
+        return res.status(408).json({ message: 'יצירת סרטון מתמונה לקחה יותר מדי זמן' })
+      }
+
+      // Download and save
+      const videoRes = await fetch(videoUrl)
+      if (!videoRes.ok) return res.status(500).json({ message: 'שגיאה בהורדת הסרטון מ-Seedance (img2vid)' })
+      const videoBuffer = Buffer.from(await videoRes.arrayBuffer())
+      const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
+      const videoPath = path.join(__dirname, 'uploads', `seedance_img2vid_${uniqueSuffix}.mp4`)
+      fs.writeFileSync(videoPath, videoBuffer)
+
+      const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(videoPath)}`
+      console.log(`[SEEDANCE IMG2VID] Success: ${serverUrl}`)
+      return res.json({ url: serverUrl })
+    } catch (error: any) {
+      console.error('[SEEDANCE IMG2VID ERROR]', error.message)
+      return res.status(500).json({ message: 'שגיאה ב-Seedance Image-to-Video: ' + error.message })
+    }
+  }
+
+  // === IMAGE-TO-VIDEO: VEO ===
+  if (provider === 'veo' && isImageToVideo) {
+    const ai = getGemini()
+    if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
+
+    try {
+      const imagePath = imageUrl.startsWith('http://localhost')
+        ? path.join(uploadsDir, path.basename(new URL(imageUrl).pathname))
+        : imageUrl
+
+      if (!fs.existsSync(imagePath)) {
+        return res.status(400).json({ message: 'תמונת מותג לא נמצאה' })
+      }
+
+      const imageBuffer = fs.readFileSync(imagePath)
+      const base64Image = imageBuffer.toString('base64')
+      const mimeType = imagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
+
+      console.log(`[B-ROLL] Image-to-Video with VEO: ${prompt.substring(0, 60)}`)
+
+      const operation = await ai.models.generateVideos({
+        model: 'veo-3.1-generate-preview',
+        prompt,
+        image: {
+          imageBytes: base64Image,
+          mimeType,
+        },
+        config: { aspectRatio: aspectRatio as any },
+      })
+
+      let result = operation
+      for (let i = 0; i < 60; i++) {
+        if (result.done) break
+        await new Promise((r) => setTimeout(r, 5000))
+        result = await ai.operations.get({ operation: result })
+      }
+
+      if (!result.done) {
+        return res.status(504).json({ message: 'VEO Image-to-Video: זמן המתנה חרג' })
+      }
+
+      const veoVideoUrl = result.response?.generatedVideos?.[0]?.video?.uri
+      if (!veoVideoUrl) {
+        return res.status(500).json({ message: 'VEO Image-to-Video לא החזיר סרטון' })
+      }
+
+      console.log(`[VEO IMG2VID] Success: ${veoVideoUrl}`)
+      return res.json({ url: veoVideoUrl })
+    } catch (err: any) {
+      console.error('[VEO IMG2VID ERROR]', err.message)
+      return res.status(500).json({ message: 'שגיאת VEO Image-to-Video: ' + err.message })
+    }
+  }
+
+  // === TEXT-TO-VIDEO (existing logic below) ===
 
   if (provider === 'seedance') {
     const kieKey = process.env.KIE_API_KEY
@@ -6008,9 +6234,29 @@ function buildPresenterCutRanges(
 
   console.log(`[SPEAKER] Built ${ranges.length} cut ranges from ${presenterSegs.length} presenter segments`)
   console.log(`[SPEAKER] Total presenter time: ${ranges.reduce((sum, r) => sum + r.end - r.start, 0).toFixed(1)}s`)
-  console.log(`[SPEAKER] Cut ranges:`, ranges.map(r => `${r.start.toFixed(1)}-${r.end.toFixed(1)}`).join(', '))
 
-  return ranges
+  // === Scene extension for short clips ===
+  const MIN_CLIP_DURATION = 1.5
+  const extendedRanges = ranges.map(range => {
+    const duration = range.end - range.start
+    if (duration < MIN_CLIP_DURATION && duration > 0.3) {
+      const extensionNeeded = MIN_CLIP_DURATION - duration
+      const extendBefore = Math.min(extensionNeeded / 2, range.start)
+      const extendAfter = extensionNeeded - extendBefore
+
+      console.log(`[CUT] Extending short clip ${range.start.toFixed(1)}→${range.end.toFixed(1)} (${duration.toFixed(1)}s) by ${extensionNeeded.toFixed(1)}s`)
+
+      return {
+        start: range.start - extendBefore,
+        end: range.end + extendAfter,
+      }
+    }
+    return range
+  })
+
+  console.log(`[SPEAKER] Cut ranges:`, extendedRanges.map(r => `${r.start.toFixed(1)}-${r.end.toFixed(1)}`).join(', '))
+
+  return extendedRanges
 }
 
 // Validate cut ranges don't overlap with non-presenter speech
@@ -6340,6 +6586,73 @@ function calculateQualityScore(job: any, outputFile: string, extraInfo: {
 }
 
 // Legacy endpoint kept for backward compat
+// POST /api/auto-editor/find-hook — Detect the best opening moment for hook
+app.post('/api/auto-editor/find-hook', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
+
+    const { segments, enrichment } = req.body
+    if (!segments || segments.length === 0) {
+      return res.json({ hook_start: 0, hook_end: 0, reason: 'no segments provided' })
+    }
+
+    const hookTimer = Date.now()
+    console.log('[HOOK] Analyzing transcript for best hook moment...')
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      messages: [{
+        role: 'user',
+        content: `Analyze this transcript and find the SINGLE MOST POWERFUL moment to use as the video HOOK (first 3-5 seconds).
+
+The hook should be:
+- Surprising, emotional, controversial, or curiosity-inducing
+- A complete thought (not cut mid-sentence)
+- Something that makes the viewer NEED to keep watching
+
+Transcript:
+${segments.map((s: any) => `[${(s.start || 0).toFixed(1)}s] ${s.text}`).join('\n')}
+
+Content type: ${enrichment?.detected_type || 'unknown'}
+
+Return JSON:
+{
+  "hook_start": 45.2,
+  "hook_end": 49.8,
+  "hook_text": "the exact text",
+  "reason": "why this is the best hook",
+  "hook_type": "surprise" | "question" | "bold_claim" | "emotion" | "result"
+}
+
+If the video starts strong already (first 5 seconds are great), return:
+{"hook_start": 0, "hook_end": 0, "reason": "original opening is strong"}
+
+Return ONLY JSON.`
+      }],
+      response_format: { type: 'json_object' },
+      max_completion_tokens: 500,
+    })
+
+    const content = response.choices[0]?.message?.content || '{}'
+    const result = JSON.parse(content.replace(/```json|```/g, '').trim())
+
+    const elapsed = ((Date.now() - hookTimer) / 1000).toFixed(1)
+
+    if (result.hook_start > 0) {
+      console.log(`[HOOK] Best moment found at ${result.hook_start}s: "${(result.hook_text || '').substring(0, 50)}..." (${result.hook_type}) [${elapsed}s]`)
+    } else {
+      console.log(`[HOOK] Original opening is strong, keeping as-is [${elapsed}s]`)
+    }
+
+    res.json(result)
+  } catch (err: any) {
+    console.error('[HOOK ERROR]', err.message)
+    // Non-critical - return null hook so pipeline continues
+    res.json({ hook_start: 0, hook_end: 0, reason: `error: ${err.message}` })
+  }
+})
+
 app.post('/api/auto-editor/process-video', async (req, res) => {
   // Redirect to new process endpoint
   req.url = '/api/auto-editor/process'
@@ -6387,6 +6700,12 @@ app.post('/api/auto-editor/process', async (req, res) => {
     const platforms = (job?.output?.platforms || []).map((p: any) => p.name || p) || req.body.platforms
     const musicUrl = job?.assets?.musicTrack || req.body.musicUrl || req.body.backgroundMusic || req.body.assets?.musicTrack || null
     const backgroundImage = job?.assets?.backgroundImage || req.body.backgroundImage
+    // Hook detection data (flash-forward)
+    const hookInfo = job?.hook || req.body.hook || null
+    if (hookInfo && hookInfo.sourceStart > 0) {
+      console.log(`[HOOK] Flash-forward hook: ${hookInfo.sourceStart.toFixed(1)}s → ${hookInfo.sourceEnd.toFixed(1)}s (${hookInfo.type || 'surprise'})`)
+    }
+
     // Music debug
     console.log('[MUSIC] === Debug ===', {
       'job.assets.musicTrack': job?.assets?.musicTrack?.substring(0, 80) || 'none',
@@ -6593,6 +6912,21 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
     if (cuts.length === 0) {
       cuts.push({ keep_start: 0, keep_end: targetDuration || 60 })
+    }
+
+    // === HOOK: Insert flash-forward clip at the beginning ===
+    if (hookInfo && hookInfo.sourceStart > 0 && hookInfo.sourceEnd > hookInfo.sourceStart) {
+      const hookDuration = hookInfo.sourceEnd - hookInfo.sourceStart
+      if (hookDuration >= 1.5 && hookDuration <= 8) {
+        console.log(`[HOOK] Inserting flash-forward: ${hookInfo.sourceStart.toFixed(1)}s → ${hookInfo.sourceEnd.toFixed(1)}s (${hookDuration.toFixed(1)}s)`)
+        // Prepend hook clip before all other cuts
+        cuts.unshift({
+          keep_start: hookInfo.sourceStart,
+          keep_end: hookInfo.sourceEnd,
+        })
+      } else {
+        console.log(`[HOOK] Skipping hook: duration ${hookDuration.toFixed(1)}s is outside 1.5-8s range`)
+      }
     }
 
     const transitions = planTransitions

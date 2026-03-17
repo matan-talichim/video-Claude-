@@ -91,6 +91,14 @@ export interface EditJob {
     opacity: number
   } | null
 
+  // === HOOK (flash-forward) ===
+  hook?: {
+    sourceStart: number
+    sourceEnd: number
+    text: string
+    type: string
+  } | null
+
   // === RESULTS ===
   results: {
     processedFile: string | null
