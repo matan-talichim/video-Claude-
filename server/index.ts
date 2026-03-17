@@ -7856,7 +7856,17 @@ app.post('/api/detach-audio', upload.single('file'), async (req, res) => {
 
 import { google } from 'googleapis'
 
-const LEARNING_STATE_FILE = path.join(__dirname, 'learning-state.json')
+// Persistent data directory: Railway volume if available, else local
+const DATA_DIR = (() => {
+  if (fs.existsSync('/app/server/data')) {
+    console.log('[DATA] Using Railway persistent volume: /app/server/data');
+    return '/app/server/data';
+  }
+  console.log('[DATA] Using local directory:', __dirname);
+  return __dirname;
+})();
+const learningStatePath = path.join(DATA_DIR, 'learning-state.json');
+const editorBrainPath = path.join(DATA_DIR, 'editor-brain.json');
 
 // Budget constants
 const DAILY_GPT_COST_LIMIT = 1.0   // $1 per day
@@ -7864,12 +7874,12 @@ const MONTHLY_GPT_COST_LIMIT = 30.0 // $30 per month
 const DAILY_GPT_CALLS_LIMIT = 50    // ~50 calls/day at ~$0.02/call
 
 function loadLearningState(): any {
-  const brainPath = path.join(__dirname, 'editor-brain.json')
+  const brainPath = editorBrainPath
 
   // Try loading state file first
   try {
-    if (fs.existsSync(LEARNING_STATE_FILE)) {
-      const state = JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, 'utf-8'))
+    if (fs.existsSync(learningStatePath)) {
+      const state = JSON.parse(fs.readFileSync(learningStatePath, 'utf-8'))
       // Validate that state has meaningful data (not a reset/empty state)
       if (state.totalCost > 0 || state.learningMetrics?.totalSessions > 0 || state.totalVideosAnalyzed > 0) {
         console.log(`[LEARN] State loaded: ${state.learningMetrics?.totalSessions || 0} sessions, $${(state.totalCost || 0).toFixed(3)} total`)
@@ -8000,7 +8010,7 @@ function getNextSessionInfo(): string {
 
 function saveLearningState(state: any) {
   try {
-    fs.writeFileSync(LEARNING_STATE_FILE, JSON.stringify(state, null, 2))
+    fs.writeFileSync(learningStatePath, JSON.stringify(state, null, 2))
   } catch (e: any) {
     console.error('[LEARN] Failed to save state:', e.message)
   }
@@ -8513,7 +8523,7 @@ You are an elite AI video editor. Every cut, transition, and effect must serve O
 }
 
 function loadEditorBrain(): any {
-  const brainPath = path.join(__dirname, 'editor-brain.json')
+  const brainPath = editorBrainPath
   try {
     if (fs.existsSync(brainPath)) {
       const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
@@ -8675,7 +8685,7 @@ Start directly with: "HOOK RULES:" and continue section by section.`
 
   console.log('[BRAIN] Cumulative stats saved:', JSON.stringify(brain.cumulativeStats))
 
-  const brainPath = path.join(__dirname, 'editor-brain.json')
+  const brainPath = editorBrainPath
   fs.writeFileSync(brainPath, JSON.stringify(brain, null, 2))
 
   console.log(`[BRAIN] Editor brain v${brain.version} saved | Master prompt: ${brain.stats.masterPromptWords} words | Trends: ${activeTrends.length} | Cumulative: $${(state.totalCost || 0).toFixed(3)} total`)
@@ -8920,7 +8930,7 @@ async function sendLearningReport(state: any, results: any) {
 
   // Editor brain stats
   try {
-    const brainPath = path.join(__dirname, 'editor-brain.json')
+    const brainPath = editorBrainPath
     if (fs.existsSync(brainPath)) {
       const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
       message += `🧠 מוח העורך v${brain.version}:\n`
@@ -8988,7 +8998,7 @@ async function runServerLearning(options?: { budget?: number, force?: boolean })
 
   console.log('[LEARN] === SESSION START ===')
   console.log(`[LEARN] Budget: $${sessionBudget} | Force: ${force} | Max GPT calls: ~${maxGptCalls} | Categories: ${numCategories}`)
-  console.log(`[LEARN] State file: ${fs.existsSync(LEARNING_STATE_FILE) ? 'EXISTS' : 'MISSING'}`)
+  console.log(`[LEARN] State file: ${fs.existsSync(learningStatePath) ? 'EXISTS' : 'MISSING'}`)
 
   const startTime = Date.now()
 
@@ -10306,7 +10316,7 @@ async function sendFullReport() {
 
     // Editor brain info
     try {
-      const brainPath = path.join(__dirname, 'editor-brain.json')
+      const brainPath = editorBrainPath
       if (fs.existsSync(brainPath)) {
         const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
         message += `🧠 מוח העורך v${brain.version}:\n`
