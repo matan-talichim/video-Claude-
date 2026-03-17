@@ -3077,6 +3077,9 @@ ${(visualAnalysis.scene_analysis || []).map((s: any) =>
 - חילופי דוברים → שנה זווית מצלמה
 ` : ''
 
+    // Sync brain from Railway before editing starts
+    await syncBrainFromRailway()
+
     const enrichBrainContext = getEditorBrainPrompt('marketing')
     console.log(`[AUTO-EDITOR] Enrich prompt: brain injected = ${enrichBrainContext.length > 0 ? 'YES' : 'NO'} (${enrichBrainContext.length} chars)`)
 
@@ -8998,6 +9001,65 @@ function loadEditorBrain(): any {
   return DEFAULT_BRAIN
 }
 
+async function syncBrainFromRailway(): Promise<boolean> {
+  // Only sync in development (local machine)
+  if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
+    return false // Railway IS the source of truth
+  }
+
+  const railwayUrl = process.env.RAILWAY_URL || 'https://video-claude-production.up.railway.app'
+  const token = process.env.TELEGRAM_BOT_TOKEN
+
+  if (!token) return false
+
+  try {
+    console.log('[BRAIN] Syncing latest brain from Railway...')
+
+    const response = await fetch(`${railwayUrl}/api/learning/download-state`, {
+      headers: { 'x-admin-token': token },
+      signal: AbortSignal.timeout(10000),
+    })
+
+    if (!response.ok) {
+      console.warn('[BRAIN] Railway sync failed:', response.status)
+      return false
+    }
+
+    const data = await response.json() as any
+
+    if (data.editorBrain?.masterPrompt && data.editorBrain.masterPrompt.length > 100) {
+      const localBrain = loadEditorBrain()
+      const remoteVersion = data.editorBrain.version || 0
+      const localVersion = localBrain.version || 0
+
+      if (remoteVersion > localVersion) {
+        fs.writeFileSync(editorBrainPath, JSON.stringify(data.editorBrain, null, 2))
+        console.log(`[BRAIN] ✅ Synced from Railway: v${localVersion} → v${remoteVersion} (${data.editorBrain.stats?.masterPromptWords || 0} words)`)
+        return true
+      } else {
+        console.log(`[BRAIN] Already up to date: v${localVersion} (Railway: v${remoteVersion})`)
+      }
+    }
+
+    // Also sync learning state if newer
+    if (data.learningState) {
+      const localState = loadLearningState()
+      const remoteSessions = data.learningState.learningMetrics?.totalSessions || 0
+      const localSessions = localState.learningMetrics?.totalSessions || 0
+
+      if (remoteSessions > localSessions) {
+        fs.writeFileSync(learningStatePath, JSON.stringify(data.learningState, null, 2))
+        console.log(`[LEARN] ✅ State synced from Railway: ${localSessions} → ${remoteSessions} sessions`)
+      }
+    }
+
+    return false
+  } catch (e: any) {
+    console.warn('[BRAIN] Railway sync failed:', e.message?.substring(0, 100))
+    return false
+  }
+}
+
 async function updateEditorBrain(state: any) {
   console.log('[BRAIN] Updating editor brain with master prompt...')
 
@@ -10516,6 +10578,22 @@ app.get('/api/learning/status', (_req, res) => {
   })
 })
 
+app.post('/api/learning/sync-from-railway', async (_req, res) => {
+  try {
+    const synced = await syncBrainFromRailway()
+    const brain = loadEditorBrain()
+
+    res.json({
+      synced,
+      brainVersion: brain.version || 0,
+      masterPromptWords: brain.stats?.masterPromptWords || 0,
+      lastUpdated: brain.lastUpdatedIsrael || 'unknown',
+    })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ==================== DAILY PROMPT OPTIMIZATION ====================
 
 async function optimizeMasterPrompt() {
@@ -11163,6 +11241,14 @@ app.listen(PORT, () => {
   })()
 
   logBrainStatus()
+
+  // Sync brain from Railway on startup (development only)
+  console.log(`[BRAIN] Auto-sync from Railway: ${process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT ? '✅ Enabled' : '⏭️ Skipped (is Railway)'}`)
+  if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT) {
+    setTimeout(async () => {
+      await syncBrainFromRailway()
+    }, 5000)
+  }
 
   // Schedule learning at 7:00 + 19:00 Israel time (handles restart catch-up internally)
   scheduleDailyLearning()
