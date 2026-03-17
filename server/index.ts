@@ -2071,13 +2071,13 @@ app.post('/api/generate-video-veo', async (req, res) => {
     } = req.body
 
     const modelMap: Record<string, string> = {
-      'veo-3': 'veo-3.1-generate',
-      'veo-3-fast': 'veo-3.1-generate',
-      'veo-3.1': 'veo-3.1-generate',
-      'veo-3.1-fast': 'veo-3.1-generate',
+      'veo-3': 'veo-3.1-generate-preview',
+      'veo-3-fast': 'veo-3.1-generate-preview',
+      'veo-3.1': 'veo-3.1-generate-preview',
+      'veo-3.1-fast': 'veo-3.1-generate-preview',
     }
 
-    const modelId = modelMap[model] || 'veo-3.1-generate'
+    const modelId = modelMap[model] || 'veo-3.1-generate-preview'
 
     console.log('[VEO] Generating video with', modelId)
     console.log('[VEO] Prompt:', prompt)
@@ -2166,7 +2166,7 @@ app.post('/api/generate-image-to-video', async (req, res) => {
     console.log('[IMAGE-TO-VIDEO] Step 2: Generating video from image with Veo...')
 
     const operation = await ai.models.generateVideos({
-      model: 'veo-3.1-generate',
+      model: 'veo-3.1-generate-preview',
       prompt: prompt,
       image: imagePart,
     })
@@ -4449,7 +4449,7 @@ app.post('/api/generate-broll', async (req, res) => {
 
       // Use GoogleGenAI SDK for Veo
       const operation = await ai.models.generateVideos({
-        model: 'veo-3.1-generate',
+        model: 'veo-3.1-generate-preview',
         prompt,
         config: { aspectRatio: aspectRatio as any },
       })
@@ -11186,7 +11186,7 @@ app.listen(PORT, () => {
   console.log(`   DeepL:       ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Gemini (Nano Banana + Veo): ${process.env.GEMINI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log('   Gemini Image: gemini-3-pro-image-preview (Nano Banana Pro)')
-  console.log('   Gemini Video: veo-3.1-generate (Veo 3.1)')
+  console.log('   Gemini Video: veo-3.1-generate-preview (Veo 3.1)')
   console.log(`   Seedance (kie.ai): ${process.env.KIE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Pixabay:     ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   YouTube API: ${process.env.YOUTUBE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
