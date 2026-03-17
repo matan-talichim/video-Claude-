@@ -121,7 +121,9 @@ async function generateAllBroll(
 
 async function generateBackgroundSafe(
   prompt: string,
-  hasGemini: boolean
+  hasGemini: boolean,
+  transcript?: any,
+  enrichment?: any
 ): Promise<string> {
   const addLog = useAutoEditorStore.getState().addLog
 
@@ -131,7 +133,7 @@ async function generateBackgroundSafe(
   }
 
   try {
-    return await generateBackground(prompt)
+    return await generateBackground(prompt, transcript, enrichment)
   } catch (err: any) {
     addLog(`שגיאה ביצירת רקע: ${err.message}. ממשיך ללא רקע.`)
     return ''
@@ -975,7 +977,7 @@ export async function continueAfterEnrichment(
 
       const inputA: AutoEditorInput = {
         ...finalInput,
-        userPrompt: `${finalInput.userPrompt}\n\nגישת עריכה: ${versionAStyle}`,
+        userPrompt: `${finalInput.userPrompt}\n\n=== VERSION A INSTRUCTIONS ===\nגישת עריכה: ${versionAStyle}\nThis is VERSION A — use a standard, proven editing approach.`,
       }
       editingPlanA = await planWithChatGPT(transcript, inputA, detectedType, visualAnalysis, energyAnalysis)
       setCachedEditingPlan(editingPlanA)
@@ -986,11 +988,23 @@ export async function continueAfterEnrichment(
 
       const inputB: AutoEditorInput = {
         ...finalInput,
-        userPrompt: `${finalInput.userPrompt}\n\nגישת עריכה: ${versionBStyle}`,
+        userPrompt: `${finalInput.userPrompt}\n\n=== VERSION B INSTRUCTIONS ===\nגישת עריכה: ${versionBStyle}\n\nIMPORTANT DIFFERENCES FROM VERSION A:\n- Use DIFFERENT cut points (start 2-3 seconds later or earlier)\n- Use DIFFERENT hook (pick a different strong moment)\n- Use DIFFERENT color grade\n- Use DIFFERENT subtitle style\n- Use DIFFERENT zoom timing\n- Pacing should be ${detectedType === 'ad_short' ? 'varied/dynamic' : 'different from standard'}\n- This MUST produce a noticeably different video from Version A`,
       }
       editingPlanB = await planWithChatGPT(transcript, inputB, detectedType, visualAnalysis, energyAnalysis)
       // Cache both plans so B is available on retry
       setCachedEditingPlan({ planA: editingPlanA, planB: editingPlanB })
+
+      // Validate A/B difference
+      const cutsA = editingPlanA?.videos?.[0]?.cuts || []
+      const cutsB = editingPlanB?.videos?.[0]?.cuts || []
+      const matchingCuts = cutsA.filter((ca: any) =>
+        cutsB.some((cb: any) => Math.abs((ca.keepStart ?? 0) - (cb.keepStart ?? 0)) < 1)
+      ).length
+      const diffScore = cutsA.length > 0 ? Math.round(100 - (matchingCuts / cutsA.length) * 100) : 100
+      addLog(`[A/B] Version A style: ${versionAStyle}, Version B style: ${versionBStyle}, Difference score: ${diffScore}%`)
+      if (diffScore < 20) {
+        addLog('[A/B] Warning: Plans are very similar, B may look nearly identical to A')
+      }
 
       setProgress({ current: 4, total: 4, label: 'שני התכנונים הושלמו!' })
     } else {
@@ -1030,7 +1044,7 @@ export async function continueAfterEnrichment(
 
       const assetResults = await Promise.allSettled([
         shouldGenerateBackground
-          ? generateBackgroundSafe(editingPlanA.prompts.backgroundImage, apis.gemini)
+          ? generateBackgroundSafe(editingPlanA.prompts.backgroundImage, apis.gemini, transcript, enrichment)
           : Promise.resolve(''),
         generateAllBroll(editingPlanA.prompts.broll, finalInput.brollGenerator, apis),
         findMusicSafe(

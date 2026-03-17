@@ -2,7 +2,7 @@ import { useAutoEditorStore } from '../store/autoEditorStore'
 
 const API_BASE = 'http://localhost:3001/api'
 
-export async function generateBackground(prompt: string): Promise<string> {
+export async function generateBackground(prompt: string, transcript?: any, creativeBrief?: any): Promise<string> {
   const log = useAutoEditorStore.getState().addLog
 
   log('מייצר תמונת רקע עם Nano Banana...')
@@ -14,6 +14,8 @@ export async function generateBackground(prompt: string): Promise<string> {
       prompt,
       aspectRatio: '9:16',
       style: 'cinematic',
+      transcript,
+      creativeBrief,
     }),
   })
 

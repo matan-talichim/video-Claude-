@@ -3304,6 +3304,10 @@ app.post('/api/auto-editor/clean-transcript', async (req, res) => {
     const presenterSegments = (transcript?.segments || []).filter((s: any) =>
       matchesSpeaker(s.speaker, mainPresenter)
     )
+    // Also collect non-presenter segments for retake detection context
+    const otherSegments = (transcript?.segments || []).filter((s: any) =>
+      !matchesSpeaker(s.speaker, mainPresenter)
+    )
 
     if (presenterSegments.length === 0) {
       return res.json({
@@ -3314,12 +3318,23 @@ app.post('/api/auto-editor/clean-transcript', async (req, res) => {
       })
     }
 
+    // Build other speakers context for retake detection
+    const otherSpeakersContext = otherSegments.length > 0
+      ? `\n\nOTHER SPEAKERS (context only — do NOT keep these, but use them to detect retakes):
+${otherSegments.slice(0, 30).map((s: any) =>
+  `  ${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s [${s.speaker || 'other'}]: "${s.text}"`
+).join('\n')}`
+      : ''
+
+    console.log(`[CLEAN] Presenter segments: ${presenterSegments.length}, Other speaker segments for context: ${otherSegments.length}`)
+
     const cleanPrompt = `You are a professional video editor cleaning a transcript for editing.
 
 TRANSCRIPT (presenter segments only):
 ${presenterSegments.map((s: any, i: number) =>
   `[${i}] ${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s: "${s.text}"`
 ).join('\n')}
+${otherSpeakersContext}
 
 Your job: Mark which segments to KEEP and which to REMOVE.
 
@@ -3331,6 +3346,11 @@ REMOVE these:
 5. Crew directions: "עוד פעם", "מוכן?", "שנייה", "בוא נעשה עוד take"
 6. Unnatural long pauses (gaps > 2 seconds inside a sentence)
 7. Incomplete sentences that don't add value
+
+RETAKE DETECTION:
+8. When another speaker says a sentence and the presenter repeats it shortly after (within 10 seconds),
+   this is a retake/prompt scenario. REMOVE the presenter's FIRST attempt and KEEP only the LAST/BEST version.
+9. If the presenter says the same idea multiple times in a row, keep only the last version.
 
 KEEP these:
 1. Complete, clean sentences
@@ -3373,6 +3393,9 @@ IMPORTANT:
     const content = response.choices[0].message.content?.trim() || ''
     const cleaned = content.replace(/```json|```/g, '').trim()
     const result = JSON.parse(cleaned)
+
+    const retakeCount = (result.segments || []).filter((s: any) => s.action === 'remove' && s.reason?.toLowerCase().includes('retake')).length
+    console.log(`[CLEAN] Detected ${retakeCount} retakes (presenter repeated after crew prompt)`)
 
     // Apply cleaning decisions to segments
     const cleanedSegments = presenterSegments
@@ -3693,7 +3716,7 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(400).json({ message: 'מפתח OpenAI API לא מוגדר' })
 
-    const { creativeBrief, transcript, targetDuration, platforms, promptEvolution, socialLearningRules } = req.body
+    const { creativeBrief, transcript, targetDuration, platforms, promptEvolution, socialLearningRules, temperature: reqTemperature } = req.body
     if (!creativeBrief || !transcript) return res.status(400).json({ message: 'חסר creativeBrief או transcript' })
 
     // Ensure presenter segments are marked - if no isPresenter field exists, mark all as presenter
@@ -3938,7 +3961,7 @@ Create precise technical edit plan.`
         }
       ],
       response_format: { type: 'json_object' as const },
-      temperature: 0.3,
+      temperature: reqTemperature ?? 0.3,
     })
 
     const content = response.choices?.[0]?.message?.content
@@ -4080,23 +4103,78 @@ Return exactly 3 suggestions. Each suggestion must be:
 // POST /api/generate-background — Nano Banana (Gemini) image generation
 let nanoBananaFailedAll = false
 
+// Generate a content-specific background image prompt from transcript and creative brief
+function generateBackgroundImagePrompt(transcript: any, creativeBrief: any): string {
+  try {
+    // Extract key topic from transcript (analyze full text, not just first 200 chars)
+    let fullText = ''
+    if (typeof transcript === 'string') {
+      fullText = transcript
+    } else if (transcript?.segments) {
+      fullText = transcript.segments.map((s: any) => s.text).join(' ')
+    }
+
+    // Find core topic keywords (most frequent meaningful words)
+    const words = fullText.replace(/[^\w\sא-ת]/g, '').split(/\s+/).filter((w: string) => w.length > 3)
+    const wordFreq: Record<string, number> = {}
+    for (const w of words) wordFreq[w] = (wordFreq[w] || 0) + 1
+    const topWords = Object.entries(wordFreq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([w]) => w)
+      .join(', ')
+
+    // Use creative brief fields if available
+    const summary = creativeBrief?.video_summary || creativeBrief?.enhanced_prompt || ''
+    const colorMood = creativeBrief?.style?.color_mood || creativeBrief?.style?.color || ''
+    const contentType = creativeBrief?.detected_type || ''
+
+    // Build a rich, specific prompt
+    const elements: string[] = []
+    if (summary) elements.push(`Scene depicting: ${summary.substring(0, 150)}`)
+    if (topWords) elements.push(`Related to: ${topWords}`)
+    if (colorMood) elements.push(`Color mood: ${colorMood}`)
+
+    // Content-type specific visual suggestions
+    if (contentType === 'marketing_product' || contentType === 'ad_short') {
+      elements.push('clean minimal workspace, product showcase, soft gradient lighting')
+    } else if (contentType === 'podcast_interview') {
+      elements.push('cozy studio environment, warm ambient lighting, microphone on desk')
+    } else if (contentType === 'tutorial') {
+      elements.push('organized desk with tools, clean whiteboard, educational setting')
+    } else if (contentType === 'testimonial') {
+      elements.push('professional office, natural window light, warm tones')
+    } else {
+      elements.push('professional setting, modern environment')
+    }
+
+    elements.push('shallow depth of field, photorealistic, cinematic quality, soft bokeh background')
+
+    const result = elements.join('. ')
+    console.log(`[NANO BANANA] Generated content-specific prompt: ${result.substring(0, 100)}`)
+    return result
+  } catch (err: any) {
+    console.warn('[NANO BANANA] generateBackgroundImagePrompt failed, using original prompt:', err.message)
+    return ''
+  }
+}
+
 app.post('/api/generate-background', async (req, res) => {
   try {
     const ai = getGemini()
     if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
 
-    const { prompt, aspectRatio = '9:16', transcript } = req.body
+    const { prompt, aspectRatio = '9:16', transcript, creativeBrief } = req.body
     if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
-    // If prompt looks generic, try to enrich from transcript
+    // Generate content-specific prompt from transcript and creative brief
     let bgPrompt = prompt
     const genericPatterns = /^(modern|professional|abstract|background|office|business)\s/i
-    if (genericPatterns.test(prompt) && transcript) {
-      const topicSummary = typeof transcript === 'string'
-        ? transcript.substring(0, 200)
-        : (transcript.segments || []).slice(0, 5).map((s: any) => s.text).join(' ').substring(0, 200)
-      bgPrompt = `Professional background image related to: ${topicSummary}. Photorealistic, shallow depth of field, soft lighting, suitable as blurred background. ${prompt}`
-      console.log('[NANO BANANA] Enriched generic prompt with transcript context')
+    if (genericPatterns.test(prompt) || creativeBrief || transcript) {
+      const enrichedPrompt = generateBackgroundImagePrompt(transcript, creativeBrief)
+      if (enrichedPrompt) {
+        bgPrompt = enrichedPrompt
+      }
     }
 
     console.log('[NANO BANANA] Generating background in DEEP mode (gemini-3-pro-image-preview)')
@@ -4948,16 +5026,16 @@ function formatAssTime(seconds: number): string {
   return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
 }
 
-// Color grade presets
+// Color grade presets — rich cinematic looks
 const colorGrades: Record<string, string> = {
-  cinematic: 'eq=brightness=0.02:contrast=1.15:saturation=0.9,curves=m=0/0:0.3/0.25:0.7/0.8:1/1',
-  warm: 'eq=brightness=0.03:contrast=1.05:saturation=1.2,colorbalance=rs=0.1:gs=0.05:bs=-0.05:rm=0.05:gm=0.02:bm=-0.03',
-  cold: 'eq=brightness=0.02:contrast=1.1:saturation=0.85,colorbalance=rs=-0.05:gs=0:bs=0.1:rm=-0.03:gm=0.02:bm=0.08',
-  vintage: 'eq=brightness=0.05:contrast=0.95:saturation=0.7,curves=r=0/0.1:0.5/0.5:1/0.9',
-  vibrant: 'eq=brightness=0.03:contrast=1.2:saturation=1.4,unsharp=5:5:1.0:5:5:0.0',
-  moody: 'eq=brightness=-0.02:contrast=1.2:saturation=0.8,curves=m=0/0:0.25/0.15:0.75/0.85:1/1,vignette=PI/4',
-  clean: 'eq=brightness=0.04:contrast=1.05:saturation=1.05,unsharp=3:3:0.5',
-  film: 'eq=brightness=0.01:contrast=1.1:saturation=0.95,curves=r=0/0.05:1/0.95:g=0/0.03:1/0.97,vignette=PI/5',
+  cinematic: 'eq=brightness=-0.03:contrast=1.25:saturation=0.85,curves=m=0/0:0.15/0.05:0.5/0.5:0.85/0.95:1/1,colorbalance=rs=0.03:gs=-0.02:bs=0.05:rh=0.05:gh=-0.02:bh=0.02,vignette=PI/4',
+  warm: 'eq=brightness=0.04:contrast=1.1:saturation=1.15,colorbalance=rs=0.15:gs=0.08:bs=-0.1:rm=0.1:gm=0.05:bm=-0.08:rh=0.08:gh=0.03:bh=-0.05,curves=r=0/0:0.5/0.55:1/1:b=0/0.05:0.5/0.45:1/0.9',
+  cold: 'eq=brightness=0.01:contrast=1.12:saturation=0.9,colorbalance=rs=-0.1:gs=-0.03:bs=0.15:rm=-0.08:gm=0.02:bm=0.12:rh=-0.05:gh=0.01:bh=0.1,curves=b=0/0.05:0.5/0.58:1/1:r=0/0:0.5/0.45:1/0.92',
+  vintage: 'eq=brightness=0.05:contrast=0.9:saturation=0.6,curves=r=0/0.12:0.5/0.52:1/0.88:g=0/0.08:0.5/0.48:1/0.9:b=0/0.05:0.5/0.4:1/0.8,vignette=PI/3.5',
+  vibrant: 'eq=brightness=0.04:contrast=1.25:saturation=1.5,unsharp=5:5:1.2:5:5:0.0,curves=m=0/0:0.4/0.35:0.6/0.7:1/1',
+  moody: 'eq=brightness=-0.05:contrast=1.3:saturation=0.7,curves=m=0/0:0.2/0.08:0.5/0.45:0.8/0.9:1/1,colorbalance=rs=0.02:gs=-0.03:bs=0.05,vignette=PI/3',
+  clean: 'eq=brightness=0.04:contrast=1.08:saturation=1.08,unsharp=3:3:0.6',
+  film: 'eq=brightness=0.0:contrast=1.15:saturation=0.9,curves=r=0/0.03:0.5/0.5:1/0.95:g=0/0.02:0.5/0.48:1/0.95:b=0/0.05:0.5/0.5:1/0.92,vignette=PI/4.5,colorbalance=rm=0.03:gm=-0.01:bm=-0.02',
 }
 
 // Subtitle style presets (ASS format)
@@ -4990,26 +5068,34 @@ ${subtitleStyles[style] || subtitleStyles.modern}
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `
 
-  // Recalculate timestamps relative to cut video
+  // Recalculate timestamps relative to cut video with overlap/clamp support
   let currentOffset = 0
+  let syncedCount = 0
   for (const cut of cuts) {
     const cutDuration = cut.keep_end - cut.keep_start
     for (const seg of segments) {
       const segStart = seg.start ?? seg.keepStart
       const segEnd = seg.end ?? seg.keepEnd
-      if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
-        const relStart = currentOffset + (segStart - cut.keep_start)
-        const relEnd = currentOffset + (segEnd - cut.keep_start)
+      // Use overlap check instead of strict containment
+      if (segStart < cut.keep_end && segEnd > cut.keep_start) {
+        // Clamp segment to cut range
+        const clampedStart = Math.max(segStart, cut.keep_start)
+        const clampedEnd = Math.min(segEnd, cut.keep_end)
+        const relStart = currentOffset + (clampedStart - cut.keep_start)
+        const relEnd = currentOffset + (clampedEnd - cut.keep_start)
+        if (relEnd - relStart < 0.1) continue // Skip tiny fragments
         const start = formatAssTime(relStart)
         const end = formatAssTime(relEnd)
         // Add fade-in/fade-out animation
         const text = `{\\fad(200,200)}${seg.text}`
         ass += `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}\n`
+        syncedCount++
       }
     }
     currentOffset += cutDuration
   }
 
+  console.log(`[SUBTITLE] Synced ${syncedCount} subtitle segments to cut timeline. Offset adjustments applied.`)
   return ass
 }
 
@@ -5049,7 +5135,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
   }
   ass += `\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`
 
-  // Recalculate timestamps relative to cut video (same logic as standard subs)
+  // Recalculate timestamps relative to cut video with overlap/clamp support
   const adjustedSubs: Array<{ start: number; end: number; text: string }> = []
   let currentOffset = 0
   for (const cut of cuts) {
@@ -5057,16 +5143,24 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
     for (const seg of subtitles) {
       const segStart = seg.start ?? seg.keepStart ?? 0
       const segEnd = seg.end ?? seg.keepEnd ?? 0
-      if (segStart >= cut.keep_start && segEnd <= cut.keep_end) {
+      // Use overlap check instead of strict containment
+      if (segStart < cut.keep_end && segEnd > cut.keep_start) {
+        // Clamp segment to cut range
+        const clampedStart = Math.max(segStart, cut.keep_start)
+        const clampedEnd = Math.min(segEnd, cut.keep_end)
+        const relStart = currentOffset + (clampedStart - cut.keep_start)
+        const relEnd = currentOffset + (clampedEnd - cut.keep_start)
+        if (relEnd - relStart < 0.1) continue // Skip tiny fragments
         adjustedSubs.push({
-          start: currentOffset + (segStart - cut.keep_start),
-          end: currentOffset + (segEnd - cut.keep_start),
+          start: relStart,
+          end: relEnd,
           text: seg.text || '',
         })
       }
     }
     currentOffset += cutDuration
   }
+  console.log(`[SUBTITLE] Synced ${adjustedSubs.length} animated subtitle segments to cut timeline. Offset adjustments applied.`)
 
   for (const sub of adjustedSubs) {
     const text = sub.text
@@ -5741,9 +5835,28 @@ function buildPresenterCutRanges(
   // Build cut ranges with smart merging
   const ranges: Array<{start: number, end: number}> = []
 
-  presenterSegs.forEach((seg: any) => {
-    const segStart = Math.max(0, seg.start - 0.15) // Small padding
-    const segEnd = seg.end + 0.15
+  presenterSegs.forEach((seg: any, idx: number) => {
+    const originalStart = seg.start
+    const originalEnd = seg.end
+
+    // Silence-aware padding: expand more into gaps, less into adjacent speech
+    const prevSeg = presenterSegs[idx - 1]
+    const nextSeg = presenterSegs[idx + 1]
+
+    // Start padding: reduce if previous segment ended very recently (avoid catching tail of other speaker)
+    let startPad = 0.25
+    if (prevSeg && (seg.start - prevSeg.end) < 0.2) {
+      startPad = 0.1
+    }
+    // End padding: expand more if next segment is far away (silence gap = room to breathe)
+    let endPad = 0.25
+    if (nextSeg && (nextSeg.start - seg.end) > 0.3) {
+      endPad = 0.4
+    }
+
+    const segStart = Math.max(0, seg.start - startPad)
+    const segEnd = seg.end + endPad
+    console.log(`[CUT] Segment ${idx}: padded ${originalStart.toFixed(2)}→${segStart.toFixed(2)} to ${originalEnd.toFixed(2)}→${segEnd.toFixed(2)} (silence-aware)`)
 
     const last = ranges[ranges.length - 1]
 
@@ -6005,10 +6118,21 @@ function processStepSync(stepName: string, inputFile: string, outputFile: string
 }
 
 // Calculate comprehensive quality score for professional editing
+// Scores based on ACTUAL results, not just planned features
 function calculateQualityScore(job: any, outputFile: string, extraInfo: {
   cuts: any[], planZooms: any[], filteredSubtitleSegments: any[],
   brollAssets: any[], musicUrl: string | null, planColorGrade: string,
   mainPresenter: string | null, planCameraAngles: any[],
+  // Actual results flags
+  subtitlesActuallyApplied?: boolean,
+  musicActuallyApplied?: boolean,
+  brollActuallyApplied?: number,
+  logoActuallyApplied?: boolean,
+  colorGradeActuallyApplied?: boolean,
+  lowerThirdsActuallyApplied?: boolean,
+  // Legacy compat
+  logoApplied?: boolean,
+  logoRequested?: boolean,
 }): { score: number, report: any } {
   const report: any = {}
   let score = 0
@@ -6032,8 +6156,13 @@ function calculateQualityScore(job: any, outputFile: string, extraInfo: {
   if (angles >= 3) { score += 10; report.cameraAngles = `${angles} החלפות זווית` }
   else { report.cameraAngles = 'מעט החלפות זווית' }
 
-  // 4. Color grade (5 points)
-  if (extraInfo.planColorGrade && extraInfo.planColorGrade !== 'none') { score += 5; report.colorGrade = extraInfo.planColorGrade }
+  // 4. Color grade (5 points) — based on actual application
+  const colorActual = extraInfo.colorGradeActuallyApplied !== undefined ? extraInfo.colorGradeActuallyApplied : (extraInfo.planColorGrade && extraInfo.planColorGrade !== 'none')
+  if (colorActual) { score += 5; report.colorGrade = extraInfo.planColorGrade }
+  else if (extraInfo.planColorGrade && extraInfo.planColorGrade !== 'none') {
+    report.colorGrade = `! ${extraInfo.planColorGrade} תוכנן אך לא הוחל`
+    score -= 5
+  }
 
   // 5. Background blur (10 points)
   if (job?.plan?.backgroundBlur !== false) {
@@ -6047,22 +6176,31 @@ function calculateQualityScore(job: any, outputFile: string, extraInfo: {
   const zoomCount = extraInfo.planZooms?.length || 0
   if (zoomCount >= 3) { score += 10; report.zooms = `${zoomCount} זומים` }
 
-  // 7. Subtitles (15 points)
-  if (extraInfo.filteredSubtitleSegments?.length > 0) {
+  // 7. Subtitles (15 points) — based on actual application
+  const subsPlanned = (extraInfo.filteredSubtitleSegments?.length || 0) > 0
+  const subsActual = extraInfo.subtitlesActuallyApplied !== undefined ? extraInfo.subtitlesActuallyApplied : subsPlanned
+  if (subsActual) {
     score += 15
-    report.subtitles = `${extraInfo.filteredSubtitleSegments.length} שורות כתוביות`
+    report.subtitles = `${extraInfo.filteredSubtitleSegments?.length || 0} שורות כתוביות`
+  } else if (subsPlanned) {
+    report.subtitles = '! כתוביות תוכננו אך לא הוחלו'
+    score -= 5
   } else {
     report.subtitles = 'ללא כתוביות'
   }
 
-  // 8. Music (10 points)
-  if (extraInfo.musicUrl) { score += 10; report.music = 'מוזיקת רקע' }
+  // 8. Music (10 points) — based on actual application
+  const musicActual = extraInfo.musicActuallyApplied !== undefined ? extraInfo.musicActuallyApplied : !!extraInfo.musicUrl
+  if (musicActual) { score += 10; report.music = 'מוזיקת רקע' }
+  else if (extraInfo.musicUrl) { report.music = '! מוזיקה תוכננה אך לא הוחלה'; score -= 5 }
   else { report.music = 'ללא מוזיקה' }
 
-  // 9. B-Roll (15 points)
-  const brollCount = extraInfo.brollAssets?.length || 0
-  if (brollCount >= 2) { score += 15; report.broll = `${brollCount} קטעי B-Roll` }
-  else if (brollCount === 1) { score += 8; report.broll = '1 קטע B-Roll' }
+  // 9. B-Roll (15 points) — based on actual insertion count
+  const brollPlanned = extraInfo.brollAssets?.length || 0
+  const brollActual = extraInfo.brollActuallyApplied !== undefined ? extraInfo.brollActuallyApplied : brollPlanned
+  if (brollActual >= 2) { score += 15; report.broll = `${brollActual} קטעי B-Roll` }
+  else if (brollActual === 1) { score += 8; report.broll = '1 קטע B-Roll' }
+  else if (brollPlanned > 0) { report.broll = `! ${brollPlanned} B-Roll תוכננו אך לא הוכנסו`; score -= 5 }
   else { report.broll = 'ללא B-Roll' }
 
   // 10. Output file valid (5 points)
@@ -6070,13 +6208,20 @@ function calculateQualityScore(job: any, outputFile: string, extraInfo: {
     score += 5
   }
 
-  // 11. Logo (5 points)
-  if ((extraInfo as any).logoApplied) {
+  // 11. Logo (5 points) — based on actual application
+  const logoActual = extraInfo.logoActuallyApplied !== undefined ? extraInfo.logoActuallyApplied : extraInfo.logoApplied
+  if (logoActual) {
     score += 5
     report.logo = 'לוגו הוסף'
-  } else if ((extraInfo as any).logoRequested) {
+  } else if (extraInfo.logoRequested) {
     report.logo = '! לוגו תוכנן אך לא הוסף'
+    score -= 5
   }
+
+  // Ensure score doesn't go below 0
+  score = Math.max(0, score)
+
+  console.log(`[QUALITY] Score: ${Math.min(score, 100)}/100. Planned vs Actual: subtitles=${subsPlanned}/${subsActual}, broll=${brollPlanned}/${brollActual}, music=${!!extraInfo.musicUrl}/${musicActual}`)
 
   return { score: Math.min(score, 100), report }
 }
@@ -6347,7 +6492,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
     try {
       execSync(
-        `"${ffmpegPath}" -i "${sourceFile}" -filter_complex "${transFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${cutFile}" -y`,
+        `"${ffmpegPath}" -i "${sourceFile}" -filter_complex "${transFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -avoid_negative_ts make_zero "${cutFile}" -y`,
         { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
       )
       console.log('[PROCESS] Step 1 done: Cut video created' + (useTransitions ? ' with transitions' : ''))
@@ -6363,7 +6508,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       })
       const fallbackFilter = [...cutFilters, `${concatInputs.join('')}concat=n=${cuts.length}:v=1:a=1[outv][outa]`].join(';')
       execSync(
-        `"${ffmpegPath}" -i "${sourceFile}" -filter_complex "${fallbackFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${cutFile}" -y`,
+        `"${ffmpegPath}" -i "${sourceFile}" -filter_complex "${fallbackFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -avoid_negative_ts make_zero "${cutFile}" -y`,
         { timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] }
       )
       console.log('[PROCESS] Step 1 done: Cut video created (fallback concat)')
@@ -6873,8 +7018,20 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // STEP I: COLOR GRADE
     // ============================================
 
-    const colorGradeName = planColorGrade
+    let colorGradeName = planColorGrade
+    // Auto-select color grade based on content type if not specified or just 'clean'
+    if (!colorGradeName || colorGradeName === 'clean') {
+      const detectedType = job?.enrichment?.detected_type || job?.plan?.contentType || ''
+      if (detectedType === 'ad_short' || detectedType === 'social_reels') colorGradeName = 'vibrant'
+      else if (detectedType === 'podcast_interview') colorGradeName = 'warm'
+      else if (detectedType === 'testimonial') colorGradeName = 'film'
+      else if (detectedType === 'marketing_product') colorGradeName = 'cinematic'
+      if (colorGradeName !== planColorGrade) {
+        console.log(`[COLOR] Auto-selected grade "${colorGradeName}" for content type "${detectedType}"`)
+      }
+    }
     const gradeFilter = colorGrades[colorGradeName] || colorGrades.clean
+    console.log(`[COLOR] Applying grade "${colorGradeName}": ${gradeFilter.substring(0, 80)}...`)
     const gradedFile = path.join(uploadsDir, `graded_${timestamp}.mp4`)
     filesToCleanup.push(gradedFile)
 
@@ -7258,7 +7415,14 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // ============================================
 
     const speakers = planSpeakers
-    if (speakers.length > 0) {
+    // Filter out generic speaker names — only show lower thirds for real names
+    const uniqueSpeakers = speakers.filter((s: any) => {
+      const name = (s.name || '').trim()
+      return name && name !== 'דובר' && name !== 'דובר 1' && !name.match(/^דובר\s*\d*$/) && !name.match(/^speaker\s*\d*$/i)
+    })
+    console.log(`[LOWER THIRDS] Filtered: ${speakers.length} planned → ${uniqueSpeakers.length} with real names.${speakers.length <= 1 || uniqueSpeakers.length === 0 ? ' Skipping lower thirds.' : ''}`)
+
+    if (speakers.length > 1 && uniqueSpeakers.length > 0) {
       const lowerFile = path.join(uploadsDir, `lower_${timestamp}.mp4`)
       filesToCleanup.push(lowerFile)
       console.log('[PROCESS] Step 6: Adding speaker lower thirds...')
@@ -7266,8 +7430,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
       try {
         // Remap speaker timestamps to cut video
         const dialogueLines: string[] = []
-        speakers.forEach((s: any) => {
-          const name = s.name || 'דובר'
+        uniqueSpeakers.forEach((s: any) => {
+          const name = s.name
           const firstAppear = s.first_appearance ?? s.firstAppearance ?? 0
           const displayDur = s.display_duration ?? s.displayDuration ?? 4
 
@@ -7458,16 +7622,31 @@ ${gfxDialogueLines.join('\n')}
     // STEP 7.5: LOGO OVERLAY
     // ============================================
     if (job?.logo?.serverUrl) {
-      console.log('[PROCESS] Step 7.5: Adding logo overlay...')
+      console.log('[LOGO] Checking logo:', JSON.stringify({
+        hasLogo: !!job?.logo,
+        serverUrl: job?.logo?.serverUrl,
+        position: job?.logo?.position,
+        size: job?.logo?.size,
+      }))
       let logoFile = job.logo.serverUrl
-      // Convert localhost URL to local path
+      // Convert localhost URL to local path using proper URL parsing
       if (logoFile.startsWith('http://localhost')) {
-        logoFile = logoFile.replace(
-          /http:\/\/localhost:\d+\/uploads\//,
-          path.join(uploadsDir, '/')
-        )
+        try {
+          const urlPath = new URL(logoFile).pathname  // e.g. /uploads/logo_123.png
+          const filename = path.basename(urlPath)
+          logoFile = path.join(uploadsDir, filename)
+        } catch (urlErr: any) {
+          console.warn('[LOGO] URL parse failed, trying regex fallback:', urlErr.message)
+          logoFile = logoFile.replace(
+            /http:\/\/localhost:\d+\/uploads\//,
+            uploadsDir + '/'
+          )
+        }
       }
-      if (fs.existsSync(logoFile)) {
+      const logoExists = fs.existsSync(logoFile)
+      const fileSize = logoExists ? fs.statSync(logoFile).size : 0
+      console.log(`[LOGO] Path resolved: ${logoFile}, exists: ${logoExists}, size: ${fileSize}bytes`)
+      if (logoExists) {
         const position = job.logo.position || 'top-right'
         const size = job.logo.size || 'medium'
         const opacity = job.logo.opacity ?? 0.9
@@ -7526,7 +7705,21 @@ ${gfxDialogueLines.join('\n')}
             console.log(`[LOGO] Applied: ${position}, ${size} (${logoPixelWidth}px), opacity ${opacity}`)
           }
         } catch (e: any) {
-          console.warn('[LOGO] Overlay failed:', e.stderr?.toString().substring(0, 200))
+          console.warn('[LOGO] Overlay failed, trying simpler filter:', e.stderr?.toString().substring(0, 200))
+          // Fallback: simpler overlay without colorchannelmixer
+          try {
+            execSync(
+              `"${ffmpegPath}" -i "${currentFile}" -i "${logoFile}" -filter_complex "[1:v]scale=${logoPixelWidth}:-1[logo];[0:v][logo]overlay=${overlayPosition}[out]" -map "[out]" -map 0:a -c:a copy -preset fast -crf 18 "${logoOutput}" -y`,
+              { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+            )
+            if (fs.existsSync(logoOutput) && fs.statSync(logoOutput).size > 50000) {
+              currentFile = logoOutput
+              logoApplied = true
+              console.log(`[LOGO] Applied with simple overlay fallback`)
+            }
+          } catch (e2: any) {
+            console.warn('[LOGO] Simple overlay also failed:', e2.message?.substring(0, 150))
+          }
         }
       } else {
         console.warn('[LOGO] File not found:', logoFile)
@@ -7580,6 +7773,12 @@ ${gfxDialogueLines.join('\n')}
       const { score: qualityScore, report: qualityReport } = calculateQualityScore(job, currentFile, {
         cuts, planZooms, filteredSubtitleSegments, brollAssets, musicUrl,
         planColorGrade, mainPresenter, planCameraAngles,
+        subtitlesActuallyApplied: subtitlesApplied,
+        musicActuallyApplied: musicApplied,
+        brollActuallyApplied: brollInserted,
+        logoActuallyApplied: logoApplied,
+        colorGradeActuallyApplied: !!colorGradeName,
+        lowerThirdsActuallyApplied: lowerThirdsApplied > 0,
         logoApplied, logoRequested: !!job?.logo?.serverUrl,
       })
 
@@ -7717,6 +7916,12 @@ ${gfxDialogueLines.join('\n')}
     const { score: qualityScore, report: qualityReport } = calculateQualityScore(job, currentFile, {
       cuts, planZooms, filteredSubtitleSegments, brollAssets, musicUrl,
       planColorGrade, mainPresenter, planCameraAngles,
+      subtitlesActuallyApplied: subtitlesApplied,
+      musicActuallyApplied: musicApplied,
+      brollActuallyApplied: brollInserted,
+      logoActuallyApplied: logoApplied,
+      colorGradeActuallyApplied: !!colorGradeName,
+      lowerThirdsActuallyApplied: lowerThirdsApplied > 0,
       logoApplied, logoRequested: !!job?.logo?.serverUrl,
     })
 
