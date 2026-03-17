@@ -587,7 +587,7 @@ function estimateMaxVideos(files: LocalFile[], targetDuration: number): number {
 
 export default function AutoEditorSettings({ files, onStart, onBack, onClose }: AutoEditorSettingsProps) {
   const profile = useUserProfileStore()
-  const { language: selectedLanguage, setLanguage: setSelectedLanguage } = useAutoEditorStore()
+  const { language: selectedLanguage, setLanguage: setSelectedLanguage, expectedSpeakers, setExpectedSpeakers } = useAutoEditorStore()
   const [userPrompt, setUserPrompt] = useState('')
   const [selectedContentType, setSelectedContentType] = useState<ContentTypeItem | null>(null)
   const [targetDuration, setTargetDuration] = useState(-1)
@@ -810,6 +810,23 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
             {selectedLanguage === 'detect' && (
               <p className="text-gray-500 text-xs">המערכת תזהה את השפה אוטומטית</p>
             )}
+          </div>
+
+          {/* Expected speakers selector */}
+          <div className="flex items-center gap-2" dir="rtl">
+            <span className="text-white text-xs">מספר דוברים משוער:</span>
+            <select
+              value={expectedSpeakers}
+              onChange={e => setExpectedSpeakers(Number(e.target.value))}
+              className="bg-white/5 border border-white/10 rounded p-1 text-white text-xs"
+            >
+              <option value={0}>אוטומטי</option>
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+              <option value={5}>5+</option>
+            </select>
           </div>
 
           {/* Professional options */}

@@ -106,6 +106,9 @@ interface AutoEditorStore {
   // Language
   language: string
 
+  // Expected speakers
+  expectedSpeakers: number
+
   // Enrichment data
   enrichment: any | null
   transcript: any | null
@@ -164,6 +167,7 @@ interface AutoEditorStore {
   setCachedAssets: (a: { backgroundImage: string; brollClips: string[]; music: string }) => void
   markStepCompleted: (step: AutoEditorStep) => void
   setLanguage: (lang: string) => void
+  setExpectedSpeakers: (n: number) => void
   setEditedFiles: (files: EditedFile[]) => void
   reset: () => void
 }
@@ -177,6 +181,7 @@ const initialState = {
   logs: [] as string[],
   editedFiles: [] as EditedFile[],
   language: 'he',
+  expectedSpeakers: 0,
   enrichment: null as any | null,
   transcript: null as any | null,
   visualAnalysis: null as any | null,
@@ -251,6 +256,7 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
   },
 
   setLanguage: (language) => set({ language }),
+  setExpectedSpeakers: (expectedSpeakers) => set({ expectedSpeakers }),
   setEditedFiles: (editedFiles) => set({ editedFiles }),
 
   reset: () => set(initialState),
