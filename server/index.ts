@@ -7815,13 +7815,54 @@ const MONTHLY_GPT_COST_LIMIT = 30.0 // $30 per month
 const DAILY_GPT_CALLS_LIMIT = 50    // ~50 calls/day at ~$0.02/call
 
 function loadLearningState(): any {
+  const brainPath = path.join(__dirname, 'editor-brain.json')
+
+  // Try loading state file first
   try {
     if (fs.existsSync(LEARNING_STATE_FILE)) {
-      return JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, 'utf-8'))
+      const state = JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, 'utf-8'))
+      // Validate that state has meaningful data (not a reset/empty state)
+      if (state.totalCost > 0 || state.learningMetrics?.totalSessions > 0 || state.totalVideosAnalyzed > 0) {
+        return state
+      }
     }
   } catch {}
-  // If file doesn't exist (fresh deploy), start with empty state
-  console.log('[LEARN] No learning state file found, starting fresh')
+
+  // State file missing or empty (e.g. after Railway redeploy) - try to recover from editor brain
+  try {
+    if (fs.existsSync(brainPath)) {
+      const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
+      if (brain.cumulativeStats) {
+        console.log('[LEARN] Recovering stats from editor brain:', JSON.stringify(brain.cumulativeStats))
+        return {
+          lastLearnDate: 0,
+          totalVideosAnalyzed: brain.cumulativeStats.totalVideosAnalyzed || 0,
+          learnedPatterns: {},
+          missingFeatures: [],
+          dailyYoutubeUnits: 0,
+          dailyGptCalls: 0,
+          dailyGptCost: 0,
+          dailyDate: '',
+          dailyCost: 0,
+          monthlyGptCost: 0,
+          monthlyDate: '',
+          monthlyCost: brain.cumulativeStats.monthlyCost || 0,
+          monthlyMonth: brain.cumulativeStats.monthlyMonth || '',
+          totalCost: brain.cumulativeStats.totalCost || 0,
+          expertise: {},
+          trendInsights: { activeTrends: [], expiredTrends: [], evergreenRules: [] },
+          learningMetrics: {
+            totalSessions: brain.cumulativeStats.totalSessions || 0,
+          },
+          sessionHistory: brain.cumulativeStats.sessionHistory || [],
+          lastSessionCost: brain.cumulativeStats.lastSessionCost || 0,
+        }
+      }
+    }
+  } catch {}
+
+  // Nothing to recover from - start fresh
+  console.log('[LEARN] No learning state or brain found, starting fresh')
   return {
     lastLearnDate: 0,
     totalVideosAnalyzed: 0,
@@ -7831,8 +7872,12 @@ function loadLearningState(): any {
     dailyGptCalls: 0,
     dailyGptCost: 0,
     dailyDate: '',
+    dailyCost: 0,
     monthlyGptCost: 0,
     monthlyDate: '',
+    monthlyCost: 0,
+    monthlyMonth: '',
+    totalCost: 0,
     expertise: {},
     trendInsights: { activeTrends: [], expiredTrends: [], evergreenRules: [] },
     learningMetrics: { totalSessions: 0 },
@@ -8397,10 +8442,23 @@ Start directly with: "HOOK RULES:" and continue section by section.`
     },
   }
 
+  // Store cumulative stats for recovery after Railway redeploys
+  brain.cumulativeStats = {
+    totalCost: state.totalCost || 0,
+    monthlyCost: state.monthlyCost || 0,
+    monthlyMonth: state.monthlyMonth || '',
+    totalSessions: state.learningMetrics?.totalSessions || 0,
+    totalVideosAnalyzed: state.totalVideosAnalyzed || 0,
+    totalRules: totalInsights,
+    lastSessionCost: state.lastSessionCost || 0,
+    sessionHistory: (state.sessionHistory || []).slice(-100),
+    lastUpdated: new Date().toISOString(),
+  }
+
   const brainPath = path.join(__dirname, 'editor-brain.json')
   fs.writeFileSync(brainPath, JSON.stringify(brain, null, 2))
 
-  console.log(`[BRAIN] Editor brain v${brain.version} saved | Master prompt: ${brain.stats.masterPromptWords} words | Trends: ${activeTrends.length}`)
+  console.log(`[BRAIN] Editor brain v${brain.version} saved | Master prompt: ${brain.stats.masterPromptWords} words | Trends: ${activeTrends.length} | Cumulative: $${(state.totalCost || 0).toFixed(3)} total`)
 
   return brain
 }
@@ -9538,25 +9596,28 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
   console.log(`[LEARN] Cost: $${totalCost.toFixed(3)}`)
 
   // --- Track ALL costs accurately across sessions ---
-  stateAfter.totalCost = (stateAfter.totalCost || 0) + totalCost
-  stateAfter.dailyCost = (stateAfter.dailyCost || 0) + totalCost
-  stateAfter.monthlyCost = (stateAfter.monthlyCost || 0) + totalCost
-  stateAfter.dailyBudget = 1    // $1/day
-  stateAfter.monthlyBudget = 30  // $30/month
-
-  // Reset daily cost if new day
   const todayIsraelEnd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
+  const monthIsrael = todayIsraelEnd.substring(0, 7)
+
+  // Reset daily cost if new day (BEFORE adding current session cost)
   if (stateAfter.dailyDate !== todayIsraelEnd) {
-    stateAfter.dailyCost = totalCost
+    stateAfter.dailyCost = 0
     stateAfter.dailyDate = todayIsraelEnd
   }
 
-  // Reset monthly cost if new month
-  const monthIsrael = todayIsraelEnd.substring(0, 7)
+  // Reset monthly cost if new month (BEFORE adding current session cost)
   if (stateAfter.monthlyMonth !== monthIsrael) {
-    stateAfter.monthlyCost = totalCost
+    stateAfter.monthlyCost = 0
     stateAfter.monthlyMonth = monthIsrael
   }
+
+  // Now accumulate costs correctly
+  stateAfter.totalCost = (stateAfter.totalCost || 0) + totalCost
+  stateAfter.dailyCost = (stateAfter.dailyCost || 0) + totalCost
+  stateAfter.monthlyCost = (stateAfter.monthlyCost || 0) + totalCost
+  stateAfter.lastSessionCost = totalCost
+  stateAfter.dailyBudget = 1    // $1/day
+  stateAfter.monthlyBudget = 30  // $30/month
 
   // Track per-session history
   if (!stateAfter.sessionHistory) stateAfter.sessionHistory = []
@@ -9590,17 +9651,29 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
     console.warn('[BACKUP] Failed:', e.message)
   }
 
-  // --- STEP 8: Update editor brain ---
+  // --- STEP 8: Save state with correct costs BEFORE sending reports ---
+  stateAfter.lastLearnDate = Date.now()
+  stateAfter.lastLearnDateIsrael = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
+  stateAfter.lastSessionNewRules = newRules.length
+  saveLearningState(stateAfter)
+
+  // --- STEP 9: Update editor brain (stores cumulative stats for Railway recovery) ---
   try {
     await updateEditorBrain(stateAfter)
   } catch (e: any) {
     console.warn('[LEARN] Editor brain update failed:', e.message)
   }
 
-  // --- STEP 9: Send Telegram report ---
+  // --- STEP 10: Send Telegram report (AFTER state and brain are saved) ---
   if (newRules.length > 0) {
     await sendLearningReport(stateAfter, learningResults)
   }
+
+  // Count total insights including expertise domains
+  const totalInsightsForReport = totalRulesAfter +
+    (stateAfter.expertise?.social?.insights?.length || 0) +
+    (stateAfter.expertise?.marketing?.insights?.length || 0) +
+    (stateAfter.expertise?.paid_ads?.insights?.length || 0)
 
   // Always send finish notification
   const endTime = new Date().toLocaleString('he-IL', {
@@ -9611,21 +9684,15 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
   let finishMsg = `✅ סיימתי ללמוד (${endTime}) - ${durationMinutes} דקות\n`
   finishMsg += `🎬 סרטונים: ${videosThisSession}\n`
   finishMsg += `💡 תובנות חדשות: ${newRules.length}\n`
-  finishMsg += `💡 סה"כ תובנות: ${totalRulesAfter}\n`
+  finishMsg += `💡 סה"כ תובנות: ${totalInsightsForReport}\n`
   finishMsg += `💰 עלות סשן: $${totalCost.toFixed(3)}\n`
-  finishMsg += `💰 עלות היום: $${(stateAfter.dailyCost || 0).toFixed(3)} / $${stateAfter.dailyBudget || 1}\n`
-  finishMsg += `💰 עלות החודש: $${(stateAfter.monthlyCost || 0).toFixed(3)} / $${stateAfter.monthlyBudget || 30}\n`
-  finishMsg += `💰 עלות כוללת: $${(stateAfter.totalCost || 0).toFixed(3)}\n`
+  finishMsg += `💰 היום: $${(stateAfter.dailyCost || 0).toFixed(3)} / $${stateAfter.dailyBudget || 1}\n`
+  finishMsg += `💰 החודש: $${(stateAfter.monthlyCost || 0).toFixed(3)} / $${stateAfter.monthlyBudget || 30}\n`
+  finishMsg += `💰 כולל: $${(stateAfter.totalCost || 0).toFixed(3)}\n`
   if (newRules.length > 0) {
-    finishMsg += `\n🧠 מוח העורך עודכן לגרסה v${totalRulesAfter}`
+    finishMsg += `\n🧠 מוח העורך עודכן לגרסה v${totalInsightsForReport}`
   }
   await sendTelegram(finishMsg)
-
-  // Save session info
-  stateAfter.lastLearnDate = Date.now()
-  stateAfter.lastLearnDateIsrael = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
-  stateAfter.lastSessionNewRules = newRules.length
-  saveLearningState(stateAfter)
 
   console.log('[LEARN] Learning session complete, saved state')
 }
@@ -9940,7 +10007,7 @@ async function sendFullReport() {
       hour: '2-digit', minute: '2-digit'
     })
 
-    // Count all rules
+    // Count all rules (including expertise domains)
     let totalRules = 0
     const categoryCounts: Record<string, number> = {}
 
@@ -9948,6 +10015,14 @@ async function sendFullReport() {
       const count = (data.editing_rules || []).length
       categoryCounts[cat] = count
       totalRules += count
+    })
+
+    // Also count expertise domain insights
+    ;['editing', 'social', 'marketing', 'paid_ads'].forEach(domain => {
+      const insightCount = state.expertise?.[domain]?.insights?.length || 0
+      if (insightCount > 0) {
+        totalRules += insightCount
+      }
     })
 
     const categories = Object.keys(state.learnedPatterns || {})
@@ -10056,12 +10131,13 @@ async function sendFullReport() {
     message += '\n'
 
     // Cost report
+    const totalSessions = state.learningMetrics?.totalSessions || state.sessionHistory?.length || 0
     message += `💰 עלויות:\n`
     message += `  היום: $${(state.dailyCost || state.dailyGptCost || 0).toFixed(3)} / $${state.dailyBudget || DAILY_GPT_COST_LIMIT}\n`
     message += `  החודש: $${(state.monthlyCost || state.monthlyGptCost || 0).toFixed(3)} / $${state.monthlyBudget || MONTHLY_GPT_COST_LIMIT}\n`
     message += `  כולל (כל הזמנים): $${(state.totalCost || 0).toFixed(3)}\n`
-    message += `  סשנים: ${state.sessionHistory?.length || 0}\n`
-    message += `  ממוצע לסשן: $${state.sessionHistory?.length ? ((state.totalCost || 0) / state.sessionHistory.length).toFixed(3) : '0.000'}\n`
+    message += `  סשנים: ${totalSessions}\n`
+    message += `  ממוצע לסשן: $${totalSessions > 0 ? ((state.totalCost || 0) / totalSessions).toFixed(3) : '0.000'}\n`
     message += `  קריאות היום: ${state.dailyGptCalls || 0} / ${DAILY_GPT_CALLS_LIMIT}\n`
     message += `  YouTube API: ${state.dailyYoutubeUnits || 0} יחידות (היום)\n\n`
 
