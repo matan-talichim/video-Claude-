@@ -9922,6 +9922,57 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
   console.log('[LEARN] Learning session complete, saved state')
 }
 
+// Upload learning state (protected by a simple token)
+app.post('/api/learning/upload-state', async (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (token !== process.env.TELEGRAM_BOT_TOKEN) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const { learningState, editorBrain } = req.body;
+
+    if (learningState) {
+      fs.writeFileSync(learningStatePath, JSON.stringify(learningState, null, 2));
+      console.log('[ADMIN] Learning state uploaded:', (JSON.stringify(learningState).length / 1024).toFixed(1), 'KB');
+    }
+
+    if (editorBrain) {
+      fs.writeFileSync(editorBrainPath, JSON.stringify(editorBrain, null, 2));
+      console.log('[ADMIN] Editor brain uploaded:', (JSON.stringify(editorBrain).length / 1024).toFixed(1), 'KB');
+    }
+
+    res.json({
+      success: true,
+      stateSaved: !!learningState,
+      brainSaved: !!editorBrain,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Download learning state
+app.get('/api/learning/download-state', (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (token !== process.env.TELEGRAM_BOT_TOKEN) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const state = fs.existsSync(learningStatePath)
+      ? JSON.parse(fs.readFileSync(learningStatePath, 'utf-8'))
+      : null;
+    const brain = fs.existsSync(editorBrainPath)
+      ? JSON.parse(fs.readFileSync(editorBrainPath, 'utf-8'))
+      : null;
+
+    res.json({ learningState: state, editorBrain: brain });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ENDPOINT: Get learned rules (called by frontend auto-editor silently)
 app.get('/api/learning/rules', (_req, res) => {
   const state = loadLearningState()
