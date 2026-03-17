@@ -4284,8 +4284,11 @@ Style requirements:
 
 // POST /api/generate-broll — B-Roll video generation proxy (Seedance via kie.ai or VEO)
 app.post('/api/generate-broll', async (req, res) => {
-  const { prompt, provider, duration = '5', aspectRatio = '9:16', resolution = '720p', generateAudio = false } = req.body
+  const { prompt, provider, duration = '5', aspectRatio = '9:16', resolution = '720p', generateAudio = false, brollIndex } = req.body
   if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
+
+  const clipLabel = brollIndex !== undefined ? `#${brollIndex}` : ''
+  console.log(`[B-ROLL ${clipLabel}] Starting: "${prompt.substring(0, 50)}..." (provider: ${provider})`)
 
   if (provider === 'seedance') {
     const kieKey = process.env.KIE_API_KEY
@@ -4422,7 +4425,8 @@ app.post('/api/generate-broll', async (req, res) => {
       }
 
       const videoBuffer = Buffer.from(await videoRes.arrayBuffer())
-      const videoPath = path.join(__dirname, 'uploads', `seedance_${Date.now()}.mp4`)
+      const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
+      const videoPath = path.join(__dirname, 'uploads', `seedance_${uniqueSuffix}.mp4`)
       fs.writeFileSync(videoPath, videoBuffer)
 
       console.log('[SEEDANCE] Saved:', videoPath, (videoBuffer.length / 1024 / 1024).toFixed(1) + 'MB')
