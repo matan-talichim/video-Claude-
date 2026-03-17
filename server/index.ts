@@ -2600,7 +2600,7 @@ async function askGPTForPresenter(transcript: any, visualAnalysis: any, speakerT
     const segs = (transcript.segments || [])
       .filter((s: any) => s.speaker === speaker)
       .slice(0, 5)
-    speakerSamples[speaker] = segs.map((s: any) => `[${s.start.toFixed(1)}s] "${s.text}"`)
+    speakerSamples[speaker] = segs.map((s: any) => `[${(s.start || 0).toFixed(1)}s] "${s.text}"`)
   })
 
   const prompt = `Analyze this video transcript to identify the MAIN PRESENTER.
@@ -3285,7 +3285,7 @@ app.post('/api/auto-editor/clean-transcript', async (req, res) => {
 
 TRANSCRIPT (presenter segments only):
 ${presenterSegments.map((s: any, i: number) =>
-  `[${i}] ${s.start.toFixed(1)}s-${s.end.toFixed(1)}s: "${s.text}"`
+  `[${i}] ${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s: "${s.text}"`
 ).join('\n')}
 
 Your job: Mark which segments to KEEP and which to REMOVE.
@@ -7914,7 +7914,7 @@ function trackCost(state: any, model: string, usage: any): any {
   state.dailyGptCalls = (state.dailyGptCalls || 0) + 1
   state.monthlyGptCost = (state.monthlyGptCost || 0) + cost
 
-  console.log(`[LEARN] Cost: $${cost.toFixed(4)} | Today: $${state.dailyGptCost.toFixed(3)}/$${DAILY_GPT_COST_LIMIT} | Month: $${state.monthlyGptCost.toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}`)
+  console.log(`[LEARN] Cost: $${(cost || 0).toFixed(4)} | Today: $${(state.dailyGptCost || 0).toFixed(3)}/$${DAILY_GPT_COST_LIMIT} | Month: $${(state.monthlyGptCost || 0).toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}`)
   return state
 }
 
@@ -7924,7 +7924,7 @@ function hasBudget(state: any): boolean {
   if (state.dailyDate !== today) return true // New day, reset
 
   if ((state.dailyGptCost || 0) >= DAILY_GPT_COST_LIMIT) {
-    console.log(`[LEARN] Daily budget exhausted: $${state.dailyGptCost.toFixed(2)}/$${DAILY_GPT_COST_LIMIT}`)
+    console.log(`[LEARN] Daily budget exhausted: $${(state.dailyGptCost || 0).toFixed(2)}/$${DAILY_GPT_COST_LIMIT}`)
     return false
   }
   if ((state.dailyGptCalls || 0) >= DAILY_GPT_CALLS_LIMIT) {
@@ -7932,7 +7932,7 @@ function hasBudget(state: any): boolean {
     return false
   }
   if ((state.monthlyGptCost || 0) >= MONTHLY_GPT_COST_LIMIT) {
-    console.log(`[LEARN] Monthly budget exhausted: $${state.monthlyGptCost.toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}`)
+    console.log(`[LEARN] Monthly budget exhausted: $${(state.monthlyGptCost || 0).toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}`)
     return false
   }
   return true
@@ -8724,10 +8724,10 @@ async function sendLearningReport(state: any, results: any) {
     const m = state.learningMetrics
     message += `📈 מדדי למידה:\n`
     message += `  סשנים: ${m.totalSessions}\n`
-    message += `  ממוצע תובנות לסשן: ${m.avgRulesPerSession.toFixed(1)}\n`
-    message += `  ביטחון ממוצע: ${(m.avgConfidence * 100).toFixed(0)}%\n`
-    message += `  קטגוריות שכוסו: ${m.uniqueCategories}/${Object.keys(LEARNING_CATEGORIES).length}\n`
-    message += `  סשנים עם תובנות: ${m.sessionsWithNewInsights}/${m.totalSessions}\n\n`
+    message += `  ממוצע תובנות לסשן: ${(m.avgRulesPerSession || 0).toFixed(1)}\n`
+    message += `  ביטחון ממוצע: ${((m.avgConfidence || 0) * 100).toFixed(0)}%\n`
+    message += `  קטגוריות שכוסו: ${m.uniqueCategories || 0}/${Object.keys(LEARNING_CATEGORIES).length}\n`
+    message += `  סשנים עם תובנות: ${m.sessionsWithNewInsights || 0}/${m.totalSessions || 0}\n\n`
   }
 
   // Missing features (only critical ones)
@@ -8841,7 +8841,7 @@ async function runServerLearning(options?: { budget?: number, force?: boolean })
 
   await sendTelegram(
     `📚 התחלתי ללמוד (${israelTimeStart})\n` +
-    `💰 תקציב: $${sessionBudget.toFixed(2)}\n` +
+    `💰 תקציב: $${(sessionBudget || 0).toFixed(2)}\n` +
     `🏷️ קטגוריות: ${todayCategories.join(', ')}\n` +
     `🎯 מטרות: ${sessionGoals.join(' | ')}`
   )
@@ -10043,10 +10043,10 @@ async function sendFullReport() {
       const m = state.learningMetrics
       message += `📈 מדדי למידה:\n`
       message += `  סשנים: ${m.totalSessions}\n`
-      message += `  ממוצע תובנות לסשן: ${m.avgRulesPerSession.toFixed(1)}\n`
-      message += `  ביטחון ממוצע: ${(m.avgConfidence * 100).toFixed(0)}%\n`
-      message += `  קטגוריות שכוסו: ${m.uniqueCategories}/${Object.keys(LEARNING_CATEGORIES).length}\n`
-      message += `  סשנים עם תובנות: ${m.sessionsWithNewInsights}/${m.totalSessions}\n\n`
+      message += `  ממוצע תובנות לסשן: ${(m.avgRulesPerSession || 0).toFixed(1)}\n`
+      message += `  ביטחון ממוצע: ${((m.avgConfidence || 0) * 100).toFixed(0)}%\n`
+      message += `  קטגוריות שכוסו: ${m.uniqueCategories || 0}/${Object.keys(LEARNING_CATEGORIES).length}\n`
+      message += `  סשנים עם תובנות: ${m.sessionsWithNewInsights || 0}/${m.totalSessions || 0}\n\n`
     }
 
     // Expertise breakdown
