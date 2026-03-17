@@ -300,7 +300,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       console.log(`[TRANSCRIBE] Sending ${(audioBuffer.length / 1024 / 1024).toFixed(1)}MB to Deepgram REST API...`)
 
       const langParam = language === 'detect' ? 'detect_language=true' : `language=${language}`
-      const dgUrl = `https://api.deepgram.com/v1/listen?model=nova-3&${langParam}&smart_format=true&diarize=true&utterances=true&punctuate=true`
+      const dgUrl = `https://api.deepgram.com/v1/listen?model=nova-3&${langParam}&smart_format=true&diarize=true&utterances=true&punctuate=true&utterance_split=900`
       console.log(`[TRANSCRIBE] Deepgram URL: ${dgUrl}`)
 
       const dgResponse = await fetch(dgUrl, {
@@ -4742,11 +4742,88 @@ async function handleGPTAutoTranscribe(req: any, res: any) {
   }
 }
 
+// GPT-based speaker verification for when Deepgram merges multiple speakers into one
+async function verifySpeakersWithGPT(segments: any[], speakerSamples: any[], transcript: string, expectedSpeakers: number = 0): Promise<any[]> {
+  if (segments.length === 0) return segments;
+
+  const deepgramSpeakers = [...new Set(segments.map(s => s.speaker))];
+  console.log(`[SPEAKER VERIFY] Deepgram detected ${deepgramSpeakers.length} speakers`);
+
+  // If only 1 speaker detected but audio has clear voice changes, ask GPT to re-analyze
+  const shouldVerify = (deepgramSpeakers.length <= 1 && segments.length > 5) ||
+    (expectedSpeakers > 0 && deepgramSpeakers.length < expectedSpeakers);
+
+  if (shouldVerify) {
+    console.log(`[SPEAKER VERIFY] Only ${deepgramSpeakers.length} speaker(s) detected${expectedSpeakers > 0 ? `, expected ${expectedSpeakers}` : ''}, asking GPT to verify...`);
+
+    try {
+      const ai = await getOpenAI();
+      const sampleTexts = segments.slice(0, 20).map((s: any) =>
+        `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s] ${s.text}`
+      ).join('\n');
+
+      const expectedHint = expectedSpeakers > 0
+        ? `\nThe user indicated there should be approximately ${expectedSpeakers} speakers.`
+        : '';
+
+      const response = await ai.chat.completions.create({
+        model: 'gpt-4.1',
+        messages: [{
+          role: 'user',
+          content: `Analyze this transcript from a video. Deepgram detected only ${deepgramSpeakers.length} speaker(s), but there might be multiple speakers.${expectedHint}
+Look for patterns that indicate different speakers:
+- Questions followed by answers (interviewer + interviewee)
+- Short prompts like "ready?", "again", "great" (production crew)
+- Different speaking styles or topics
+- Conversational back-and-forth
+
+Transcript:
+${sampleTexts}
+
+If you detect multiple speakers, return JSON:
+{
+  "speakers_detected": 2,
+  "segments_to_split": [
+    {"index": 3, "new_speaker": "דובר 2", "reason": "short production prompt"},
+    {"index": 7, "new_speaker": "דובר 2", "reason": "question from interviewer"}
+  ]
+}
+If 1 speaker seems correct, return:
+{"speakers_detected": 1, "segments_to_split": []}
+Return ONLY JSON.`
+        }],
+      });
+
+      const result = JSON.parse(response.choices[0].message.content?.replace(/```json|```/g, '').trim() || '{}');
+
+      if (result.speakers_detected > 1 && result.segments_to_split?.length > 0) {
+        console.log(`[SPEAKER VERIFY] GPT detected ${result.speakers_detected} speakers, splitting ${result.segments_to_split.length} segments`);
+
+        for (const split of result.segments_to_split) {
+          if (segments[split.index]) {
+            segments[split.index].speaker = split.new_speaker;
+            if (segments[split.index].words) {
+              segments[split.index].words.forEach((w: any) => { w.speaker = split.new_speaker; });
+            }
+            console.log(`[SPEAKER VERIFY] Segment ${split.index} → ${split.new_speaker} (${split.reason})`);
+          }
+        }
+      } else {
+        console.log('[SPEAKER VERIFY] GPT confirms single speaker');
+      }
+    } catch (e: any) {
+      console.warn('[SPEAKER VERIFY] GPT verification failed:', e.message?.substring(0, 100));
+    }
+  }
+
+  return segments;
+}
+
 app.post('/api/auto-editor/transcribe', async (req, res) => {
   autoEditorBusy = true
   console.log('[AUTO-EDITOR] Session started, learning agent paused')
 
-  const { fileUrl, language = 'he' } = req.body
+  const { fileUrl, language = 'he', expectedSpeakers = 0 } = req.body
   const timestamp = Date.now()
 
   console.log(`[TRANSCRIBE] Starting with Deepgram Nova-3 (language: ${language})...`)
@@ -4812,7 +4889,7 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
     console.log(`[TRANSCRIBE] Sending ${(audioBuffer.length / 1024 / 1024).toFixed(1)}MB to Deepgram REST API...`)
 
     const langParam = language === 'detect' ? 'detect_language=true' : `language=${language}`
-    const dgUrl = `https://api.deepgram.com/v1/listen?model=nova-3&${langParam}&smart_format=true&diarize=true&utterances=true&punctuate=true`
+    const dgUrl = `https://api.deepgram.com/v1/listen?model=nova-3&${langParam}&smart_format=true&diarize=true&utterances=true&punctuate=true&utterance_split=900`
     console.log(`[TRANSCRIBE] Deepgram URL: ${dgUrl}`)
 
     const dgResponse = await fetch(dgUrl, {
@@ -4884,6 +4961,10 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       }
       if (currentSegment) segments.push(currentSegment)
     }
+
+    // Step 4.5: GPT speaker verification
+    const fullTranscript = segments.map((s: any) => s.text).join(' ');
+    await verifySpeakersWithGPT(segments, [], fullTranscript, expectedSpeakers);
 
     // Step 5: Calculate speaker times
     const speakerTimes: Record<string, number> = {}

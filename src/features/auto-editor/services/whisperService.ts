@@ -80,6 +80,7 @@ export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscr
   const store = useAutoEditorStore.getState()
   const log = store.addLog
   const language = store.language || 'he'
+  const expectedSpeakers = store.expectedSpeakers || 0
 
   log(`מתמלל ${videoUrls.length} קבצים (שפה: ${language})...`)
 
@@ -90,7 +91,7 @@ export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscr
       const response = await fetch(`${API_BASE}/auto-editor/transcribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileUrl: url, language }),
+        body: JSON.stringify({ fileUrl: url, language, expectedSpeakers }),
       })
 
       if (!response.ok) {
