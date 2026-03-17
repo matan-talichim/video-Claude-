@@ -8,7 +8,7 @@ import { execSync } from 'child_process'
 import { createRequire } from 'module'
 import dotenv from 'dotenv'
 import { GoogleGenAI } from '@google/genai'
-import { createClient } from '@deepgram/sdk'
+import { DeepgramClient } from '@deepgram/sdk'
 
 // Load .env from project root
 const __filename = fileURLToPath(import.meta.url)
@@ -70,7 +70,7 @@ function getGemini() {
 }
 
 // Deepgram client (transcription + speaker diarization)
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY || '')
+const deepgram = new DeepgramClient(process.env.DEEPGRAM_API_KEY || '')
 
 const app = express()
 const PORT = 3001
