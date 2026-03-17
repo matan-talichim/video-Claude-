@@ -8202,6 +8202,170 @@ const LEARNING_CATEGORIES: Record<string, Array<{query: string, goal: string}>> 
     { query: 'export settings social media video 2026', goal: 'learn optimal export settings' },
     { query: 'video quality check before publishing', goal: 'learn final quality checks' },
   ],
+  // === HEBREW ADVERTISING & MARKETING ===
+  hebrew_ads: [
+    { query: 'פרסומת וידאו בעברית שעובדת טיפים', goal: 'learn what makes Hebrew video ads effective' },
+    { query: 'סרטון פרסומת ישראלי ויראלי ניתוח', goal: 'learn viral Israeli ad patterns' },
+    { query: 'קופירייטינג בעברית לפרסומות וידאו', goal: 'learn Hebrew copywriting for video' },
+    { query: 'פרסומות ישראליות מצליחות 2025 2026', goal: 'learn successful Israeli ad campaigns' },
+    { query: 'hebrew video ad creative best practices', goal: 'learn Hebrew-specific ad techniques' },
+  ],
+  hebrew_content: [
+    { query: 'תוכן וידאו בעברית שמקבל צפיות', goal: 'learn Hebrew content that gets views' },
+    { query: 'יוצרי תוכן ישראלים מצליחים סגנון עריכה', goal: 'learn Israeli creator editing styles' },
+    { query: 'סרטון שיווקי בעברית דוגמאות', goal: 'learn Hebrew marketing video examples' },
+    { query: 'RTL video editing subtitles hebrew', goal: 'learn RTL-specific editing techniques' },
+  ],
+  hebrew_social: [
+    { query: 'אינסטגרם רילס ישראל טיפים 2026', goal: 'learn Israeli Instagram Reels best practices' },
+    { query: 'טיקטוק ישראל מה עובד 2026', goal: 'learn what works on TikTok Israel' },
+    { query: 'פרסום בפייסבוק ישראל וידאו', goal: 'learn Facebook video ads Israel' },
+    { query: 'לינקדאין ישראל תוכן וידאו עסקי', goal: 'learn LinkedIn video content Israel' },
+  ],
+  // === ADVANCED PAID ADVERTISING ===
+  paid_ads_creative: [
+    { query: 'meta ads video creative that converts 2026', goal: 'learn high-converting Facebook/Instagram ad creatives' },
+    { query: 'UGC ad vs polished ad which converts better', goal: 'learn UGC vs polished ad performance' },
+    { query: 'video ad hook rate optimization first 3 seconds', goal: 'learn ad hook optimization' },
+    { query: 'facebook video ad specs best practices 2026', goal: 'learn Facebook video ad technical specs' },
+    { query: 'instagram reels ads vs stories ads performance', goal: 'learn Reels ads vs Stories ads' },
+  ],
+  paid_ads_strategy: [
+    { query: 'video ad funnel strategy awareness retargeting', goal: 'learn video ad funnel strategy' },
+    { query: 'retargeting video ad what to show second touch', goal: 'learn retargeting video content' },
+    { query: 'video ad creative fatigue how to refresh', goal: 'learn ad creative refresh strategies' },
+    { query: 'ad creative testing framework video', goal: 'learn A/B testing for video ads' },
+    { query: 'lookalike audience video ad creative', goal: 'learn audience-specific ad creatives' },
+  ],
+  paid_ads_formats: [
+    { query: 'youtube pre-roll ad editing best practices', goal: 'learn YouTube pre-roll ad editing' },
+    { query: 'tiktok spark ads creative strategy 2026', goal: 'learn TikTok Spark Ads format' },
+    { query: 'google demand gen video ad creative', goal: 'learn Google video ad formats' },
+    { query: 'linkedin video ad B2B best practices', goal: 'learn LinkedIn B2B video ads' },
+    { query: 'connected TV video ad editing CTV OTT', goal: 'learn CTV/OTT ad editing' },
+  ],
+  paid_ads_psychology: [
+    { query: 'psychological triggers video advertising', goal: 'learn psychology in video ads' },
+    { query: 'social proof in video ads examples', goal: 'learn social proof in ads' },
+    { query: 'urgency scarcity in video ad creative', goal: 'learn urgency/scarcity in video ads' },
+    { query: 'emotional vs rational video ad performance', goal: 'learn emotional vs rational ads' },
+    { query: 'video ad objection handling techniques', goal: 'learn objection handling in video' },
+  ],
+  // === ADVANCED EDITING TECHNIQUES ===
+  advanced_cuts: [
+    { query: 'j-cut l-cut tutorial video editing', goal: 'learn J-cut and L-cut techniques' },
+    { query: 'match cut editing technique examples', goal: 'learn match cut techniques' },
+    { query: 'invisible cut seamless transition editing', goal: 'learn invisible cut techniques' },
+    { query: 'jump cut rules when to use when to avoid', goal: 'learn jump cut best practices' },
+    { query: 'montage editing technique short form video', goal: 'learn montage editing' },
+  ],
+  advanced_motion: [
+    { query: 'ken burns effect video editing when to use', goal: 'learn Ken Burns effect usage' },
+    { query: 'parallax effect video editing tutorial', goal: 'learn parallax scrolling effect' },
+    { query: 'whip pan transition editing technique', goal: 'learn whip pan transitions' },
+    { query: 'speed ramp slow motion editing technique', goal: 'learn speed ramp techniques' },
+    { query: 'smooth zoom transition between scenes', goal: 'learn smooth zoom transitions' },
+  ],
+  advanced_audio: [
+    { query: 'audio ducking voice over music mixing', goal: 'learn audio ducking techniques' },
+    { query: 'sound design for social media videos 2026', goal: 'learn sound design for social' },
+    { query: 'foley sound effects video editing impact', goal: 'learn foley and sound effects' },
+    { query: 'audio normalization loudness standards video', goal: 'learn audio loudness standards' },
+    { query: 'ASMR audio techniques video engagement', goal: 'learn ASMR-style audio for engagement' },
+  ],
+  advanced_color: [
+    { query: 'color grading for different moods tutorial 2026', goal: 'learn mood-based color grading' },
+    { query: 'LUT creation custom color grade video', goal: 'learn custom LUT creation' },
+    { query: 'skin tone correction video different lighting', goal: 'learn skin tone correction' },
+    { query: 'color contrast techniques video attention', goal: 'learn color contrast for attention' },
+    { query: 'day for night color grade technique', goal: 'learn day-for-night grading' },
+  ],
+  // === VIDEO CONTENT STRATEGY ===
+  content_hooks: [
+    { query: 'best video hooks that stop the scroll 2026', goal: 'learn scroll-stopping hooks' },
+    { query: 'pattern interrupt video opening techniques', goal: 'learn pattern interrupt openers' },
+    { query: 'controversial opinion hook video marketing', goal: 'learn opinion-based hooks' },
+    { query: 'question hook vs statement hook performance', goal: 'learn question vs statement hooks' },
+    { query: 'visual hook techniques first frame optimization', goal: 'learn visual hook techniques' },
+  ],
+  content_retention: [
+    { query: 'video retention graph analysis how to improve', goal: 'learn retention optimization' },
+    { query: 'open loop storytelling video engagement', goal: 'learn open loop technique' },
+    { query: 'curiosity gap video content strategy', goal: 'learn curiosity gap technique' },
+    { query: 're-engagement techniques mid video', goal: 'learn mid-video re-engagement' },
+    { query: 'watch time optimization short form video', goal: 'learn watch time optimization' },
+  ],
+  content_cta: [
+    { query: 'best call to action video ending techniques 2026', goal: 'learn CTA techniques' },
+    { query: 'soft CTA vs hard CTA video performance', goal: 'learn soft vs hard CTA' },
+    { query: 'video loop technique for replays', goal: 'learn video loop for replay boost' },
+    { query: 'end screen strategy short form video', goal: 'learn end screen strategies' },
+    { query: 'save share comment trigger video techniques', goal: 'learn engagement trigger techniques' },
+  ],
+  content_storytelling: [
+    { query: 'micro storytelling 30 second video structure', goal: 'learn 30-second story structure' },
+    { query: 'before after transformation video format', goal: 'learn before/after format' },
+    { query: 'problem agitation solution video framework', goal: 'learn PAS framework for video' },
+    { query: 'hero journey short form video adaptation', goal: 'learn hero journey in short form' },
+    { query: 'emotional arc 60 second video', goal: 'learn emotional arc in short video' },
+  ],
+  // === PLATFORM-SPECIFIC DEEP DIVES ===
+  platform_instagram: [
+    { query: 'instagram reels algorithm 2026 what gets pushed', goal: 'learn Instagram algorithm 2026' },
+    { query: 'instagram reels editing style that goes viral', goal: 'learn viral Reels editing' },
+    { query: 'instagram carousel vs reels engagement comparison', goal: 'learn carousel vs Reels' },
+    { query: 'instagram reels cover image optimization', goal: 'learn Reels cover optimization' },
+  ],
+  platform_tiktok: [
+    { query: 'tiktok algorithm 2026 how videos go viral', goal: 'learn TikTok algorithm 2026' },
+    { query: 'tiktok editing style trends 2026', goal: 'learn TikTok editing trends' },
+    { query: 'tiktok duet stitch video strategy', goal: 'learn duet/stitch strategies' },
+    { query: 'tiktok business account video strategy', goal: 'learn TikTok for business' },
+  ],
+  platform_youtube: [
+    { query: 'youtube shorts algorithm vs long form 2026', goal: 'learn YouTube Shorts algorithm' },
+    { query: 'youtube thumbnail and title optimization 2026', goal: 'learn YouTube CTR optimization' },
+    { query: 'youtube shorts to long form funnel strategy', goal: 'learn Shorts to long-form funnel' },
+    { query: 'youtube video chapter editing strategy', goal: 'learn chapter-based editing' },
+  ],
+  platform_linkedin: [
+    { query: 'linkedin video content strategy B2B 2026', goal: 'learn LinkedIn video for B2B' },
+    { query: 'linkedin video ad best practices professional', goal: 'learn LinkedIn video ads' },
+    { query: 'linkedin thought leader video format', goal: 'learn thought leader video format' },
+  ],
+  // === INDUSTRY-SPECIFIC ===
+  industry_ecommerce: [
+    { query: 'ecommerce product video editing that sells', goal: 'learn product video editing' },
+    { query: 'unboxing video editing style 2026', goal: 'learn unboxing video style' },
+    { query: 'product demo video editing best practices', goal: 'learn product demo editing' },
+    { query: 'shoppable video ad creative strategy', goal: 'learn shoppable video ads' },
+  ],
+  industry_saas: [
+    { query: 'SaaS product demo video editing tutorial', goal: 'learn SaaS demo video editing' },
+    { query: 'software walkthrough video engaging editing', goal: 'learn software walkthrough editing' },
+    { query: 'SaaS explainer video structure 60 seconds', goal: 'learn SaaS explainer structure' },
+  ],
+  industry_realestate: [
+    { query: 'real estate video editing cinematic tour', goal: 'learn real estate video editing' },
+    { query: 'property showcase video editing techniques', goal: 'learn property video techniques' },
+    { query: 'real estate agent personal brand video', goal: 'learn agent brand videos' },
+  ],
+  industry_fitness: [
+    { query: 'fitness video editing dynamic energy', goal: 'learn fitness video editing' },
+    { query: 'before after transformation video fitness', goal: 'learn fitness transformation videos' },
+    { query: 'workout tutorial video editing best practices', goal: 'learn workout video editing' },
+  ],
+  industry_food: [
+    { query: 'food video editing recipe content 2026', goal: 'learn food video editing' },
+    { query: 'restaurant marketing video that converts', goal: 'learn restaurant marketing videos' },
+    { query: 'food photography to video transition editing', goal: 'learn food video transitions' },
+  ],
+  industry_coaching: [
+    { query: 'coaching consulting video content that converts', goal: 'learn coaching video content' },
+    { query: 'personal brand video editing authority building', goal: 'learn authority-building videos' },
+    { query: 'testimonial video editing that builds trust', goal: 'learn testimonial editing' },
+    { query: 'webinar highlight video editing strategy', goal: 'learn webinar highlight editing' },
+  ],
 }
 
 // Daily rotation: pick 3 random categories per session
@@ -8247,6 +8411,37 @@ const CATEGORY_TO_DOMAIN: Record<string, string> = {
   music_selection: 'editing',
   broll_creation: 'editing',
   final_polish: 'editing',
+  // Hebrew advertising & marketing
+  hebrew_ads: 'marketing',
+  hebrew_content: 'social',
+  hebrew_social: 'social',
+  // Advanced paid advertising
+  paid_ads_creative: 'paid_ads',
+  paid_ads_strategy: 'paid_ads',
+  paid_ads_formats: 'paid_ads',
+  paid_ads_psychology: 'paid_ads',
+  // Advanced editing techniques
+  advanced_cuts: 'editing',
+  advanced_motion: 'editing',
+  advanced_audio: 'editing',
+  advanced_color: 'editing',
+  // Video content strategy
+  content_hooks: 'marketing',
+  content_retention: 'social',
+  content_cta: 'marketing',
+  content_storytelling: 'editing',
+  // Platform-specific deep dives
+  platform_instagram: 'social',
+  platform_tiktok: 'social',
+  platform_youtube: 'social',
+  platform_linkedin: 'social',
+  // Industry-specific
+  industry_ecommerce: 'marketing',
+  industry_saas: 'marketing',
+  industry_realestate: 'marketing',
+  industry_fitness: 'marketing',
+  industry_food: 'marketing',
+  industry_coaching: 'marketing',
 }
 
 function calculateExpertiseLevel(insightCount: number): string {
@@ -10518,7 +10713,9 @@ app.listen(PORT, () => {
   console.log('[LEARN]   Schedule: 07:00 + 19:00 Israel time')
   console.log(`[LEARN]   Budget: $${DAILY_GPT_COST_LIMIT}/day, ${DAILY_GPT_CALLS_LIMIT} calls/day, $${MONTHLY_GPT_COST_LIMIT}/month`)
   console.log(`[LEARN]   Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? '✅' : '❌'}`)
-  console.log(`[LEARN]   Categories: ${Object.keys(LEARNING_CATEGORIES).length} diverse categories across 4 domains`)
+  const totalCategories = Object.keys(LEARNING_CATEGORIES).length;
+  const totalQueries = Object.values(LEARNING_CATEGORIES).reduce((sum, cats) => sum + cats.length, 0);
+  console.log(`[LEARN]   Categories: ${totalCategories} across 4 domains (${totalQueries} unique queries)`)
 
   // Check yt-dlp availability
   try {
