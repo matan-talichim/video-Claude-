@@ -8,7 +8,7 @@ import { execSync } from 'child_process'
 import { createRequire } from 'module'
 import dotenv from 'dotenv'
 import { GoogleGenAI } from '@google/genai'
-import { AssemblyAI } from 'assemblyai'
+import { createClient } from '@deepgram/sdk'
 
 // Load .env from project root
 const __filename = fileURLToPath(import.meta.url)
@@ -69,10 +69,8 @@ function getGemini() {
   return new GoogleGenAI({ apiKey: key })
 }
 
-// AssemblyAI client (transcription + speaker diarization)
-const assemblyai = new AssemblyAI({
-  apiKey: process.env.ASSEMBLYAI_API_KEY || '',
-})
+// Deepgram client (transcription + speaker diarization)
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY || '')
 
 const app = express()
 const PORT = 3001
@@ -126,11 +124,10 @@ app.use('/uploads', express.static(uploadsDir, {
 app.get('/api/status', async (_req, res) => {
   const status = {
     openai: { connected: !!process.env.OPENAI_API_KEY, chatModel: 'gpt-5.4', transcribeModel: 'gpt-4o-transcribe-diarize', features: ['Chat (GPT-5.4)', 'Transcribe (Diarize)', 'DALL-E', 'Whisper'] },
-    assemblyai: {
-      connected: !!process.env.ASSEMBLYAI_API_KEY,
-      provider: 'AssemblyAI',
-      model: 'Universal-2 + Speaker Diarization',
-      note: process.env.ASSEMBLYAI_API_KEY ? 'Premium diarization active' : 'Not configured - using GPT-4o fallback',
+    deepgram: {
+      connected: !!process.env.DEEPGRAM_API_KEY,
+      model: 'nova-3',
+      features: 'multi-language auto-detect, speaker diarization, smart format',
     },
     elevenlabs: { connected: !!process.env.ELEVENLABS_API_KEY },
     deepl: { connected: !!process.env.DEEPL_API_KEY },
@@ -265,13 +262,13 @@ function applySubtitleFilter(
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
   console.log('=== TRANSCRIBE HANDLER V2 ===')
 
-  // If AssemblyAI is configured, use it for better diarization
-  if (process.env.ASSEMBLYAI_API_KEY && req.file) {
+  // If Deepgram is configured, use it for better diarization
+  if (process.env.DEEPGRAM_API_KEY && req.file) {
     try {
       const inputPath = req.file.path
       const timestamp = Date.now()
 
-      console.log('[TRANSCRIBE] Using AssemblyAI for:', req.file.originalname, (req.file.size / 1024 / 1024).toFixed(1) + 'MB')
+      console.log('[TRANSCRIBE] Using Deepgram Nova-3 for:', req.file.originalname, (req.file.size / 1024 / 1024).toFixed(1) + 'MB')
 
       // Extract audio as MP3
       const mp3Path = inputPath.replace(/\.[^.]+$/, '') + '_audio.mp3'
@@ -286,38 +283,73 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
       const fileToUpload = fs.existsSync(mp3Path) ? mp3Path : inputPath
 
-      console.log('[TRANSCRIBE] Sending to AssemblyAI (transcription + speaker diarization)...')
+      console.log('[TRANSCRIBE] Sending to Deepgram (Nova-3 + diarization + multi-language)...')
 
-      const transcript = await assemblyai.transcripts.transcribe({
-        audio: fileToUpload,
-        speaker_labels: true,
-        language_code: 'he',
-        punctuate: true,
-        format_text: true,
-        speech_models: ['universal-3-pro', 'universal-2'] as any,
-      })
+      const audioBuffer = fs.readFileSync(fileToUpload)
 
-      if (transcript.status === 'error') {
-        throw new Error(transcript.error || 'Transcription failed')
+      const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
+        audioBuffer,
+        {
+          model: 'nova-3',
+          smart_format: true,
+          punctuate: true,
+          diarize: true,
+          utterances: true,
+          detect_language: true,
+        }
+      )
+
+      if (error) {
+        throw new Error(error.message || 'Deepgram transcription failed')
       }
 
-      console.log(`[TRANSCRIBE] AssemblyAI done: ${transcript.words?.length || 0} words, ${transcript.utterances?.length || 0} utterances`)
+      const channel = result.results?.channels?.[0]
+      const alternatives = channel?.alternatives?.[0]
+      const detectedLanguage = channel?.detected_language || 'unknown'
+      const words = alternatives?.words || []
+      const utterances = result.results?.utterances || []
 
-      const utterances = transcript.utterances || []
+      console.log(`[TRANSCRIBE] Deepgram done: ${words.length} words, ${utterances.length} utterances, language: ${detectedLanguage}`)
 
       // Build segments from utterances
-      const rawSegments = utterances.map((utt: any, i: number) => ({
-        id: i,
-        start: utt.start / 1000,
-        end: utt.end / 1000,
-        text: utt.text,
-        speaker: `דובר ${utt.speaker}`,
-        words: (utt.words || []).map((w: any) => ({
-          word: w.text,
-          start: w.start / 1000,
-          end: w.end / 1000,
-        })),
-      }))
+      let rawSegments: any[] = []
+      if (utterances.length > 0) {
+        rawSegments = utterances.map((utt: any, i: number) => ({
+          id: i,
+          start: utt.start,
+          end: utt.end,
+          text: utt.transcript,
+          speaker: `דובר ${(utt.speaker || 0) + 1}`,
+          words: (utt.words || []).map((w: any) => ({
+            word: w.punctuated_word || w.word,
+            start: w.start,
+            end: w.end,
+            confidence: w.confidence,
+            speaker: `דובר ${(w.speaker || 0) + 1}`,
+          })),
+        }))
+      } else {
+        let currentSegment: any = null
+        for (const word of words) {
+          const speaker = `דובר ${(word.speaker || 0) + 1}`
+          if (!currentSegment || currentSegment.speaker !== speaker || word.start - currentSegment.end > 1.5) {
+            if (currentSegment) rawSegments.push(currentSegment)
+            currentSegment = {
+              id: rawSegments.length,
+              start: word.start,
+              end: word.end,
+              text: word.punctuated_word || word.word,
+              speaker,
+              words: [{ word: word.punctuated_word || word.word, start: word.start, end: word.end, confidence: word.confidence, speaker }],
+            }
+          } else {
+            currentSegment.end = word.end
+            currentSegment.text += ' ' + (word.punctuated_word || word.word)
+            currentSegment.words.push({ word: word.punctuated_word || word.word, start: word.start, end: word.end, confidence: word.confidence, speaker })
+          }
+        }
+        if (currentSegment) rawSegments.push(currentSegment)
+      }
 
       // Calculate speaker times and rename to sequential numbers
       const speakerTimes: Record<string, number> = {}
@@ -358,24 +390,24 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         } catch {}
       }
 
-      console.log('[TRANSCRIBE] Done:', segments.length, 'segments,', speakers.length, 'speakers, model: assemblyai')
-      console.log(`[TRANSCRIBE] Confidence: ${((transcript.confidence || 0) * 100).toFixed(1)}%`)
+      console.log('[TRANSCRIBE] Done:', segments.length, 'segments,', speakers.length, 'speakers, model: deepgram-nova-3')
+      console.log(`[TRANSCRIBE] Confidence: ${((alternatives?.confidence || 0) * 100).toFixed(1)}%`)
 
       // Cleanup
       try { fs.unlinkSync(inputPath) } catch {}
       try { if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path) } catch {}
 
       return res.json({
-        text: transcript.text || '',
+        text: alternatives?.transcript || '',
         duration,
-        language: 'he',
+        language: detectedLanguage,
         segments,
         speakers,
-        model: 'assemblyai',
-        confidence: transcript.confidence || 0,
+        model: 'deepgram-nova-3',
+        confidence: alternatives?.confidence || 0,
       })
-    } catch (assemblyErr: any) {
-      console.warn('[TRANSCRIBE] AssemblyAI failed, falling back to GPT-4o:', assemblyErr.message)
+    } catch (deepgramErr: any) {
+      console.warn('[TRANSCRIBE] Deepgram failed, falling back to GPT-4o:', deepgramErr.message)
       // Fall through to GPT-4o logic below
     }
   }
@@ -4406,7 +4438,7 @@ app.post('/api/upload-temp', upload.single('file'), (req, res) => {
 
 // POST /api/auto-editor/transcribe — Proxy transcription for auto-editor
 // Supports: local server URLs (http://localhost:3001/uploads/...) and remote URLs (R2, etc.)
-// Uses AssemblyAI for premium speaker diarization when configured, falls back to GPT-4o
+// Fallback chain: 1. Deepgram Nova-3 (primary) 2. GPT-4o-transcribe-diarize (fallback)
 
 // GPT-4o fallback for auto-editor transcription
 async function handleGPTAutoTranscribe(req: any, res: any) {
@@ -4617,11 +4649,11 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
   const { fileUrl } = req.body
   const timestamp = Date.now()
 
-  console.log('[TRANSCRIBE] Starting with AssemblyAI...')
+  console.log('[TRANSCRIBE] Starting with Deepgram Nova-3...')
   console.log('[TRANSCRIBE] File:', fileUrl)
 
-  if (!process.env.ASSEMBLYAI_API_KEY) {
-    console.error('[TRANSCRIBE] ASSEMBLYAI_API_KEY not set, falling back to GPT-4o')
+  if (!process.env.DEEPGRAM_API_KEY) {
+    console.log('[TRANSCRIBE] DEEPGRAM_API_KEY not set, falling back to GPT-4o')
     return handleGPTAutoTranscribe(req, res)
   }
 
@@ -4656,7 +4688,7 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
     const fileSize = (fs.statSync(localFilePath).size / (1024 * 1024)).toFixed(1)
     console.log(`[TRANSCRIBE] File: ${localFilePath} | Size: ${fileSize}MB`)
 
-    // Step 2: Extract audio from video (AssemblyAI works best with audio files)
+    // Step 2: Extract audio (Deepgram works best with audio)
     const audioPath = path.join(uploadsDir, `audio_extract_${timestamp}.mp3`)
 
     try {
@@ -4666,59 +4698,95 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
         { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
       )
       console.log(`[TRANSCRIBE] Audio extracted: ${(fs.statSync(audioPath).size / (1024 * 1024)).toFixed(1)}MB`)
-    } catch (e: any) {
-      console.warn('[TRANSCRIBE] Audio extraction failed, using original file:', e.message?.substring(0, 100))
+    } catch {
+      console.warn('[TRANSCRIBE] Audio extraction failed, using original')
     }
 
-    const fileToUpload = fs.existsSync(audioPath) ? audioPath : localFilePath
+    const fileToSend = fs.existsSync(audioPath) ? audioPath : localFilePath
 
-    // Step 3: Transcribe with AssemblyAI (transcription + diarization in one call)
-    console.log('[TRANSCRIBE] Sending to AssemblyAI (transcription + speaker diarization)...')
+    // Step 3: Transcribe with Deepgram Nova-3
+    console.log('[TRANSCRIBE] Sending to Deepgram (Nova-3 + diarization + multi-language)...')
 
-    const transcript = await assemblyai.transcripts.transcribe({
-      audio: fileToUpload,
-      speaker_labels: true,
-      language_code: 'he',
-      punctuate: true,
-      format_text: true,
-      speech_models: ['universal-3-pro', 'universal-2'] as any,
-    })
+    const audioBuffer = fs.readFileSync(fileToSend)
 
-    if (transcript.status === 'error') {
-      console.error('[TRANSCRIBE] AssemblyAI error:', transcript.error)
-      throw new Error(transcript.error || 'Transcription failed')
+    const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
+      audioBuffer,
+      {
+        model: 'nova-3',
+        smart_format: true,
+        punctuate: true,
+        diarize: true,
+        utterances: true,
+        detect_language: true,
+      }
+    )
+
+    if (error) {
+      console.error('[TRANSCRIBE] Deepgram error:', error)
+      throw new Error(error.message || 'Deepgram transcription failed')
     }
 
-    console.log(`[TRANSCRIBE] AssemblyAI done: ${transcript.words?.length || 0} words, ${transcript.utterances?.length || 0} utterances`)
+    const channel = result.results?.channels?.[0]
+    const alternatives = channel?.alternatives?.[0]
+    const detectedLanguage = channel?.detected_language || 'unknown'
 
-    // Step 4: Convert AssemblyAI format to our format
-    const utterances = transcript.utterances || []
-    const words = transcript.words || []
+    console.log(`[TRANSCRIBE] Deepgram done: ${alternatives?.words?.length || 0} words, language: ${detectedLanguage}`)
+
+    // Step 4: Convert Deepgram format to our format
+    const words = alternatives?.words || []
+    const utterances = result.results?.utterances || []
 
     // Build segments from utterances (each utterance = one speaker's continuous speech)
-    const segments = utterances.map((utt: any, i: number) => ({
-      id: i,
-      start: utt.start / 1000,
-      end: utt.end / 1000,
-      text: utt.text,
-      speaker: `דובר ${utt.speaker}`,
-      words: (utt.words || []).map((w: any) => ({
-        word: w.text,
-        start: w.start / 1000,
-        end: w.end / 1000,
-        confidence: w.confidence,
-        speaker: `דובר ${w.speaker}`,
-      })),
-    }))
+    let segments: any[] = []
+
+    if (utterances.length > 0) {
+      segments = utterances.map((utt: any, i: number) => ({
+        id: i,
+        start: utt.start,
+        end: utt.end,
+        text: utt.transcript,
+        speaker: `דובר ${(utt.speaker || 0) + 1}`,
+        words: (utt.words || []).map((w: any) => ({
+          word: w.punctuated_word || w.word,
+          start: w.start,
+          end: w.end,
+          confidence: w.confidence,
+          speaker: `דובר ${(w.speaker || 0) + 1}`,
+        })),
+      }))
+    } else {
+      // Fallback: build segments from words
+      let currentSegment: any = null
+
+      for (const word of words) {
+        const speaker = `דובר ${(word.speaker || 0) + 1}`
+
+        if (!currentSegment || currentSegment.speaker !== speaker || word.start - currentSegment.end > 1.5) {
+          if (currentSegment) segments.push(currentSegment)
+          currentSegment = {
+            id: segments.length,
+            start: word.start,
+            end: word.end,
+            text: word.punctuated_word || word.word,
+            speaker,
+            words: [{ word: word.punctuated_word || word.word, start: word.start, end: word.end, confidence: word.confidence, speaker }],
+          }
+        } else {
+          currentSegment.end = word.end
+          currentSegment.text += ' ' + (word.punctuated_word || word.word)
+          currentSegment.words.push({ word: word.punctuated_word || word.word, start: word.start, end: word.end, confidence: word.confidence, speaker })
+        }
+      }
+      if (currentSegment) segments.push(currentSegment)
+    }
 
     // Step 5: Calculate speaker times
     const speakerTimes: Record<string, number> = {}
     segments.forEach((seg: any) => {
-      const speaker = seg.speaker
-      speakerTimes[speaker] = (speakerTimes[speaker] || 0) + (seg.end - seg.start)
+      speakerTimes[seg.speaker] = (speakerTimes[seg.speaker] || 0) + (seg.end - seg.start)
     })
 
-    // Sort speakers by time (most speaking first)
+    // Sort by speaking time
     const sortedSpeakers = Object.entries(speakerTimes)
       .sort((a, b) => (b[1] as number) - (a[1] as number))
       .map(([speaker, time]) => ({
@@ -4727,13 +4795,10 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       }))
 
     const uniqueSpeakers = [...new Set(segments.map((s: any) => s.speaker))]
-    const totalDuration = segments.length > 0
-      ? segments[segments.length - 1].end
-      : 0
+    const totalDuration = segments.length > 0 ? segments[segments.length - 1].end : 0
 
-    console.log(`[TRANSCRIBE] Speakers: ${uniqueSpeakers.length}`)
+    console.log(`[TRANSCRIBE] Speakers: ${uniqueSpeakers.length} | Language: ${detectedLanguage}`)
     console.log('[TRANSCRIBE] Speaker times:', speakerTimes)
-    console.log(`[TRANSCRIBE] Total duration: ${totalDuration.toFixed(1)}s`)
 
     // Step 6: Rename speakers to sequential Hebrew names (דובר 1, דובר 2, etc.)
     const speakerRenameMap: Record<string, string> = {}
@@ -4766,7 +4831,7 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
     // Step 7: Presenter detection with visual cross-reference
     let mainSpeaker = renamedSortedSpeakers[0]?.speaker || 'דובר 1'
     let presenterConfidence = 'low'
-    console.log(`[TRANSCRIBE] Preliminary main speaker (by time): ${mainSpeaker}`)
+    console.log(`[TRANSCRIBE] Preliminary presenter: ${mainSpeaker}`)
 
     // Run visual cross-reference to identify presenter
     try {
@@ -4806,37 +4871,18 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       const speakerNum = speaker.speaker.match(/\d+/)?.[0] || '0'
       const sampleFile = path.join(uploadsDir, `speaker_sample_${timestamp}_${speakerNum}.mp3`)
 
-      console.log(`[TRANSCRIBE] Extracting sample for ${speaker.speaker}: ${sampleStart.toFixed(1)}s-${(sampleStart + sampleDuration).toFixed(1)}s → ${path.basename(sampleFile)}`)
-
       try {
         const cmd = `"${ffmpegForSamples}" -i "${localFilePath}" -ss ${sampleStart.toFixed(3)} -t ${sampleDuration.toFixed(3)} -vn -c:a libmp3lame -b:a 128k "${sampleFile}" -y`
         execSync(cmd, { timeout: 15000, maxBuffer: 10 * 1024 * 1024 })
 
-        if (fs.existsSync(sampleFile)) {
-          const fileSize = fs.statSync(sampleFile).size
-          console.log(`[TRANSCRIBE] Sample file created: ${path.basename(sampleFile)} (${fileSize} bytes)`)
-
-          if (fileSize > 1000) {
-            const sampleUrl = `http://localhost:${process.env.PORT || PORT}/uploads/${path.basename(sampleFile)}`
-            speakerSamples[speaker.speaker] = sampleUrl
-            console.log(`[TRANSCRIBE] ✅ Sample URL: ${sampleUrl}`)
-          } else {
-            console.warn(`[TRANSCRIBE] ❌ Sample too small: ${fileSize} bytes`)
-          }
-        } else {
-          console.warn(`[TRANSCRIBE] ❌ Sample file not created`)
+        if (fs.existsSync(sampleFile) && fs.statSync(sampleFile).size > 1000) {
+          speakerSamples[speaker.speaker] = `http://localhost:${process.env.PORT || PORT}/uploads/${path.basename(sampleFile)}`
+          console.log(`[TRANSCRIBE] ✅ Sample for ${speaker.speaker}: ${sampleDuration.toFixed(1)}s`)
         }
       } catch (e: any) {
-        console.error(`[TRANSCRIBE] ❌ FFmpeg failed for ${speaker.speaker}:`, e.stderr?.substring(0, 200) || e.message?.substring(0, 200))
+        console.warn(`[TRANSCRIBE] ❌ Sample failed for ${speaker.speaker}`)
       }
     }
-
-    // Log final samples map
-    console.log('[TRANSCRIBE] Speaker samples:', JSON.stringify(
-      Object.fromEntries(
-        Object.entries(speakerSamples).map(([k, v]) => [k, v ? '✅' : '❌'])
-      )
-    ))
 
     // Build speakers array for response
     const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
@@ -4860,15 +4906,15 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       presenterConfidence,
       totalDuration,
       duration: totalDuration,
-      text: transcript.text || '',
-      model: 'assemblyai',
+      text: alternatives?.transcript || '',
+      model: 'deepgram-nova-3',
+      detectedLanguage,
       wordCount: words.length,
-      confidence: transcript.confidence || 0,
+      confidence: alternatives?.confidence || 0,
       autoDetected: true,
     }
 
-    console.log(`[TRANSCRIBE] Done: ${renamedSegments.length} segments, ${uniqueSpeakers.length} speakers, ${totalDuration.toFixed(1)}s, model: assemblyai`)
-    console.log(`[TRANSCRIBE] Confidence: ${((transcript.confidence || 0) * 100).toFixed(1)}%`)
+    console.log(`[TRANSCRIBE] Done: ${renamedSegments.length} segments, ${uniqueSpeakers.length} speakers, ${totalDuration.toFixed(1)}s, language: ${detectedLanguage}, model: deepgram-nova-3`)
 
     // Clean up extracted audio
     try { if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath) } catch {}
@@ -4878,10 +4924,8 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
     res.json(response)
 
   } catch (error: any) {
-    console.error('[TRANSCRIBE] AssemblyAI failed:', error.message)
-
-    // Fallback to GPT-4o-transcribe-diarize
-    console.log('[TRANSCRIBE] Falling back to GPT-4o-transcribe-diarize...')
+    console.error('[TRANSCRIBE] Deepgram failed:', error.message)
+    console.log('[TRANSCRIBE] Falling back to GPT-4o...')
     return handleGPTAutoTranscribe(req, res)
   }
 })
@@ -10660,11 +10704,10 @@ app.listen(PORT, () => {
   console.log(`   OpenAI:      ${process.env.OPENAI_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log('   OpenAI Chat Model: gpt-5.4')
   console.log('   OpenAI Transcribe Model: gpt-4o-transcribe-diarize')
-  const hasAssemblyAI = !!process.env.ASSEMBLYAI_API_KEY
-  console.log(`   Transcription: ${hasAssemblyAI ? '✅ AssemblyAI (premium diarization)' : '⚠️ GPT-4o-transcribe (basic diarization)'}`)
-  if (!hasAssemblyAI) {
-    console.log('   💡 Tip: Add ASSEMBLYAI_API_KEY to .env for much better speaker detection')
-    console.log('   💡 Sign up free at https://www.assemblyai.com ($50 free credit)')
+  const hasDeepgram = !!process.env.DEEPGRAM_API_KEY
+  console.log(`   Transcription: ${hasDeepgram ? '✅ Deepgram Nova-3 (multi-language + diarization)' : '⚠️ GPT-4o-transcribe (fallback)'}`)
+  if (!hasDeepgram) {
+    console.log('   💡 Tip: Add DEEPGRAM_API_KEY to .env for multi-language transcription with speaker diarization')
   }
   console.log(`   ElevenLabs:  ${process.env.ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   DeepL:       ${process.env.DEEPL_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
@@ -10694,7 +10737,7 @@ app.listen(PORT, () => {
     console.log(`  FFmpeg drawtext:  ${hasDrawtext ? '✅' : '❌'}`)
     console.log(`  FFmpeg overlay:   ${hasOverlay ? '✅' : '❌'}`)
     console.log(`  FFmpeg ass:       ${hasAss ? '✅' : '❌'}`)
-    console.log(`  AssemblyAI:       ${process.env.ASSEMBLYAI_API_KEY ? '✅' : '❌'}`)
+    console.log(`  Deepgram:         ${process.env.DEEPGRAM_API_KEY ? '✅' : '❌'}`)
     console.log(`  OpenAI:           ${process.env.OPENAI_API_KEY ? '✅' : '❌'}`)
     console.log(`  Gemini:           ${process.env.GEMINI_API_KEY ? '✅' : '❌'}`)
     console.log(`  Seedance:         ${process.env.KIE_API_KEY ? '✅' : '❌'}`)
