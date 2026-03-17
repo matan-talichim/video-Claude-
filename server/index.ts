@@ -8,7 +8,7 @@ import { execSync } from 'child_process'
 import { createRequire } from 'module'
 import dotenv from 'dotenv'
 import { GoogleGenAI } from '@google/genai'
-import { DeepgramClient } from '@deepgram/sdk'
+// Deepgram is used via REST API directly (more reliable than SDK)
 
 // Load .env from project root
 const __filename = fileURLToPath(import.meta.url)
@@ -69,8 +69,7 @@ function getGemini() {
   return new GoogleGenAI({ apiKey: key })
 }
 
-// Deepgram client (transcription + speaker diarization)
-const deepgram = new DeepgramClient(process.env.DEEPGRAM_API_KEY || '')
+// Deepgram transcription via REST API (Nova-3 with Hebrew/RTL support)
 
 const app = express()
 const PORT = 3001
@@ -287,21 +286,20 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
       const audioBuffer = fs.readFileSync(fileToUpload)
 
-      const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
-        audioBuffer,
-        {
-          model: 'nova-3',
-          smart_format: true,
-          punctuate: true,
-          diarize: true,
-          utterances: true,
-          detect_language: true,
-        }
-      )
+      const dgResponse = await fetch('https://api.deepgram.com/v1/listen?model=nova-3&language=multi&smart_format=true&diarize=true&utterances=true', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
+          'Content-Type': 'audio/mp3',
+        },
+        body: audioBuffer,
+      })
 
-      if (error) {
-        throw new Error(error.message || 'Deepgram transcription failed')
+      if (!dgResponse.ok) {
+        throw new Error(`Deepgram API error: ${dgResponse.status} ${dgResponse.statusText}`)
       }
+
+      const result = await dgResponse.json() as any
 
       const channel = result.results?.channels?.[0]
       const alternatives = channel?.alternatives?.[0]
@@ -4787,22 +4785,20 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
     const audioBuffer = fs.readFileSync(fileToSend)
 
-    const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
-      audioBuffer,
-      {
-        model: 'nova-3',
-        smart_format: true,
-        punctuate: true,
-        diarize: true,
-        utterances: true,
-        detect_language: true,
-      }
-    )
+    const dgResponse = await fetch('https://api.deepgram.com/v1/listen?model=nova-3&language=multi&smart_format=true&diarize=true&utterances=true', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
+        'Content-Type': 'audio/mp3',
+      },
+      body: audioBuffer,
+    })
 
-    if (error) {
-      console.error('[TRANSCRIBE] Deepgram error:', error)
-      throw new Error(error.message || 'Deepgram transcription failed')
+    if (!dgResponse.ok) {
+      throw new Error(`Deepgram API error: ${dgResponse.status} ${dgResponse.statusText}`)
     }
+
+    const result = await dgResponse.json() as any
 
     const channel = result.results?.channels?.[0]
     const alternatives = channel?.alternatives?.[0]
