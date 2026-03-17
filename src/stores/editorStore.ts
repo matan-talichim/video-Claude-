@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useUserProfileStore } from './userProfileStore'
+import { useTimelineStore } from './timelineStore'
 
 export interface Word {
   text: string
@@ -1373,14 +1374,37 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   splitAtPlayhead: () => {
     const { currentTime, transcript, editHistory } = get()
+    console.log('[EDITOR] splitAtPlayhead at', currentTime)
+
+    // Also split timeline clips at the playhead position
+    const timelineState = useTimelineStore.getState()
+    const { clips, selectedClipIds } = timelineState
+    let didSplitTimeline = false
+
+    // Find clips that contain the playhead time
+    for (const clip of clips) {
+      const clipEnd = clip.startTime + clip.duration
+      // Split if playhead is inside clip and clip is selected (or if only one clip exists on that track)
+      const isSelected = selectedClipIds.includes(clip.id)
+      const isUnderPlayhead = currentTime > clip.startTime + 0.01 && currentTime < clipEnd - 0.01
+      if (isUnderPlayhead && (isSelected || selectedClipIds.length === 0)) {
+        console.log('[EDITOR] Splitting timeline clip', clip.id, 'at', currentTime)
+        timelineState.splitClip(clip.id, currentTime)
+        didSplitTimeline = true
+      }
+    }
+
+    if (didSplitTimeline) {
+      console.log('[EDITOR] ✅ Timeline clip(s) split at', currentTime)
+    }
+
+    // Also split transcript segment if applicable
     if (transcript.length === 0) return
-    // Find segment containing the playhead
     for (let si = 0; si < transcript.length; si++) {
       const seg = transcript[si]
       const segStart = seg.words[0]?.start ?? 0
       const segEnd = seg.words[seg.words.length - 1]?.end ?? 0
       if (currentTime >= segStart && currentTime <= segEnd) {
-        // Find the word boundary closest to currentTime
         let wordIdx = 0
         for (let wi = 0; wi < seg.words.length; wi++) {
           if (seg.words[wi].start >= currentTime) {
@@ -1404,6 +1428,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             transcript: newTranscript, isDirty: true, redoHistory: [],
             editHistory: [...editHistory, { action: 'splitAtPlayhead', description: `פוצל בנקודת ה-playhead (${formatTs(currentTime)})`, timestamp: Date.now(), previousTranscript }],
           })
+          console.log('[EDITOR] ✅ Transcript split at', currentTime)
           return
         }
       }
