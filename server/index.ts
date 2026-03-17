@@ -7893,134 +7893,123 @@ function saveSystemOptimizationIdeas(state: any, ideas: any[]) {
 
 // ==================== EDITOR BRAIN ====================
 
-async function compressEditorBrain(brain: any): Promise<any> {
-  console.log('[BRAIN] Compressing insights for efficient prompts...')
-
-  const totalRules = (brain.editingRules?.length || 0) +
-    (brain.socialInsights?.length || 0) +
-    (brain.marketingInsights?.length || 0) +
-    (brain.paidAdsInsights?.length || 0)
-
-  if (totalRules < 10) {
-    console.log('[BRAIN] Too few rules to compress, skipping')
-    return brain
-  }
-
-  try {
-    const ai = await getOpenAI()
-    if (!ai) return brain
-
-    const compressionPrompt = `You are an expert editor who needs to create a CONCISE editing guide.
-Below are ${totalRules} editing insights organized by domain.
-Your job: COMPRESS these into the shortest possible text WITHOUT losing ANY insight.
-Rules for compression:
-1. MERGE similar rules into single combined rules
-2. REMOVE redundant information (if 3 rules say "use zoom on key words" merge into 1)
-3. Use SHORT sentences - no fluff, no explanations, just actionable instructions
-4. Keep SPECIFIC numbers and parameters (don't lose "1.2x zoom" or "0.5s timing")
-5. Group related rules together
-6. Use bullet format: "• rule"
-7. NEVER delete a unique insight - if 2 rules say different things, keep BOTH
-8. Target: reduce total text by 50-70% while keeping 100% of unique information
-
-EDITING RULES (${brain.editingRules?.length || 0}):
-${(brain.editingRules || []).map((r: string) => `- ${r}`).join('\n')}
-
-SOCIAL INSIGHTS (${brain.socialInsights?.length || 0}):
-${(brain.socialInsights || []).map((r: string) => `- ${r}`).join('\n')}
-
-MARKETING INSIGHTS (${brain.marketingInsights?.length || 0}):
-${(brain.marketingInsights || []).map((r: string) => `- ${r}`).join('\n')}
-
-PAID ADS INSIGHTS (${brain.paidAdsInsights?.length || 0}):
-${(brain.paidAdsInsights || []).map((r: string) => `- ${r}`).join('\n')}
-
-Return a JSON object with these EXACT fields:
-{
-  "editingRulesCompressed": "• rule1\\n• rule2\\n...",
-  "socialInsightsCompressed": "• rule1\\n• rule2\\n...",
-  "marketingInsightsCompressed": "• rule1\\n• rule2\\n...",
-  "paidAdsInsightsCompressed": "• rule1\\n• rule2\\n...",
-  "totalOriginal": number,
-  "totalCompressed": number
-}
-CRITICAL: Return ONLY valid JSON. No markdown, no backticks, no explanation.`
-
-    const response = await ai.chat.completions.create({
-      model: 'gpt-5.4',
-      max_completion_tokens: 4000,
-      messages: [{ role: 'user', content: compressionPrompt }],
-      response_format: { type: 'json_object' },
-    })
-
-    const content = response.choices[0].message.content?.trim() || ''
-    const cleaned = content.replace(/```json|```/g, '').trim()
-    const compressed = JSON.parse(cleaned)
-
-    brain.compressed = {
-      editing: compressed.editingRulesCompressed || '',
-      social: compressed.socialInsightsCompressed || '',
-      marketing: compressed.marketingInsightsCompressed || '',
-      paid_ads: compressed.paidAdsInsightsCompressed || '',
-      totalOriginal: compressed.totalOriginal || totalRules,
-      totalCompressed: compressed.totalCompressed || 0,
-      compressedAt: new Date().toISOString(),
-    }
-
-    const reduction = Math.round((1 - (compressed.totalCompressed || 0) / totalRules) * 100)
-    console.log(`[BRAIN] Compressed: ${totalRules} rules → ${compressed.totalCompressed} (${reduction}% reduction)`)
-
-    return brain
-  } catch (e: any) {
-    console.warn('[BRAIN] Compression failed, using uncompressed:', e.message)
-    return brain
-  }
-}
-
 async function updateEditorBrain(state: any) {
-  console.log('[LEARN] Updating editor brain...')
+  console.log('[BRAIN] Updating editor brain with master prompt...')
 
+  // Collect ALL insights from all sources
+  const allRules: string[] = []
+  const allSocialInsights: string[] = []
+  const allMarketingInsights: string[] = []
+  const allPaidAdsInsights: string[] = []
+
+  // From expertise domains
+  ;(state.expertise?.editing?.insights || []).forEach((r: any) => { if (r.rule) allRules.push(r.rule) })
+  ;(state.expertise?.social?.insights || []).forEach((r: any) => { if (r.rule) allSocialInsights.push(r.rule) })
+  ;(state.expertise?.marketing?.insights || []).forEach((r: any) => { if (r.rule) allMarketingInsights.push(r.rule) })
+  ;(state.expertise?.paid_ads?.insights || []).forEach((r: any) => { if (r.rule) allPaidAdsInsights.push(r.rule) })
+
+  // From learnedPatterns (older format)
+  Object.values(state.learnedPatterns || {}).forEach((data: any) => {
+    ;(data.editing_rules || []).forEach((r: any) => {
+      const ruleText = r.rule || r
+      if (ruleText && !allRules.includes(ruleText)) allRules.push(ruleText)
+    })
+  })
+
+  const activeTrends = (state.trendInsights?.activeTrends || [])
+    .filter((t: any) => t.lifecycle !== 'declining')
+    .slice(0, 10)
+
+  const totalInsights = allRules.length + allSocialInsights.length +
+    allMarketingInsights.length + allPaidAdsInsights.length
+
+  console.log(`[BRAIN] Insights to synthesize: ${totalInsights} (editing: ${allRules.length}, social: ${allSocialInsights.length}, marketing: ${allMarketingInsights.length}, ads: ${allPaidAdsInsights.length})`)
+
+  let masterPrompt = ''
+
+  if (totalInsights > 0) {
+    try {
+      const ai = await getOpenAI()
+      if (!ai) {
+        masterPrompt = allRules.map(r => `• ${r}`).join('\n')
+      } else {
+        const synthesisPrompt = `You are a world-class video editor and AI editing system architect.
+I have accumulated ${totalInsights} editing insights from analyzing viral videos, professional editors, marketing content, and social media trends.
+Synthesize ALL insights into ONE comprehensive editing instruction prompt.
+This prompt will be injected into an AI that automatically edits videos.
+Every instruction must be SPECIFIC and ACTIONABLE with exact parameters.
+=== RAW INSIGHTS ===
+EDITING RULES (${allRules.length}):
+${allRules.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+SOCIAL MEDIA INSIGHTS (${allSocialInsights.length}):
+${allSocialInsights.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+MARKETING INSIGHTS (${allMarketingInsights.length}):
+${allMarketingInsights.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+PAID ADS INSIGHTS (${allPaidAdsInsights.length}):
+${allPaidAdsInsights.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+CURRENT TRENDS (${activeTrends.length}):
+${activeTrends.map((t: any) => `- ${t.trend_name} (${t.lifecycle}): ${(t.techniques || []).slice(0, 2).join('; ')}`).join('\n')}
+=== CREATE THE MASTER EDITING PROMPT ===
+Organize into these sections:
+1. HOOK (first 1-3 seconds): Exact techniques for the opening
+2. PACING & RHYTHM: Cut timing rules, when fast vs slow, energy curve
+3. CAMERA & ZOOMS: Zoom intensity, frequency, camera angle switching
+4. B-ROLL: When to insert, duration, transition type
+5. SUBTITLES: Style, position, animation, words per frame, emphasis
+6. COLOR & VISUAL: Color grade, background effects, visual consistency
+7. SOUND & MUSIC: Music genre, volume ratio, sound effects
+8. STORYTELLING: Narrative arc for 30-60 second videos
+9. PLATFORM RULES: Differences for Reels/TikTok/YouTube/LinkedIn
+10. CONVERSION: CTA placement, trust signals, persuasion
+RULES:
+- Merge similar insights into single powerful rules
+- Remove contradictions (keep higher-confidence version)
+- Keep specific numbers (1.2x zoom, 0.5s timing, 15% volume)
+- Each rule starts with ACTION VERB (Cut, Zoom, Add, Place, etc.)
+- Max 5-8 rules per section
+- Total under 2000 words
+- English (system prompt for AI)
+- NO explanations, NO headers with ===, just clean numbered rules per section
+Start directly with: "HOOK RULES:" and continue section by section.`
+
+        const response = await ai.chat.completions.create({
+          model: 'gpt-5.4',
+          max_completion_tokens: 4000,
+          messages: [{ role: 'user', content: synthesisPrompt }],
+        })
+
+        masterPrompt = response.choices[0].message.content?.trim() || ''
+        console.log(`[BRAIN] Master prompt generated: ${masterPrompt.length} chars (~${Math.round(masterPrompt.split(/\s+/).length)} words)`)
+      }
+    } catch (e: any) {
+      console.error('[BRAIN] Master prompt generation failed:', e.message?.substring(0, 150))
+      // Fallback: just list rules
+      masterPrompt = allRules.map(r => `• ${r}`).join('\n')
+    }
+  }
+
+  // Save brain
   const brain: any = {
     lastUpdated: new Date().toISOString(),
     lastUpdatedIsrael: new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
-    version: (state.expertise?.editing?.totalInsights || 0) +
-             (state.expertise?.social?.totalInsights || 0) +
-             (state.expertise?.marketing?.totalInsights || 0) +
-             (state.expertise?.paid_ads?.totalInsights || 0),
-
-    editingRules: (state.expertise?.editing?.insights || [])
-      .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
-      .slice(0, 30)
-      .map((r: any) => r.rule),
-
-    socialInsights: (state.expertise?.social?.insights || [])
-      .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
-      .slice(0, 15)
-      .map((r: any) => r.rule),
-
-    marketingInsights: (state.expertise?.marketing?.insights || [])
-      .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
-      .slice(0, 15)
-      .map((r: any) => r.rule),
-
-    paidAdsInsights: (state.expertise?.paid_ads?.insights || [])
-      .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
-      .slice(0, 10)
-      .map((r: any) => r.rule),
-
-    activeTrends: (state.trendInsights?.activeTrends || [])
-      .filter((t: any) => t.lifecycle !== 'declining')
-      .slice(0, 10)
-      .map((t: any) => ({
-        name: t.trend_name,
-        lifecycle: t.lifecycle,
-        techniques: (t.techniques || []).slice(0, 3),
-        businessUse: t.adaptation_for_business,
-      })),
-
-    contentSOPs: {} as Record<string, string>,
-    subtitleRecommendations: {} as Record<string, any>,
-
+    version: totalInsights,
+    masterPrompt,
+    stats: {
+      editingRules: allRules.length,
+      socialInsights: allSocialInsights.length,
+      marketingInsights: allMarketingInsights.length,
+      paidAdsInsights: allPaidAdsInsights.length,
+      activeTrends: activeTrends.length,
+      systemIdeas: state.expertise?.systemOptimization?.ideas?.length || 0,
+      masterPromptWords: masterPrompt.split(/\s+/).length,
+      masterPromptChars: masterPrompt.length,
+    },
+    activeTrends: activeTrends.map((t: any) => ({
+      name: t.trend_name,
+      lifecycle: t.lifecycle,
+      techniques: (t.techniques || []).slice(0, 3),
+      businessUse: t.adaptation_for_business,
+    })),
     expertiseLevels: {
       editing: state.expertise?.editing?.level || 'beginner',
       social: state.expertise?.social?.level || 'beginner',
@@ -8029,24 +8018,12 @@ async function updateEditorBrain(state: any) {
     },
   }
 
-  Object.entries(state.learnedPatterns || {}).forEach(([cat, data]: [string, any]) => {
-    if (data.sop_update) {
-      brain.contentSOPs[cat] = data.sop_update
-    }
-    if (data.patterns?.subtitles) {
-      brain.subtitleRecommendations[cat] = data.patterns.subtitles
-    }
-  })
-
-  // Compress brain for efficient prompt injection
-  const compressedBrain = await compressEditorBrain(brain)
-
   const brainPath = path.join(__dirname, 'editor-brain.json')
-  fs.writeFileSync(brainPath, JSON.stringify(compressedBrain, null, 2))
+  fs.writeFileSync(brainPath, JSON.stringify(brain, null, 2))
 
-  console.log(`[LEARN] Editor brain updated: v${compressedBrain.version} | ${compressedBrain.editingRules.length} editing rules | ${compressedBrain.activeTrends.length} trends`)
+  console.log(`[BRAIN] Editor brain v${brain.version} saved | Master prompt: ${brain.stats.masterPromptWords} words | Trends: ${activeTrends.length}`)
 
-  return compressedBrain
+  return brain
 }
 
 function getEditorBrainPrompt(contentType?: string): string {
@@ -8055,73 +8032,36 @@ function getEditorBrainPrompt(contentType?: string): string {
     if (!fs.existsSync(brainPath)) return ''
 
     const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
-    const useCompressed = !!brain.compressed?.editing
 
-    let prompt = `\n\n=== AI EDITOR KNOWLEDGE (v${brain.version}${useCompressed ? ', compressed' : ''}) ===\n`
-    prompt += `Last updated: ${brain.lastUpdatedIsrael}\n`
-    prompt += `Expertise: Editing=${brain.expertiseLevels?.editing || 'beginner'}, Social=${brain.expertiseLevels?.social || 'beginner'}, Marketing=${brain.expertiseLevels?.marketing || 'beginner'}, Ads=${brain.expertiseLevels?.paid_ads || 'beginner'}\n\n`
+    if (!brain.masterPrompt || brain.masterPrompt.length < 50) return ''
 
-    if (useCompressed) {
-      if (brain.compressed.editing) {
-        prompt += `EDITING RULES:\n${brain.compressed.editing}\n`
-      }
-      if (brain.compressed.social) {
-        prompt += `\nSOCIAL INSIGHTS:\n${brain.compressed.social}\n`
-      }
-      if (['marketing', 'ad', 'ad_short', 'social_reels'].includes(contentType || '')) {
-        if (brain.compressed.marketing) {
-          prompt += `\nMARKETING:\n${brain.compressed.marketing}\n`
-        }
-        if (brain.compressed.paid_ads) {
-          prompt += `\nPAID ADS:\n${brain.compressed.paid_ads}\n`
-        }
-      }
-    } else {
-      if (brain.editingRules?.length > 0) {
-        prompt += `EDITING RULES:\n`
-        brain.editingRules.forEach((r: string) => { prompt += `• ${r}\n` })
-      }
-      if (brain.socialInsights?.length > 0) {
-        prompt += `\nSOCIAL:\n`
-        brain.socialInsights.forEach((r: string) => { prompt += `• ${r}\n` })
-      }
-      if (['marketing', 'ad', 'ad_short', 'social_reels'].includes(contentType || '')) {
-        if (brain.marketingInsights?.length > 0) {
-          prompt += `\nMARKETING:\n`
-          brain.marketingInsights.forEach((r: string) => { prompt += `• ${r}\n` })
-        }
-        if (brain.paidAdsInsights?.length > 0) {
-          prompt += `\nPAID ADS:\n`
-          brain.paidAdsInsights.forEach((r: string) => { prompt += `• ${r}\n` })
-        }
-      }
-    }
+    let prompt = `\n\n=== AI EDITOR KNOWLEDGE (v${brain.version}, ${brain.stats?.masterPromptWords || 0} words, updated ${brain.lastUpdatedIsrael || 'unknown'}) ===\n\n`
 
-    if (contentType && brain.contentSOPs?.[contentType]) {
-      prompt += `\nSOP (${contentType}):\n${brain.contentSOPs[contentType]}\n`
-    }
+    // The master prompt
+    prompt += brain.masterPrompt
 
-    if (contentType && brain.subtitleRecommendations?.[contentType]) {
-      const subRec = brain.subtitleRecommendations[contentType]
-      prompt += `\nSUBTITLE STYLE (${contentType}):\n`
-      prompt += `Style: ${subRec.style || 'classic'}\n`
-      if (subRec.animation_insights) {
-        prompt += `Animation: ${subRec.animation_insights.most_popular_animation || 'none'}\n`
-        prompt += `Words per frame: ${subRec.animation_insights.avg_words_per_frame || 3}\n`
-        prompt += `Position: ${subRec.animation_insights.position || 'bottom'}\n`
-      }
-    }
-
+    // Active trends
     if (brain.activeTrends?.length > 0) {
-      prompt += `\nTRENDS:\n`
+      prompt += `\n\nCURRENT ACTIVE TRENDS:\n`
       brain.activeTrends.forEach((t: any) => {
         const emoji = t.lifecycle === 'rising' ? '📈' : t.lifecycle === 'peak' ? '🔝' : '📉'
-        prompt += `${emoji} ${t.name} (${t.lifecycle}): ${t.businessUse || t.techniques?.[0] || ''}\n`
+        prompt += `${emoji} ${t.name}: ${t.businessUse || t.techniques?.[0] || ''}\n`
       })
     }
 
-    prompt += `\n=== END KNOWLEDGE ===\n`
-    prompt += `IMPORTANT: Apply these learned rules when making editing decisions. They are based on analysis of real viral content.\n`
+    // Content type hint
+    if (contentType) {
+      if (['ad', 'paid_ads', 'ad_short'].includes(contentType)) {
+        prompt += `\nCONTENT TYPE: PAID AD - prioritize conversion, strong CTA, hook optimization.\n`
+      } else if (['social_reels', 'reels', 'tiktok'].includes(contentType)) {
+        prompt += `\nCONTENT TYPE: SOCIAL SHORT-FORM - prioritize retention, trend alignment, shareability.\n`
+      } else if (['linkedin', 'professional'].includes(contentType)) {
+        prompt += `\nCONTENT TYPE: PROFESSIONAL - prioritize credibility, clean editing, clear message.\n`
+      }
+    }
+
+    prompt += `\n=== END AI EDITOR KNOWLEDGE ===\n`
+    prompt += `IMPORTANT: Apply these rules when making ALL editing decisions. They are based on analysis of ${brain.version} real viral videos.\n`
 
     return prompt
   } catch {
@@ -8134,10 +8074,7 @@ function logBrainStatus() {
     const brainPath = path.join(__dirname, 'editor-brain.json')
     if (fs.existsSync(brainPath)) {
       const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
-      console.log(`[BRAIN] Editor brain v${brain.version} loaded (${brain.editingRules?.length || 0} rules, ${brain.activeTrends?.length || 0} trends, updated ${brain.lastUpdatedIsrael})`)
-      if (brain.compressed) {
-        console.log(`[BRAIN] Compressed: ${brain.compressed.totalOriginal} → ${brain.compressed.totalCompressed} rules`)
-      }
+      console.log(`[BRAIN] Editor brain v${brain.version} loaded (master prompt: ${brain.stats?.masterPromptWords || 0} words, ${brain.activeTrends?.length || 0} trends, updated ${brain.lastUpdatedIsrael})`)
     } else {
       console.log('[BRAIN] No editor brain yet - will be created after first learning session')
     }
@@ -8325,18 +8262,14 @@ async function sendLearningReport(state: any, results: any) {
     const brainPath = path.join(__dirname, 'editor-brain.json')
     if (fs.existsSync(brainPath)) {
       const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
-      message += `🧠 מוח העורך:\n`
-      message += `  גרסה: v${brain.version}\n`
-      message += `  כללי עריכה: ${brain.editingRules?.length || 0}\n`
-      message += `  תובנות שיווק: ${brain.marketingInsights?.length || 0}\n`
-      message += `  תובנות סושיאל: ${brain.socialInsights?.length || 0}\n`
-      message += `  תובנות ממומן: ${brain.paidAdsInsights?.length || 0}\n`
-      message += `  טרנדים פעילים: ${brain.activeTrends?.length || 0}\n`
-      if (brain.compressed) {
-        const reduction = Math.round((1 - brain.compressed.totalCompressed / brain.compressed.totalOriginal) * 100)
-        message += `  📦 דחיסה: ${brain.compressed.totalOriginal} → ${brain.compressed.totalCompressed} כללים (${reduction}% קיצור)\n`
-      }
-      message += `  עריכות שהשתמשו במוח: ${state.learningMetrics?.editsWithBrain || 0}\n\n`
+      message += `🧠 מוח העורך v${brain.version}:\n`
+      message += `  📝 פרומפט מאסטר: ${brain.stats?.masterPromptWords || 0} מילים\n`
+      message += `  🎬 עריכה: ${brain.stats?.editingRules || 0}\n`
+      message += `  📱 סושיאל: ${brain.stats?.socialInsights || 0}\n`
+      message += `  📣 שיווק: ${brain.stats?.marketingInsights || 0}\n`
+      message += `  💰 ממומן: ${brain.stats?.paidAdsInsights || 0}\n`
+      message += `  🔥 טרנדים: ${brain.stats?.activeTrends || 0}\n`
+      message += `  ⚙️ רעיונות: ${brain.stats?.systemIdeas || 0}\n\n`
     }
   } catch {}
 
@@ -8396,14 +8329,13 @@ async function runServerLearning(options?: { budget?: number, force?: boolean })
   console.log(`[LEARN] Budget: $${sessionBudget} | Force: ${force} | Max GPT calls: ~${maxGptCalls} | Categories: ${numCategories}`)
   console.log(`[LEARN] State file: ${fs.existsSync(LEARNING_STATE_FILE) ? 'EXISTS' : 'MISSING'}`)
 
-  if (options?.budget) {
-    await sendTelegram(
-      `📚 התחלתי ללמוד\n` +
-      `💰 תקציב: $${sessionBudget.toFixed(2)}\n` +
-      `🏷️ קטגוריות: ${numCategories}\n` +
-      `⏱️ זמן משוער: ${numCategories * 2}-${numCategories * 3} דקות`
-    )
-  }
+  const startTime = Date.now()
+
+  // Always send Telegram when learning starts
+  const israelTimeStart = new Date().toLocaleString('he-IL', {
+    timeZone: 'Asia/Jerusalem',
+    hour: '2-digit', minute: '2-digit',
+  })
 
   // Snapshot BEFORE learning
   const stateBefore = loadLearningState()
@@ -8460,6 +8392,13 @@ async function runServerLearning(options?: { budget?: number, force?: boolean })
 
   console.log('[LEARN] Categories today:', todayCategories.join(', '))
   console.log('[LEARN] Goals:', sessionGoals.join(' | '))
+
+  await sendTelegram(
+    `📚 התחלתי ללמוד (${israelTimeStart})\n` +
+    `💰 תקציב: $${sessionBudget.toFixed(2)}\n` +
+    `🏷️ קטגוריות: ${todayCategories.join(', ')}\n` +
+    `🎯 מטרות: ${sessionGoals.join(' | ')}`
+  )
 
   const ai = await getOpenAI()
   if (!ai) {
@@ -9202,11 +9141,48 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
     systemIdeas: results.systemIdeas || [],
   }
 
+  const totalCost = results.totalCost
+
   console.log('[LEARN] === SESSION END ===')
   console.log(`[LEARN] Videos analyzed: ${videosThisSession}`)
   console.log(`[LEARN] New rules: ${newRules.length}`)
   console.log(`[LEARN] Total rules: ${totalRulesAfter}`)
-  console.log(`[LEARN] Cost: $${results.totalCost.toFixed(3)}`)
+  console.log(`[LEARN] Cost: $${totalCost.toFixed(3)}`)
+
+  // --- Track ALL costs accurately across sessions ---
+  stateAfter.totalCost = (stateAfter.totalCost || 0) + totalCost
+  stateAfter.dailyCost = (stateAfter.dailyCost || 0) + totalCost
+  stateAfter.monthlyCost = (stateAfter.monthlyCost || 0) + totalCost
+  stateAfter.dailyBudget = 1    // $1/day
+  stateAfter.monthlyBudget = 30  // $30/month
+
+  // Reset daily cost if new day
+  const todayIsraelEnd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })
+  if (stateAfter.dailyDate !== todayIsraelEnd) {
+    stateAfter.dailyCost = totalCost
+    stateAfter.dailyDate = todayIsraelEnd
+  }
+
+  // Reset monthly cost if new month
+  const monthIsrael = todayIsraelEnd.substring(0, 7)
+  if (stateAfter.monthlyMonth !== monthIsrael) {
+    stateAfter.monthlyCost = totalCost
+    stateAfter.monthlyMonth = monthIsrael
+  }
+
+  // Track per-session history
+  if (!stateAfter.sessionHistory) stateAfter.sessionHistory = []
+  stateAfter.sessionHistory.push({
+    date: new Date().toISOString(),
+    cost: totalCost,
+    videos: videosThisSession,
+    newRules: newRules.length,
+    categories: todayCategories,
+  })
+  // Keep last 100 sessions
+  if (stateAfter.sessionHistory.length > 100) {
+    stateAfter.sessionHistory = stateAfter.sessionHistory.slice(-100)
+  }
 
   // Backup learning state (survives Railway redeploys via log persistence)
   try {
@@ -9233,19 +9209,29 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
     console.warn('[LEARN] Editor brain update failed:', e.message)
   }
 
-  // --- STEP 9: Send Telegram - ONLY if there are NEW insights ---
+  // --- STEP 9: Send Telegram report ---
   if (newRules.length > 0) {
     await sendLearningReport(stateAfter, learningResults)
-  } else {
-    console.log('[LEARN] No new insights learned, skipping detailed Telegram notification')
-    const israelTime = new Date().toLocaleString('he-IL', {
-      timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit'
-    })
-    await sendTelegram(
-      `📚 למידה ${israelTime} - לא נמצאו תובנות חדשות.\n` +
-      `📊 סה"כ: ${totalRulesAfter} תובנות מ-${stateAfter.totalVideosAnalyzed || 0} סרטונים.`
-    )
   }
+
+  // Always send finish notification
+  const endTime = new Date().toLocaleString('he-IL', {
+    timeZone: 'Asia/Jerusalem',
+    hour: '2-digit', minute: '2-digit',
+  })
+  const durationMinutes = Math.round((Date.now() - startTime) / 1000 / 60)
+  let finishMsg = `✅ סיימתי ללמוד (${endTime}) - ${durationMinutes} דקות\n`
+  finishMsg += `🎬 סרטונים: ${videosThisSession}\n`
+  finishMsg += `💡 תובנות חדשות: ${newRules.length}\n`
+  finishMsg += `💡 סה"כ תובנות: ${totalRulesAfter}\n`
+  finishMsg += `💰 עלות סשן: $${totalCost.toFixed(3)}\n`
+  finishMsg += `💰 עלות היום: $${(stateAfter.dailyCost || 0).toFixed(3)} / $${stateAfter.dailyBudget || 1}\n`
+  finishMsg += `💰 עלות החודש: $${(stateAfter.monthlyCost || 0).toFixed(3)} / $${stateAfter.monthlyBudget || 30}\n`
+  finishMsg += `💰 עלות כוללת: $${(stateAfter.totalCost || 0).toFixed(3)}\n`
+  if (newRules.length > 0) {
+    finishMsg += `\n🧠 מוח העורך עודכן לגרסה v${totalRulesAfter}`
+  }
+  await sendTelegram(finishMsg)
 
   // Save session info
   stateAfter.lastLearnDate = Date.now()
@@ -9635,21 +9621,18 @@ async function sendFullReport() {
       if (fs.existsSync(brainPath)) {
         const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
         message += `🧠 מוח העורך v${brain.version}:\n`
-        message += `  כללי עריכה: ${brain.editingRules?.length || 0}\n`
-        message += `  תובנות שיווק: ${brain.marketingInsights?.length || 0}\n`
-        message += `  תובנות סושיאל: ${brain.socialInsights?.length || 0}\n`
-        message += `  תובנות ממומן: ${brain.paidAdsInsights?.length || 0}\n`
-        message += `  טרנדים פעילים: ${brain.activeTrends?.length || 0}\n`
-        if (brain.compressed) {
-          const reduction = Math.round((1 - brain.compressed.totalCompressed / brain.compressed.totalOriginal) * 100)
-          message += `  📦 דחיסה: ${brain.compressed.totalOriginal} → ${brain.compressed.totalCompressed} כללים (${reduction}% קיצור)\n`
-        }
-        message += `  עריכות שהשתמשו במוח: ${state.learningMetrics?.editsWithBrain || 0}\n`
-        if (brain.contentSOPs) {
-          message += `\n  📋 SOPs לפי סוג תוכן:\n`
-          Object.keys(brain.contentSOPs).forEach(type => {
-            message += `    • ${type}\n`
-          })
+        message += `  📝 פרומפט: ${brain.stats?.masterPromptWords || 0} מילים (${brain.stats?.masterPromptChars || 0} תווים)\n`
+        message += `  מבוסס על: ${brain.version} תובנות\n`
+        message += `  🎬 עריכה: ${brain.stats?.editingRules || 0}\n`
+        message += `  📱 סושיאל: ${brain.stats?.socialInsights || 0}\n`
+        message += `  📣 שיווק: ${brain.stats?.marketingInsights || 0}\n`
+        message += `  💰 ממומן: ${brain.stats?.paidAdsInsights || 0}\n`
+        message += `  🔥 טרנדים: ${brain.stats?.activeTrends || 0}\n`
+        message += `  ⚙️ רעיונות: ${brain.stats?.systemIdeas || 0}\n`
+
+        if (brain.masterPrompt) {
+          message += `\n📋 תצוגה מקדימה:\n`
+          message += `"${brain.masterPrompt.substring(0, 300)}..."\n`
         }
         message += '\n'
       }
@@ -9680,13 +9663,14 @@ async function sendFullReport() {
     message += '\n'
 
     // Cost report
-    message += `💰 תקציב:\n`
-    message += `  📅 היום (${state.dailyDate || '?'}):\n`
-    message += `    עלות: $${(state.dailyGptCost || 0).toFixed(3)} / $${DAILY_GPT_COST_LIMIT.toFixed(2)}\n`
-    message += `    קריאות: ${state.dailyGptCalls || 0} / ${DAILY_GPT_CALLS_LIMIT}\n`
-    message += `    YouTube API: ${state.dailyYoutubeUnits || 0} / 2,500 יחידות\n\n`
-    message += `  📅 החודש (${state.monthlyDate || '?'}):\n`
-    message += `    עלות GPT: $${(state.monthlyGptCost || 0).toFixed(2)} / $${MONTHLY_GPT_COST_LIMIT.toFixed(0)}\n\n`
+    message += `💰 עלויות:\n`
+    message += `  היום: $${(state.dailyCost || state.dailyGptCost || 0).toFixed(3)} / $${state.dailyBudget || DAILY_GPT_COST_LIMIT}\n`
+    message += `  החודש: $${(state.monthlyCost || state.monthlyGptCost || 0).toFixed(3)} / $${state.monthlyBudget || MONTHLY_GPT_COST_LIMIT}\n`
+    message += `  כולל (כל הזמנים): $${(state.totalCost || 0).toFixed(3)}\n`
+    message += `  סשנים: ${state.sessionHistory?.length || 0}\n`
+    message += `  ממוצע לסשן: $${state.sessionHistory?.length ? ((state.totalCost || 0) / state.sessionHistory.length).toFixed(3) : '0.000'}\n`
+    message += `  קריאות היום: ${state.dailyGptCalls || 0} / ${DAILY_GPT_CALLS_LIMIT}\n`
+    message += `  YouTube API: ${state.dailyYoutubeUnits || 0} יחידות (היום)\n\n`
 
     // Missing features summary
     const missing = state.missingFeatures || []
