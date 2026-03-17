@@ -159,6 +159,9 @@
 | 11 | Seedance B-Roll returns browser-only `blob:` URL — server FFmpeg can't access | CRITICAL | **FIXED** - Server now returns JSON `{url}` instead of streaming binary; client parses URL |
 | 12 | Speaker audio double-play race condition (play() called twice) | MEDIUM | **FIXED** - Removed `canplay` listener, single `play()` call |
 | 13 | Store array mutation in ExportScreen (`.push()` on store reference) | MEDIUM | **FIXED** - Spread copy before mutation |
+| 14 | B-Roll timestamp drift — multiple inserts not offset-adjusted | HIGH | **FIXED** - Track `brollTimeOffset` and adjust each `insertAt` |
+| 15 | Color grading has no try/catch — can crash entire process | MEDIUM | **FIXED** - Wrapped in try/catch with graceful skip |
+| 16 | Logo size uses `sourceWidth` instead of current file dimensions | MINOR | **FIXED** - Probe current file width before calculating logo size |
 
 ## Known Issues (Not Fixed — Low Priority)
 

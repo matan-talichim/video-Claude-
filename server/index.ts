@@ -6503,10 +6503,15 @@ app.post('/api/auto-editor/process', async (req, res) => {
     if (brollAssets.length > 0) {
       console.log(`[PROCESS] Step 1.75: Inserting ${brollAssets.length} B-Roll clips...`)
 
+      // Track accumulated time offset from previously inserted B-Rolls
+      // so subsequent insertAt timestamps are correctly adjusted
+      let brollTimeOffset = 0
+
       for (let i = 0; i < brollAssets.length; i++) {
         const broll = brollAssets[i]
         const brollUrl = broll.url || broll.localPath || ''
-        const insertAt = parseFloat(broll.insertAt || broll.insert_at || broll.time || 0)
+        const rawInsertAt = parseFloat(broll.insertAt || broll.insert_at || broll.time || 0)
+        const insertAt = rawInsertAt + brollTimeOffset  // Adjust for previously inserted clips
         const duration = parseFloat(broll.duration || 4)
 
         if (!brollUrl) {
@@ -6638,7 +6643,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
           if (fs.existsSync(output) && fs.statSync(output).size > 50000) {
             currentFile = output
             brollInserted++
-            console.log(`[B-ROLL] Clip ${i} inserted at ${insertAt}s`)
+            brollTimeOffset += duration  // Next insertAt must account for this clip's duration
+            console.log(`[B-ROLL] Clip ${i} inserted at ${insertAt}s (offset now ${brollTimeOffset}s)`)
           }
         } catch (e: any) {
           console.warn(`[B-ROLL] Insert ${i} failed:`, e.stderr?.toString().substring(0, 200))
@@ -6827,12 +6833,20 @@ app.post('/api/auto-editor/process', async (req, res) => {
     filesToCleanup.push(gradedFile)
 
     console.log(`[PROCESS] Step I: Color grading (${colorGradeName})...`)
-    execSync(
-      `"${ffmpegPath}" -i "${currentFile}" -vf "${gradeFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
-      { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
-    )
-    currentFile = gradedFile
-    console.log('[PROCESS] Step I done')
+    try {
+      execSync(
+        `"${ffmpegPath}" -i "${currentFile}" -vf "${gradeFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
+        { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+      )
+      if (fs.existsSync(gradedFile) && fs.statSync(gradedFile).size > 50000) {
+        currentFile = gradedFile
+        console.log('[PROCESS] Step I done')
+      } else {
+        console.warn('[PROCESS] Step I: Graded file invalid, keeping previous')
+      }
+    } catch (e: any) {
+      console.warn('[PROCESS] Step I: Color grading failed, continuing without:', e.message?.slice(0, 150))
+    }
 
     // ============================================
     // STEP J: ZOOM / KEN BURNS EFFECTS (every 5-6 seconds)
@@ -7442,7 +7456,17 @@ ${gfxDialogueLines.join('\n')}
         filesToCleanup.push(logoOutput)
 
         try {
+          // Probe current file dimensions (may differ from source after processing)
           let videoWidth = sourceWidth || 1080
+          try {
+            const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+            const probeOut = execSync(
+              `"${ffprobePath}" -v quiet -select_streams v:0 -show_entries stream=width -of csv=p=0 "${currentFile}"`,
+              { timeout: 10000, encoding: 'utf-8' }
+            ).trim()
+            const pw = parseInt(probeOut)
+            if (pw > 0) videoWidth = pw
+          } catch { /* use sourceWidth fallback */ }
           const logoPixelWidth = Math.round(videoWidth * logoScale)
 
           execSync(
