@@ -1,7 +1,27 @@
 import { useState, useEffect, useRef } from 'react'
 import { Video, Music, Sparkles, Film, ArrowRight, X } from 'lucide-react'
 import type { AutoEditorInput } from '../store/autoEditorStore'
+import { useAutoEditorStore } from '../store/autoEditorStore'
 import { useUserProfileStore } from '../../../stores/userProfileStore'
+
+const LANGUAGE_OPTIONS = [
+  { id: 'he', label: 'עברית', flag: '🇮🇱' },
+  { id: 'en', label: 'English', flag: '🇺🇸' },
+  { id: 'ar', label: 'العربية', flag: '🇸🇦' },
+  { id: 'multi', label: 'מעורב (מספר שפות)', flag: '🌍', description: 'אנגלית, ספרדית, צרפתית, גרמנית, הינדי, רוסית, פורטוגזית, יפנית, איטלקית, הולנדית' },
+  { id: 'es', label: 'Español', flag: '🇪🇸' },
+  { id: 'fr', label: 'Français', flag: '🇫🇷' },
+  { id: 'de', label: 'Deutsch', flag: '🇩🇪' },
+  { id: 'ru', label: 'Русский', flag: '🇷🇺' },
+  { id: 'pt', label: 'Português', flag: '🇧🇷' },
+  { id: 'it', label: 'Italiano', flag: '🇮🇹' },
+  { id: 'ja', label: '日本語', flag: '🇯🇵' },
+  { id: 'ko', label: '한국어', flag: '🇰🇷' },
+  { id: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
+  { id: 'tr', label: 'Türkçe', flag: '🇹🇷' },
+  { id: 'nl', label: 'Nederlands', flag: '🇳🇱' },
+  { id: 'detect', label: 'זיהוי אוטומטי', flag: '🔍', description: 'המערכת תזהה את השפה אוטומטית' },
+]
 
 interface LocalFile {
   id: string
@@ -567,6 +587,7 @@ function estimateMaxVideos(files: LocalFile[], targetDuration: number): number {
 
 export default function AutoEditorSettings({ files, onStart, onBack, onClose }: AutoEditorSettingsProps) {
   const profile = useUserProfileStore()
+  const { language: selectedLanguage, setLanguage: setSelectedLanguage } = useAutoEditorStore()
   const [userPrompt, setUserPrompt] = useState('')
   const [selectedContentType, setSelectedContentType] = useState<ContentTypeItem | null>(null)
   const [targetDuration, setTargetDuration] = useState(-1)
@@ -766,6 +787,28 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
             </div>
             {selectedFormats.length === 0 && (
               <p className="text-xs text-red-400">יש לבחור לפחות פורמט אחד</p>
+            )}
+          </div>
+
+          {/* Language selector */}
+          <div className="space-y-2" dir="rtl">
+            <h4 className="text-white text-sm font-bold">🌐 שפת הסרטון</h4>
+            <select
+              value={selectedLanguage}
+              onChange={(e) => setSelectedLanguage(e.target.value)}
+              className="w-full p-3 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+            >
+              {LANGUAGE_OPTIONS.map(lang => (
+                <option key={lang.id} value={lang.id}>
+                  {lang.flag} {lang.label}
+                </option>
+              ))}
+            </select>
+            {selectedLanguage === 'multi' && (
+              <p className="text-gray-500 text-xs">תומך ב: אנגלית, ספרדית, צרפתית, גרמנית, הינדי, רוסית, פורטוגזית, יפנית, איטלקית, הולנדית</p>
+            )}
+            {selectedLanguage === 'detect' && (
+              <p className="text-gray-500 text-xs">המערכת תזהה את השפה אוטומטית</p>
             )}
           </div>
 

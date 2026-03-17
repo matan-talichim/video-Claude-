@@ -266,8 +266,9 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     try {
       const inputPath = req.file.path
       const timestamp = Date.now()
+      const language = (req.body?.language as string) || 'he'
 
-      console.log('[TRANSCRIBE] Using Deepgram Nova-3 for:', req.file.originalname, (req.file.size / 1024 / 1024).toFixed(1) + 'MB')
+      console.log(`[TRANSCRIBE] Using Deepgram Nova-3 for: ${req.file.originalname} ${(req.file.size / 1024 / 1024).toFixed(1)}MB (language: ${language})`)
 
       // Extract audio as MP3
       const mp3Path = inputPath.replace(/\.[^.]+$/, '') + '_audio.mp3'
@@ -282,8 +283,6 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
       const fileToUpload = fs.existsSync(mp3Path) ? mp3Path : inputPath
 
-      console.log('[TRANSCRIBE] Sending to Deepgram (Nova-3 + diarization + multi-language)...')
-
       const audioBuffer = fs.readFileSync(fileToUpload)
 
       const apiKey = (process.env.DEEPGRAM_API_KEY || '').trim()
@@ -291,7 +290,11 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
       console.log(`[TRANSCRIBE] Sending ${(audioBuffer.length / 1024 / 1024).toFixed(1)}MB to Deepgram REST API...`)
 
-      const dgResponse = await fetch('https://api.deepgram.com/v1/listen?model=nova-3&language=multi&smart_format=true&diarize=true&utterances=true&punctuate=true', {
+      const langParam = language === 'detect' ? 'detect_language=true' : `language=${language}`
+      const dgUrl = `https://api.deepgram.com/v1/listen?model=nova-3&${langParam}&smart_format=true&diarize=true&utterances=true&punctuate=true`
+      console.log(`[TRANSCRIBE] Deepgram URL: ${dgUrl}`)
+
+      const dgResponse = await fetch(dgUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Token ${apiKey}`,
@@ -4728,10 +4731,10 @@ async function handleGPTAutoTranscribe(req: any, res: any) {
 }
 
 app.post('/api/auto-editor/transcribe', async (req, res) => {
-  const { fileUrl } = req.body
+  const { fileUrl, language = 'he' } = req.body
   const timestamp = Date.now()
 
-  console.log('[TRANSCRIBE] Starting with Deepgram Nova-3...')
+  console.log(`[TRANSCRIBE] Starting with Deepgram Nova-3 (language: ${language})...`)
   console.log('[TRANSCRIBE] File:', fileUrl)
 
   if (!process.env.DEEPGRAM_API_KEY) {
@@ -4793,7 +4796,11 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
     const audioBuffer = fs.readFileSync(fileToSend)
     console.log(`[TRANSCRIBE] Sending ${(audioBuffer.length / 1024 / 1024).toFixed(1)}MB to Deepgram REST API...`)
 
-    const dgResponse = await fetch('https://api.deepgram.com/v1/listen?model=nova-3&language=multi&smart_format=true&diarize=true&utterances=true&punctuate=true', {
+    const langParam = language === 'detect' ? 'detect_language=true' : `language=${language}`
+    const dgUrl = `https://api.deepgram.com/v1/listen?model=nova-3&${langParam}&smart_format=true&diarize=true&utterances=true&punctuate=true`
+    console.log(`[TRANSCRIBE] Deepgram URL: ${dgUrl}`)
+
+    const dgResponse = await fetch(dgUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Token ${apiKey}`,

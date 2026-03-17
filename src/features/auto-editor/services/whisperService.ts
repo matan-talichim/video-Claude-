@@ -77,9 +77,11 @@ function mergeTranscripts(
 }
 
 export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscript> {
-  const log = useAutoEditorStore.getState().addLog
+  const store = useAutoEditorStore.getState()
+  const log = store.addLog
+  const language = store.language || 'he'
 
-  log(`מתמלל ${videoUrls.length} קבצים...`)
+  log(`מתמלל ${videoUrls.length} קבצים (שפה: ${language})...`)
 
   const transcripts = await Promise.all(
     videoUrls.map(async (url, index) => {
@@ -88,7 +90,7 @@ export async function transcribeVideos(videoUrls: string[]): Promise<FullTranscr
       const response = await fetch(`${API_BASE}/auto-editor/transcribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileUrl: url }),
+        body: JSON.stringify({ fileUrl: url, language }),
       })
 
       if (!response.ok) {
