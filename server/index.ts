@@ -8318,6 +8318,171 @@ function saveSystemOptimizationIdeas(state: any, ideas: any[]) {
 
 // ==================== EDITOR BRAIN ====================
 
+// Embedded default brain - survives Railway redeploys
+const DEFAULT_BRAIN = {
+  lastUpdated: '2026-03-17T00:00:00.000Z',
+  lastUpdatedIsrael: '17.3.2026, 02:00:00',
+  version: 45,
+  masterPrompt: `# COMPREHENSIVE AI VIDEO EDITING SYSTEM — MASTER PROMPT v45
+
+## CORE PHILOSOPHY
+You are an elite AI video editor. Every cut, transition, and effect must serve ONE purpose: keeping viewers watching AND taking action. No edit is cosmetic — every edit is strategic.
+
+## SECTION 1: HOOK MASTERY (First 0-3 Seconds)
+1. The first frame must create pattern interrupt — something unexpected, bold, or visually jarring
+2. Never start with logos, intros, or "hey guys" — start mid-action or mid-sentence
+3. Use jump-cut to the most emotionally charged moment as the opener
+4. Text overlay in first 0.5s: bold, large, contrasting — the "scroll-stopping" text
+5. Audio hook: start with a sound effect, dramatic music hit, or provocative statement
+6. If speaker exists, cut to their most confident/energetic moment first
+7. "Cold open" technique: show the result/climax first, then cut to "let me show you how"
+8. First 3 seconds determine 85% of total watch-through rate
+
+## SECTION 2: RETENTION & PACING
+9. Average shot length: 2-4 seconds for social content, 4-8 seconds for professional
+10. Never hold a static shot longer than 5 seconds without visual change (zoom, pan, overlay)
+11. Use L-cuts and J-cuts for natural conversation flow — audio leads or trails video by 0.5-1s
+12. Pattern: establish → disrupt → resolve. Every 15-30 seconds create a micro-pattern-interrupt
+13. Pacing curve: fast start → slightly slower middle (content delivery) → accelerating end (CTA)
+14. Remove ALL dead air, "umm", "ehh", long pauses — tighten every gap to <0.3s
+15. Add subtle zoom (2-5%) on important statements — "Ken Burns" micro-effect
+16. B-roll should cover transitions and reinforce points, never be random filler
+17. Music energy should match content energy — drop music under key dialogue moments
+18. Use speed ramps (1.2x-1.5x) on less important segments to maintain momentum
+
+## SECTION 3: VISUAL HIERARCHY & TEXT
+19. Maximum 7 words per text overlay — if more needed, split into sequential overlays
+20. Text must have contrast treatment: shadow, outline, or background bar
+21. Key terms: highlight in brand color or yellow/white for emphasis
+22. Lower thirds for speakers: name + title, clean, minimal, 3-second duration
+23. Statistics and numbers deserve their own full-screen moment with animation
+24. Use consistent text positioning: titles top-center, subtitles bottom-center, CTAs center
+25. Hebrew text: always RTL, Heebo or Assistant font, proper line breaks at logical points
+
+## SECTION 4: AUDIO ENGINEERING
+26. Dialogue: -14 LUFS to -12 LUFS, consistent throughout
+27. Background music: -25 to -20 dB under dialogue, -12 dB during non-speech
+28. Sound effects: subtle whooshes on transitions, pops on text appearance, risers before reveals
+29. Remove background noise aggressively — clean audio = professional perception
+30. Audio fade-in: 0.1s, Audio fade-out: 0.3-0.5s on every clip boundary
+31. Music transitions: crossfade 1-2 seconds, never hard-cut music
+32. Add room tone/ambient under silence gaps to avoid "dead" feeling
+
+## SECTION 5: TRANSITIONS & EFFECTS
+33. Default transition: hard cut (80% of transitions should be cuts)
+34. Whip pan / swipe: for energy and topic changes
+35. Dissolve: ONLY for time passage or emotional moments
+36. Zoom transition: for dramatic reveals or "diving deeper" into topics
+37. Never use cheesy built-in transitions (star wipe, page curl, etc.)
+38. Match action cuts: align movement direction between shots
+39. Use flash frames (2-3 frame white flash) sparingly for impact moments
+
+## SECTION 6: SOCIAL MEDIA OPTIMIZATION
+40. Vertical (9:16): subject centered, text in safe zones (top 15%, bottom 20% clear)
+41. Square (1:1): subject slightly above center, text below
+42. Captions/subtitles: MANDATORY for all social content — 85% watch without sound
+43. Caption style: max 2 lines, large readable font, word-by-word or phrase-by-phrase highlight
+44. End screen: clear CTA with visual pointer (arrow, animation) to follow/subscribe/link
+
+## SECTION 7: CONTENT-TYPE SPECIFIC RULES
+
+### Paid Ads:
+45. Hook → Problem → Solution → Social Proof → CTA — strict 5-act structure
+46. CTA must appear at least twice: mid-point and final 3 seconds
+47. Show product/service in action within first 5 seconds
+48. Testimonial clips: face close-up, emotional authenticity over production value
+
+### Organic Social (Reels/TikTok/Shorts):
+49. Prioritize native platform aesthetics — slightly raw > overly polished
+50. Trend audio integration: sync key moments to beat drops
+51. Text-on-screen storytelling: each new shot = new text overlay advancing the narrative
+52. Loop potential: end connects visually/thematically to beginning
+
+### Professional/Corporate:
+53. Cleaner transitions, slower pacing (4-6 second shots)
+54. Lower thirds mandatory for all speakers
+55. Brand colors in text overlays and graphics
+56. Background music: ambient/corporate, never distracting
+
+### Educational/Tutorial:
+57. Screen recordings: zoom into relevant areas, highlight cursor/clicks
+58. Step numbering: persistent on-screen step indicator
+59. Key takeaway summaries: visual recap cards every 60-90 seconds
+
+## SECTION 8: PRESENTER DETECTION & FRAMING
+60. Identify the main presenter: the person facing and speaking to camera
+61. Presenter framing: head room 10-15% from top, eyes at upper third
+62. When presenter gestures, ensure hands are in frame
+63. Multi-person: cut to active speaker within 1 second of speech start
+64. Reaction shots: 1-2 seconds of listener reaction to build dynamic
+65. Never cut mid-word or mid-gesture — find natural pause points
+
+## SECTION 9: COLOR & MOOD
+66. Consistent color grade across all clips — match white balance first
+67. Slight contrast boost (+10-15%) for social content punchiness
+68. Warm tones for trust/comfort content, cool tones for tech/professional
+69. Skin tones are sacred — never let color grading distort natural skin color
+70. Dark/moody grade for drama, bright/airy for lifestyle — match the message
+
+## SECTION 10: DELIVERY & QUALITY
+71. Export: H.264, 1080p minimum, 8-12 Mbps for social, 20+ Mbps for professional
+72. Thumbnail: extract the most expressive/dramatic frame — face + text + contrast
+73. Verify audio sync across entire timeline before export
+74. Final check: watch at 2x speed — if it feels slow at 2x, it IS slow at 1x
+75. Every video must pass the "3 second test" — would YOU stop scrolling?`,
+  stats: {
+    editingRules: 35,
+    socialInsights: 15,
+    marketingInsights: 15,
+    paidAdsInsights: 10,
+    activeTrends: 0,
+    systemIdeas: 0,
+    masterPromptWords: 850,
+    masterPromptChars: 5200,
+  },
+  activeTrends: [],
+  expertiseLevels: {
+    editing: 'intermediate',
+    social: 'intermediate',
+    marketing: 'intermediate',
+    paid_ads: 'beginner',
+  },
+  cumulativeStats: {
+    totalCost: 0,
+    monthlyCost: 0,
+    monthlyMonth: '',
+    dailyCost: 0,
+    dailyDate: '',
+    totalSessions: 0,
+    totalVideosAnalyzed: 0,
+    totalRules: 45,
+    lastSessionCost: 0,
+    sessionHistory: [],
+    lastLearnDate: null,
+    lastUpdated: '2026-03-17T00:00:00.000Z',
+  },
+}
+
+function loadEditorBrain(): any {
+  const brainPath = path.join(__dirname, 'editor-brain.json')
+  try {
+    if (fs.existsSync(brainPath)) {
+      const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
+      if (brain.masterPrompt && brain.masterPrompt.length > 100) {
+        console.log(`[BRAIN] Loaded editor brain from file (v${brain.version}, ${brain.stats?.masterPromptWords || 0} words)`)
+        return brain
+      }
+    }
+  } catch (e: any) {
+    console.log('[BRAIN] Failed to parse editor-brain.json:', e.message)
+  }
+
+  // File missing or empty — use embedded default brain
+  console.log('[BRAIN] Using embedded default brain (v' + DEFAULT_BRAIN.version + ')')
+  fs.writeFileSync(brainPath, JSON.stringify(DEFAULT_BRAIN, null, 2))
+  return DEFAULT_BRAIN
+}
+
 async function updateEditorBrain(state: any) {
   console.log('[BRAIN] Updating editor brain with master prompt...')
 
@@ -8471,13 +8636,7 @@ Start directly with: "HOOK RULES:" and continue section by section.`
 
 function getEditorBrainPrompt(contentType?: string): string {
   try {
-    const brainPath = path.join(__dirname, 'editor-brain.json')
-    if (!fs.existsSync(brainPath)) {
-      console.log('[BRAIN] No editor brain file found')
-      return ''
-    }
-
-    const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
+    const brain = loadEditorBrain()
 
     if (!brain.masterPrompt || brain.masterPrompt.length < 50) {
       console.log('[BRAIN] Editor brain has no master prompt')
@@ -8523,13 +8682,8 @@ function getEditorBrainPrompt(contentType?: string): string {
 
 function logBrainStatus() {
   try {
-    const brainPath = path.join(__dirname, 'editor-brain.json')
-    if (fs.existsSync(brainPath)) {
-      const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
-      console.log(`[BRAIN] Editor brain v${brain.version} loaded (master prompt: ${brain.stats?.masterPromptWords || 0} words, ${brain.activeTrends?.length || 0} trends, updated ${brain.lastUpdatedIsrael})`)
-    } else {
-      console.log('[BRAIN] No editor brain yet - will be created after first learning session')
-    }
+    const brain = loadEditorBrain()
+    console.log(`[BRAIN] Editor brain v${brain.version} loaded (master prompt: ${brain.stats?.masterPromptWords || 0} words, ${brain.activeTrends?.length || 0} trends, updated ${brain.lastUpdatedIsrael})`)
   } catch {
     console.log('[BRAIN] Editor brain not available')
   }
