@@ -70,6 +70,7 @@ export interface AutoEditorInput {
   includeBackground: boolean
   animatedSubtitles: boolean
   animationStyle: string
+  subtitleStyle: string
   selectedFormats?: string[]
   selectedOptions?: string[]
   logo?: LogoInput
@@ -116,6 +117,9 @@ interface AutoEditorStore {
 
   // Expected speakers
   expectedSpeakers: number
+
+  // Subtitle style
+  subtitleStyle: string
 
   // Enrichment data
   enrichment: any | null
@@ -179,6 +183,7 @@ interface AutoEditorStore {
   markStepCompleted: (step: AutoEditorStep) => void
   setLanguage: (lang: string) => void
   setExpectedSpeakers: (n: number) => void
+  setSubtitleStyle: (style: string) => void
   setEditedFiles: (files: EditedFile[]) => void
   setBrandImages: (images: BrandImage[]) => void
   addBrandImage: (image: BrandImage) => void
@@ -196,6 +201,7 @@ const initialState = {
   editedFiles: [] as EditedFile[],
   language: 'he',
   expectedSpeakers: 0,
+  subtitleStyle: 'bold_pop',
   enrichment: null as any | null,
   transcript: null as any | null,
   visualAnalysis: null as any | null,
@@ -272,6 +278,7 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
 
   setLanguage: (language) => set({ language }),
   setExpectedSpeakers: (expectedSpeakers) => set({ expectedSpeakers }),
+  setSubtitleStyle: (subtitleStyle) => set({ subtitleStyle }),
   setEditedFiles: (editedFiles) => set({ editedFiles }),
 
   setBrandImages: (brandImages) => set({ brandImages }),

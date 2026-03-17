@@ -5385,14 +5385,66 @@ const colorGrades: Record<string, string> = {
 }
 
 // Subtitle style presets (ASS format)
-// Use "Sans" as font name for maximum cross-platform compatibility (maps to system sans-serif)
+// Alignment=2 (bottom center), MarginV=40 (distance from bottom edge)
 const subtitleStyles: Record<string, string> = {
-  // MarginV=120 positions subtitles below chin, not at very bottom of screen
-  modern: 'Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,177',
-  karaoke: 'Style: Default,Arial,26,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,177',
-  bold_white: 'Style: Default,Arial,28,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,120,177',
-  minimal: 'Style: Default,Arial,22,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,120,177',
-  colorful: 'Style: Default,Arial,26,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,120,177',
+  modern: 'Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177',
+  karaoke: 'Style: Default,Arial,26,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177',
+  bold_white: 'Style: Default,Arial,28,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,177',
+  minimal: 'Style: Default,Arial,22,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,40,177',
+  colorful: 'Style: Default,Arial,26,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177',
+}
+
+// Filter out speaker labels, production cues, and very short segments from subtitles
+function filterSubtitleSegments(segments: any[]): any[] {
+  return segments.filter((seg: any) => {
+    const text = (seg.text || '').trim()
+    // Remove speaker labels like "דובר 1", "דובר 2", "Speaker 1"
+    if (/^דובר\s*\d*$/.test(text)) return false
+    if (/^speaker\s*\d*$/i.test(text)) return false
+    // Remove production cues
+    if (/^(מוכן|אקשן|עוד פעם|יופי|סטופ|stop|action|ready|cut|קאט)\??!?$/i.test(text)) return false
+    // Remove very short segments (less than 3 chars)
+    if (text.length < 3) return false
+    return true
+  })
+}
+
+// Split long subtitle text into lines (max 8 words per line, max 2 lines per display)
+function splitSubtitleText(text: string, maxWordsPerLine: number = 8): string[] {
+  const words = text.split(' ').filter(w => w.trim())
+  if (words.length <= maxWordsPerLine) return [text]
+
+  const lines: string[] = []
+  for (let i = 0; i < words.length; i += maxWordsPerLine) {
+    lines.push(words.slice(i, i + maxWordsPerLine).join(' '))
+  }
+
+  // Max 2 lines per subtitle display — if more, split into multiple subtitle events
+  if (lines.length <= 2) {
+    return [lines.join('\\N')] // ASS line break
+  }
+
+  // Return individual chunks (each will become a separate subtitle event)
+  const chunks: string[] = []
+  for (let i = 0; i < lines.length; i += 2) {
+    const chunk = lines.slice(i, i + 2).join('\\N')
+    chunks.push(chunk)
+  }
+  return chunks
+}
+
+// Detect the most important word in a subtitle line for highlighting
+function detectKeyWordLocal(words: string[]): string | null {
+  if (words.length === 0) return null
+  // Prefer numbers, then longest word (usually most meaningful)
+  const numberWord = words.find(w => /\d+/.test(w))
+  if (numberWord) return numberWord
+  // Pick the longest word (skip very short words)
+  let best = words[0]
+  for (const w of words) {
+    if (w.length > best.length) best = w
+  }
+  return best.length >= 3 ? best : null
 }
 
 // Generate styled ASS subtitles
@@ -5457,27 +5509,55 @@ WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 `
+  // --- 5 professional animated subtitle presets ---
+  // All use Alignment=2 (bottom center), MarginV=35-40
   switch (style) {
-    case 'karaoke':
-      ass += `Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,177\n`
+    case 'bold_pop':
+      // Large bold text, word-by-word reveal with scale pop, key word highlighted in yellow
+      ass += `Style: Default,Arial Black,24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Highlight,Arial Black,26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       break
+    case 'neon_glow':
+      // White text with colored glow outline, slide up
+      ass += `Style: Default,Arial,22,&H00FFFFFF,&H00FF88FF,&H00FF00FF,&H60000000,-1,0,0,0,100,100,0,0,1,4,2,2,10,10,35,177\n`
+      ass += `Style: Highlight,Arial,24,&H00FFFFFF,&H00FF88FF,&H0000AAFF,&H60000000,-1,0,0,0,100,100,0,0,1,5,2,2,10,10,35,177\n`
+      break
+    case 'boxing':
+      // Each word in a colored box, appears one by one
+      ass += `Style: Default,Arial Black,20,&H00FFFFFF,&H00FFFFFF,&H00AA00AA,&H00AA00AA,-1,0,0,0,100,100,0,0,3,0,6,2,15,15,35,177\n`
+      ass += `Style: Highlight,Arial Black,22,&H00FFFFFF,&H00FFFFFF,&H000055FF,&H000055FF,-1,0,0,0,100,100,0,0,3,0,8,2,15,15,35,177\n`
+      break
+    case 'minimal':
+      // Clean thin font, fade in/out, no fancy animation
+      ass += `Style: Default,Arial,18,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,40,177\n`
+      ass += `Style: Highlight,Arial,18,&H0000DDFF,&H0000DDFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,40,177\n`
+      break
+    case 'karaoke':
+      // Text appears all at once (gray), each word highlights (white) as spoken
+      ass += `Style: Default,Arial Black,22,&H00888888,&H00888888,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,35,177\n`
+      ass += `Style: Spoken,Arial Black,22,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,35,177\n`
+      break
+    // Legacy styles mapped to new presets
     case 'pop':
-      ass += `Style: Default,Arial,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,177\nStyle: Pop,Arial,70,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,20,20,120,177\n`
+      ass += `Style: Default,Arial Black,24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Highlight,Arial Black,26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       break
     case 'typewriter':
-      ass += `Style: Default,Arial,50,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,120,177\n`
+      ass += `Style: Default,Arial,20,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,35,177\n`
       break
     case 'glow':
-      ass += `Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,20,20,120,177\n`
+      ass += `Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,10,10,35,177\n`
       break
     case 'bounce':
-      ass += `Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,200,177\n`
+      ass += `Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       break
     case 'slide':
-      ass += `Style: Default,Arial,55,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,177\n`
+      ass += `Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       break
     default:
-      ass += `Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,177\n`
+      // Default to bold_pop
+      ass += `Style: Default,Arial Black,24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Highlight,Arial Black,26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
   }
   ass += `\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`
 
@@ -5516,8 +5596,58 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
     const subDuration = sub.end - sub.start
     const wordDuration = subDuration / words.length
 
+    // Detect key word for highlighting (longest meaningful word, or first capitalized/number)
+    const keyWord = detectKeyWordLocal(words)
+
     switch (style) {
+      case 'bold_pop': {
+        // Word-by-word appearance with scale pop effect, key word highlighted
+        words.forEach((word: string, wi: number) => {
+          const wStart = sub.start + wi * wordDuration
+          const wEnd = sub.end
+          const ws = formatAssTime(wStart)
+          const we = formatAssTime(wEnd)
+          const isKey = keyWord && word.includes(keyWord)
+          const styleName = isKey ? 'Highlight' : 'Default'
+          ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,100,\\fscx110\\fscy110)\\t(100,200,\\fscx100\\fscy100)}${word} \n`
+        })
+        break
+      }
+      case 'neon_glow': {
+        // Full line slides up from below + fade in
+        const startTime = formatAssTime(sub.start)
+        const endTime = formatAssTime(sub.end)
+        ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\move(640,500,640,460)\\fad(200,150)}${text}\n`
+        break
+      }
+      case 'boxing': {
+        // Each word in a colored box, appears one by one with slight overlap
+        const boxWordDuration = Math.min(wordDuration, 0.4)
+        words.forEach((word: string, wi: number) => {
+          const wStart = sub.start + wi * boxWordDuration * 0.7
+          const wEnd = sub.end
+          const ws = formatAssTime(wStart)
+          const we = formatAssTime(wEnd)
+          const isKey = keyWord && word.includes(keyWord)
+          const styleName = isKey ? 'Highlight' : 'Default'
+          ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(150,100)\\t(0,100,\\fscx105\\fscy105)\\t(100,200,\\fscx100\\fscy100)}${word} \n`
+        })
+        break
+      }
+      case 'minimal': {
+        // Clean fade in/out, no fancy animation
+        const startTime = formatAssTime(sub.start)
+        const endTime = formatAssTime(sub.end)
+        ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(300,200)}${text}\n`
+        break
+      }
       case 'karaoke': {
+        // Show full text in gray, highlight each word as spoken in white
+        const startTime = formatAssTime(sub.start)
+        const endTime = formatAssTime(sub.end)
+        // Background: full text in gray (Default style)
+        ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,${text}\n`
+        // Each word highlighted when spoken
         words.forEach((word: string, wi: number) => {
           const wordStart = sub.start + wi * wordDuration
           const wordEnd = wordStart + wordDuration
@@ -5525,19 +5655,21 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
           const we = formatAssTime(wordEnd)
           const beforeWords = words.slice(0, wi).join(' ')
           const afterWords = words.slice(wi + 1).join(' ')
-          const highlighted = `${beforeWords ? beforeWords + ' ' : ''}{\\c&H00FFFF&\\fscx110\\fscy110\\b1}${word}{\\r}${afterWords ? ' ' + afterWords : ''}`
-          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,${highlighted}\n`
+          const highlighted = `${beforeWords ? beforeWords + ' ' : ''}{\\c&HFFFFFF&\\fscx110\\fscy110\\b1}${word}{\\r}${afterWords ? ' ' + afterWords : ''}`
+          ass += `Dialogue: 1,${ws},${we},Default,,0,0,0,,${highlighted}\n`
         })
         break
       }
+      // Legacy styles mapped to work with bottom positioning
       case 'pop': {
         words.forEach((word: string, wi: number) => {
           const wordStart = sub.start + wi * wordDuration
           const wordEnd = sub.end
           const ws = formatAssTime(wordStart)
           const we = formatAssTime(wordEnd)
-          const xPos = 960 - ((words.length - 1) * 35) + (wi * 70)
-          ass += `Dialogue: 0,${ws},${we},Pop,,0,0,0,,{\\an5\\pos(${xPos},950)\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${word}\n`
+          const isKey = keyWord && word.includes(keyWord)
+          const styleName = isKey ? 'Highlight' : 'Default'
+          ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${word} \n`
         })
         break
       }
@@ -5575,8 +5707,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
           const wordEnd = sub.end
           const ws = formatAssTime(wordStart)
           const we = formatAssTime(wordEnd)
-          const xPos = 960 - ((words.length - 1) * 35) + (wi * 70)
-          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(${xPos},1150,${xPos},950,0,200)\\fad(0,150)}${word}\n`
+          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\fad(100,0)\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)}${word} \n`
         })
         break
       }
@@ -5592,9 +5723,16 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         break
       }
       default: {
-        const startTime = formatAssTime(sub.start)
-        const endTime = formatAssTime(sub.end)
-        ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(200,200)}${text}\n`
+        // Default to bold_pop behavior
+        words.forEach((word: string, wi: number) => {
+          const wStart = sub.start + wi * wordDuration
+          const wEnd = sub.end
+          const ws = formatAssTime(wStart)
+          const we = formatAssTime(wEnd)
+          const isKey = keyWord && word.includes(keyWord)
+          const styleName = isKey ? 'Highlight' : 'Default'
+          ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,100,\\fscx110\\fscy110)\\t(100,200,\\fscx100\\fscy100)}${word} \n`
+        })
       }
     }
   }
@@ -6809,14 +6947,31 @@ app.post('/api/auto-editor/process', async (req, res) => {
       : (transcript?.segments || [])
     const mainPresenter = transcript?.mainSpeaker || job?.transcript?.mainPresenter || req.body.mainPresenter
 
-    // Filter subtitle segments by presenter if needed
-    let filteredSubtitleSegments = subtitleSegments
-    if (mainPresenter && subtitleSegments.length > 0 && !job?.subtitles?.segments?.length) {
-      const filtered = subtitleSegments.filter((s: any) => matchesSpeaker(s.speaker, mainPresenter))
+    // Filter subtitle segments: remove speaker labels, production cues, short segments
+    let filteredSubtitleSegments = filterSubtitleSegments(subtitleSegments)
+    // Further filter by presenter if needed
+    if (mainPresenter && filteredSubtitleSegments.length > 0 && !job?.subtitles?.segments?.length) {
+      const filtered = filteredSubtitleSegments.filter((s: any) => matchesSpeaker(s.speaker, mainPresenter))
       if (filtered.length > 0) {
         filteredSubtitleSegments = filtered
       }
     }
+    // Split long subtitle text (max 8 words/line, max 2 lines)
+    filteredSubtitleSegments = filteredSubtitleSegments.flatMap((seg: any) => {
+      const chunks = splitSubtitleText(seg.text || '')
+      if (chunks.length <= 1) return [seg]
+      // Split into multiple segments with proportional timing
+      const segStart = seg.start ?? seg.keepStart ?? 0
+      const segEnd = seg.end ?? seg.keepEnd ?? 0
+      const segDuration = segEnd - segStart
+      const chunkDuration = segDuration / chunks.length
+      return chunks.map((chunk: string, i: number) => ({
+        ...seg,
+        text: chunk,
+        start: segStart + i * chunkDuration,
+        end: segStart + (i + 1) * chunkDuration,
+      }))
+    })
 
     console.log('[PROCESS] Plan:', {
       cuts: (videoPlan?.cuts || []).length,
