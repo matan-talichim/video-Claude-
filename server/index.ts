@@ -115,6 +115,8 @@ app.use('/uploads', express.static(uploadsDir, {
       res.setHeader('Content-Type', 'video/webm');
     } else if (filePath.endsWith('.mov') || filePath.endsWith('.MOV')) {
       res.setHeader('Content-Type', 'video/quicktime');
+    } else if (filePath.endsWith('.mp3')) {
+      res.setHeader('Content-Type', 'audio/mpeg');
     }
   }
 }))
@@ -4567,19 +4569,25 @@ async function handleGPTAutoTranscribe(req: any, res: any) {
       const sampleStart = bestSegment.start
       const sampleDuration = Math.min(bestSegment.end - bestSegment.start, 5)
 
-      const sampleFile = path.join(uploadsDir, `speaker_sample_${sampleTimestamp}_${speaker.replace(/\s+/g, '_')}.mp3`)
+      const speakerNum = speaker.match(/\d+/)?.[0] || '0'
+      const sampleFile = path.join(uploadsDir, `speaker_sample_${sampleTimestamp}_${speakerNum}.mp3`)
 
       try {
-        execSync(
-          `"${ffmpegForSamples}" -i "${filePath}" -ss ${sampleStart.toFixed(3)} -t ${sampleDuration.toFixed(3)} -vn -c:a libmp3lame -b:a 128k "${sampleFile}" -y`,
-          { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
-        )
+        const cmd = `"${ffmpegForSamples}" -i "${filePath}" -ss ${sampleStart.toFixed(3)} -t ${sampleDuration.toFixed(3)} -vn -c:a libmp3lame -b:a 128k "${sampleFile}" -y`
+        console.log(`[AUTO-TRANSCRIBE-GPT] Extracting sample for ${speaker}: ${sampleStart.toFixed(1)}s-${(sampleStart + sampleDuration).toFixed(1)}s`)
+        execSync(cmd, { timeout: 15000, maxBuffer: 10 * 1024 * 1024 })
 
         if (fs.existsSync(sampleFile) && fs.statSync(sampleFile).size > 1000) {
+          const fileSize = fs.statSync(sampleFile).size
           const sampleUrl = `http://localhost:${PORT}/uploads/${path.basename(sampleFile)}`
           speakerSamples[speaker] = sampleUrl
+          console.log(`[AUTO-TRANSCRIBE-GPT] ✅ Sample for ${speaker}: ${path.basename(sampleFile)} (${fileSize} bytes)`)
+        } else {
+          console.warn(`[AUTO-TRANSCRIBE-GPT] ❌ Sample too small or not created for ${speaker}`)
         }
-      } catch {}
+      } catch (e: any) {
+        console.error(`[AUTO-TRANSCRIBE-GPT] ❌ Sample failed for ${speaker}:`, e.message?.substring(0, 150))
+      }
     }
 
     if (isTemp && fs.existsSync(filePath)) try { fs.unlinkSync(filePath) } catch {}
@@ -4754,11 +4762,27 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
 
     console.log('[TRANSCRIBE] Renamed speakers:', renamedSortedSpeakers)
 
-    // Step 7: Preliminary presenter detection (most speaking time)
-    const mainSpeaker = renamedSortedSpeakers[0]?.speaker || 'דובר 1'
-    console.log(`[TRANSCRIBE] Preliminary main speaker: ${mainSpeaker} (will be refined by visual cross-reference)`)
+    // Step 7: Presenter detection with visual cross-reference
+    let mainSpeaker = renamedSortedSpeakers[0]?.speaker || 'דובר 1'
+    let presenterConfidence = 'low'
+    console.log(`[TRANSCRIBE] Preliminary main speaker (by time): ${mainSpeaker}`)
 
-    // Mark preliminary presenter
+    // Run visual cross-reference to identify presenter
+    try {
+      const presenterResult = await identifyPresenterWithVisualCrossReference(
+        { segments: renamedSegments },
+        localFilePath,
+        renamedSpeakerTimes,
+        timestamp
+      )
+      mainSpeaker = presenterResult.presenter
+      presenterConfidence = presenterResult.confidence
+      console.log(`[TRANSCRIBE] Presenter (visual cross-ref): ${mainSpeaker} (${presenterConfidence})`)
+    } catch (e: any) {
+      console.warn(`[TRANSCRIBE] Visual cross-reference failed, using time-based:`, e.message?.substring(0, 100))
+    }
+
+    // Mark presenter on segments
     renamedSegments.forEach((seg: any) => {
       seg.isPresenter = matchesSpeaker(seg.speaker, mainSpeaker)
     })
@@ -4778,24 +4802,40 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       const sampleStart = bestSeg.start
       const sampleDuration = Math.min(bestSeg.end - bestSeg.start, 5)
 
-      const safeName = speaker.speaker.replace(/[^a-zA-Z0-9\u0590-\u05FF]/g, '_')
-      const sampleFile = path.join(uploadsDir, `speaker_sample_${timestamp}_${safeName}.mp3`)
+      const speakerNum = speaker.speaker.match(/\d+/)?.[0] || '0'
+      const sampleFile = path.join(uploadsDir, `speaker_sample_${timestamp}_${speakerNum}.mp3`)
+
+      console.log(`[TRANSCRIBE] Extracting sample for ${speaker.speaker}: ${sampleStart.toFixed(1)}s-${(sampleStart + sampleDuration).toFixed(1)}s → ${path.basename(sampleFile)}`)
 
       try {
-        execSync(
-          `"${ffmpegForSamples}" -i "${localFilePath}" -ss ${sampleStart.toFixed(3)} -t ${sampleDuration.toFixed(3)} -vn -c:a libmp3lame -b:a 128k "${sampleFile}" -y`,
-          { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
-        )
+        const cmd = `"${ffmpegForSamples}" -i "${localFilePath}" -ss ${sampleStart.toFixed(3)} -t ${sampleDuration.toFixed(3)} -vn -c:a libmp3lame -b:a 128k "${sampleFile}" -y`
+        execSync(cmd, { timeout: 15000, maxBuffer: 10 * 1024 * 1024 })
 
-        if (fs.existsSync(sampleFile) && fs.statSync(sampleFile).size > 1000) {
-          const sampleUrl = `http://localhost:${process.env.PORT || PORT}/uploads/${path.basename(sampleFile)}`
-          speakerSamples[speaker.speaker] = sampleUrl
-          console.log(`[TRANSCRIBE] ✅ Audio sample for ${speaker.speaker}: ${sampleDuration.toFixed(1)}s`)
+        if (fs.existsSync(sampleFile)) {
+          const fileSize = fs.statSync(sampleFile).size
+          console.log(`[TRANSCRIBE] Sample file created: ${path.basename(sampleFile)} (${fileSize} bytes)`)
+
+          if (fileSize > 1000) {
+            const sampleUrl = `http://localhost:${process.env.PORT || PORT}/uploads/${path.basename(sampleFile)}`
+            speakerSamples[speaker.speaker] = sampleUrl
+            console.log(`[TRANSCRIBE] ✅ Sample URL: ${sampleUrl}`)
+          } else {
+            console.warn(`[TRANSCRIBE] ❌ Sample too small: ${fileSize} bytes`)
+          }
+        } else {
+          console.warn(`[TRANSCRIBE] ❌ Sample file not created`)
         }
       } catch (e: any) {
-        console.warn(`[TRANSCRIBE] ❌ Sample failed for ${speaker.speaker}:`, e.message?.substring(0, 100))
+        console.error(`[TRANSCRIBE] ❌ FFmpeg failed for ${speaker.speaker}:`, e.stderr?.substring(0, 200) || e.message?.substring(0, 200))
       }
     }
+
+    // Log final samples map
+    console.log('[TRANSCRIBE] Speaker samples:', JSON.stringify(
+      Object.fromEntries(
+        Object.entries(speakerSamples).map(([k, v]) => [k, v ? '✅' : '❌'])
+      )
+    ))
 
     // Build speakers array for response
     const speakerColors = ['#7C5CFF', '#E94560', '#00D2FF', '#FFD700', '#00FF88', '#FF6B35']
@@ -4813,8 +4853,10 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
         ...s,
         sampleUrl: speakerSamples[s.speaker] || null,
         sampleText: renamedSegments.find((seg: any) => seg.speaker === s.speaker)?.text?.substring(0, 80) || '',
+        isPresenter: matchesSpeaker(s.speaker, mainSpeaker),
       })),
       mainSpeaker,
+      presenterConfidence,
       totalDuration,
       duration: totalDuration,
       text: transcript.text || '',
@@ -5365,6 +5407,220 @@ function getIntensityFilter(intensity: number): string {
     case 1: return 'eq=brightness=0.03:saturation=0.85'
     default: return '' // intensity 3 = normal
   }
+}
+
+// Visual cross-reference presenter detection: extract frames + GPT Vision
+async function identifyPresenterWithVisualCrossReference(
+  transcript: any,
+  localFilePath: string,
+  speakerTimes: Record<string, number>,
+  timestamp: number
+): Promise<{ presenter: string, confidence: string }> {
+  const validSpeakers = Object.keys(speakerTimes).filter(s => s && s !== 'undefined')
+
+  if (validSpeakers.length <= 1) {
+    return { presenter: validSpeakers[0] || 'דובר 1', confidence: 'high' }
+  }
+
+  const ffmpegPath = getFFmpeg()
+  const framesDir = path.join(uploadsDir, `frames_${timestamp}`)
+  if (!fs.existsSync(framesDir)) fs.mkdirSync(framesDir, { recursive: true })
+
+  try {
+    // Get video duration
+    const ffprobePath = ffmpegPath === 'ffmpeg' ? 'ffprobe' : ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+    const durStr = execSync(
+      `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${localFilePath}"`,
+      { timeout: 10000, encoding: 'utf-8' }
+    ).trim()
+    const duration = parseFloat(durStr) || 60
+
+    // Extract 6 frames spread across the video
+    const frameCount = 6
+    const interval = duration / (frameCount + 1)
+
+    for (let i = 1; i <= frameCount; i++) {
+      const t = interval * i
+      const framePath = path.join(framesDir, `frame_${i}.jpg`)
+      try {
+        execSync(
+          `"${ffmpegPath}" -ss ${t.toFixed(3)} -i "${localFilePath}" -vframes 1 -q:v 5 "${framePath}" -y`,
+          { timeout: 10000, maxBuffer: 5 * 1024 * 1024 }
+        )
+      } catch {}
+    }
+
+    const frameFiles = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg')).sort()
+    console.log(`[PRESENTER] Extracted ${frameFiles.length} frames for visual analysis`)
+
+    if (frameFiles.length === 0) {
+      return textOnlyPresenterDetection(transcript, speakerTimes, validSpeakers)
+    }
+
+    const ai = await getOpenAI()
+    if (!ai) {
+      return textOnlyPresenterDetection(transcript, speakerTimes, validSpeakers)
+    }
+
+    // Build image content for GPT Vision
+    const imageContents: any[] = []
+
+    frameFiles.forEach((file, i) => {
+      const framePath = path.join(framesDir, file)
+      const frameTime = interval * (i + 1)
+
+      // Find who is speaking at this timestamp
+      const activeSeg = (transcript.segments || []).find((s: any) =>
+        s.start <= frameTime && s.end >= frameTime
+      )
+      const activeSpeaker = activeSeg?.speaker || 'שתיקה'
+      const activeText = activeSeg?.text?.substring(0, 60) || ''
+
+      const imageData = fs.readFileSync(framePath).toString('base64')
+
+      imageContents.push({
+        type: 'text' as const,
+        text: `פריים ${i + 1} (${frameTime.toFixed(1)}s) - דובר פעיל: "${activeSpeaker}" - אומר: "${activeText}"`,
+      })
+      imageContents.push({
+        type: 'image_url' as const,
+        image_url: { url: `data:image/jpeg;base64,${imageData}`, detail: 'low' as const },
+      })
+    })
+
+    // Speaker samples for context
+    const speakerSamples = validSpeakers.map(speaker => {
+      const segs = (transcript.segments || [])
+        .filter((s: any) => s.speaker === speaker)
+        .slice(0, 4)
+      return `${speaker} (${Math.round(speakerTimes[speaker])}s דיבור):\n${segs.map((s: any) => `  [${s.start.toFixed(1)}s] "${(s.text || '').substring(0, 60)}"`).join('\n')}`
+    }).join('\n\n')
+
+    const prompt = `אתה מנתח סרטון כדי לזהות מי הפרזנטור הראשי.
+אני מציג לך 6 פריימים מהסרטון עם timestamps. לכל פריים אני מציין מי הדובר לפי התמלול.
+דוברים בסרטון:
+${speakerSamples}
+המשימה שלך:
+1. הסתכל על כל פריים - מי נראה על המסך? האם הוא מדבר (פה פתוח, מחוות)?
+2. הפרזנטור הוא מי ש:
+   - נראה על המסך ומסתכל למצלמה
+   - מדבר תוכן (מסביר, מלמד, מוכר)
+   - נראה ברוב הפריימים
+3. עוזר הפקה / מראיין:
+   - לפעמים נשמע אבל לא נראה על המסך
+   - שואל שאלות קצרות
+   - אומר דברים כמו "ספר לי", "מה אתה חושב", "עוד פעם"
+4. צוות הפקה:
+   - אומר דברים כמו "מוכן?", "יופי", "עוד טייק"
+   - כמעט אף פעם לא נראה על המסך
+התבסס על הפריימים:
+- מי נראה על המסך ברוב הפריימים? → כנראה הפרזנטור
+- מי מדבר כשלא נראה אף אחד חדש על המסך? → כנראה הפרזנטור
+- מי שואל שאלות קצרות? → כנראה מראיין/עוזר הפקה
+החזר JSON:
+{
+  "presenter": "דובר X",
+  "confidence": "high" | "medium" | "low",
+  "reasoning": "הסבר קצר",
+  "on_camera": "דובר X - מי שנראה על המסך ברוב הפריימים",
+  "off_camera": ["דובר Y - נשמע אבל לא נראה"]
+}
+החזר רק JSON תקין.`
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          ...imageContents,
+        ],
+      }],
+    })
+
+    const content = response.choices[0].message.content?.trim() || ''
+    const cleaned = content.replace(/```json|```/g, '').trim()
+
+    try {
+      const result = JSON.parse(cleaned)
+
+      console.log(`[PRESENTER] Visual analysis: ${result.presenter} (${result.confidence})`)
+      console.log(`[PRESENTER] On camera: ${result.on_camera}`)
+      console.log(`[PRESENTER] Off camera: ${JSON.stringify(result.off_camera)}`)
+      console.log(`[PRESENTER] Reasoning: ${result.reasoning}`)
+
+      if (result.presenter && validSpeakers.some(s => matchesSpeaker(s, result.presenter))) {
+        return { presenter: result.presenter, confidence: result.confidence || 'medium' }
+      }
+    } catch {
+      console.warn('[PRESENTER] Failed to parse GPT response:', content.substring(0, 200))
+    }
+
+    // Extract speaker name from text
+    const match = content.match(/דובר\s*\d+/)
+    if (match && validSpeakers.some(s => matchesSpeaker(s, match[0]))) {
+      return { presenter: match[0], confidence: 'medium' }
+    }
+  } catch (e: any) {
+    console.error('[PRESENTER] Visual cross-reference failed:', e.message?.substring(0, 150))
+  } finally {
+    // Clean up frames
+    try {
+      if (fs.existsSync(framesDir)) {
+        fs.readdirSync(framesDir).forEach(f => fs.unlinkSync(path.join(framesDir, f)))
+        fs.rmdirSync(framesDir)
+      }
+    } catch {}
+  }
+
+  // Fallback: text-only
+  return textOnlyPresenterDetection(transcript, speakerTimes, validSpeakers)
+}
+
+// Text-only presenter detection fallback
+async function textOnlyPresenterDetection(
+  transcript: any,
+  speakerTimes: Record<string, number>,
+  validSpeakers: string[]
+): Promise<{ presenter: string, confidence: string }> {
+  const speakerSamples = validSpeakers.map(speaker => {
+    const segs = (transcript.segments || [])
+      .filter((s: any) => s.speaker === speaker)
+      .slice(0, 5)
+    return `${speaker} (${Math.round(speakerTimes[speaker])}s):\n${segs.map((s: any) => `  "${(s.text || '').substring(0, 60)}"`).join('\n')}`
+  }).join('\n\n')
+
+  try {
+    const ai = await getOpenAI()
+    if (!ai) {
+      const mostSpeaking = validSpeakers.sort((a, b) => (speakerTimes[b] || 0) - (speakerTimes[a] || 0))[0]
+      return { presenter: mostSpeaking || 'דובר 1', confidence: 'low' }
+    }
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 50,
+      messages: [{
+        role: 'user',
+        content: `מי הפרזנטור הראשי? הפרזנטור מדבר תוכן ארוך. מראיין/עוזר הפקה שואל שאלות קצרות.\n\n${speakerSamples}\n\nהחזר רק שם הדובר (לדוגמה: "דובר 1")`,
+      }],
+    })
+
+    const result = response.choices[0].message.content?.trim() || ''
+    const match = result.match(/דובר\s*\d+/)
+
+    if (match && validSpeakers.some(s => matchesSpeaker(s, match[0]))) {
+      console.log(`[PRESENTER] Text-only result: ${match[0]}`)
+      return { presenter: match[0], confidence: 'low' }
+    }
+  } catch (e: any) {
+    console.error('[PRESENTER] Text detection failed:', e.message?.substring(0, 100))
+  }
+
+  // Last resort: most speaking time
+  const mostSpeaking = [...validSpeakers].sort((a, b) => (speakerTimes[b] || 0) - (speakerTimes[a] || 0))[0]
+  return { presenter: mostSpeaking || 'דובר 1', confidence: 'low' }
 }
 
 // Robust speaker matching: handles whitespace, encoding, and number differences

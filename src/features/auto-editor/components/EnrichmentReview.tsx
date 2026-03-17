@@ -250,8 +250,17 @@ function SpeakerSelector({ speakers, selectedPresenter, onSelect, detectedPresen
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   function playSample(speaker: string, sampleUrl: string) {
+    console.log('[SPEAKER UI] Play clicked:', speaker, sampleUrl)
+
+    if (!sampleUrl) {
+      console.error('[SPEAKER UI] No sample URL for', speaker)
+      return
+    }
+
+    // Stop current
     if (audioRef.current) {
       audioRef.current.pause()
+      audioRef.current.currentTime = 0
       audioRef.current = null
     }
 
@@ -260,15 +269,35 @@ function SpeakerSelector({ speakers, selectedPresenter, onSelect, detectedPresen
       return
     }
 
+    console.log('[SPEAKER UI] Creating Audio:', sampleUrl)
     const audio = new Audio(sampleUrl)
     audioRef.current = audio
     setPlayingSpeaker(speaker)
 
-    audio.play().catch(() => {})
-    audio.onended = () => {
+    audio.addEventListener('canplay', () => {
+      console.log('[SPEAKER UI] Audio canplay, playing...')
+      audio.play().catch(err => {
+        console.error('[SPEAKER UI] Play failed:', err.message)
+        setPlayingSpeaker(null)
+      })
+    })
+
+    audio.addEventListener('error', () => {
+      console.error('[SPEAKER UI] Audio error:', audio.error?.message, 'code:', audio.error?.code, 'URL:', sampleUrl)
       setPlayingSpeaker(null)
       audioRef.current = null
-    }
+    })
+
+    audio.addEventListener('ended', () => {
+      console.log('[SPEAKER UI] Audio ended')
+      setPlayingSpeaker(null)
+      audioRef.current = null
+    })
+
+    // Also try direct play as fallback
+    audio.play().catch(err => {
+      console.warn('[SPEAKER UI] Direct play failed, waiting for canplay:', err.message)
+    })
   }
 
   return (
