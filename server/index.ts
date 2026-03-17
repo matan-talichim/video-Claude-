@@ -294,7 +294,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         language_code: 'he',
         punctuate: true,
         format_text: true,
-        speech_models: ['universal-3-pro'] as any,
+        speech_models: ['universal-3-pro', 'universal-2'] as any,
       })
 
       if (transcript.status === 'error') {
@@ -4681,7 +4681,7 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
       language_code: 'he',
       punctuate: true,
       format_text: true,
-      speech_model: 'best' as any,
+      speech_models: ['universal-3-pro', 'universal-2'] as any,
     })
 
     if (transcript.status === 'error') {
