@@ -2441,9 +2441,8 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
 9. זהה את הפרזנטור הראשי - האדם שמופיע מול המצלמה ומדבר אליה (לא צוות הפקה מאחורי המצלמה)`
 
     const brainContextVisual = getEditorBrainPrompt()
+    console.log(`[AUTO-EDITOR] Visual analysis: brain injected = ${brainContextVisual.length > 0 ? 'YES' : 'NO'} (${brainContextVisual.length} chars)`)
     const visualSystemPrompt = (promptEvolution || baseVisualSystemPrompt) + brainContextVisual
-
-    logBrainStatus()
 
     // Send all frames to GPT for visual analysis
     const messages: any[] = [
@@ -3037,7 +3036,7 @@ ${(visualAnalysis.scene_analysis || []).map((s: any) =>
 ` : ''
 
     const enrichBrainContext = getEditorBrainPrompt('marketing')
-    logBrainStatus()
+    console.log(`[AUTO-EDITOR] Enrich prompt: brain injected = ${enrichBrainContext.length > 0 ? 'YES' : 'NO'} (${enrichBrainContext.length} chars)`)
 
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
@@ -3424,7 +3423,7 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
 ` : `אורך יעד: ${targetDuration} שניות לכל סרטון.`
 
     const creativeBrainContext = getEditorBrainPrompt(contentType)
-    logBrainStatus()
+    console.log(`[AUTO-EDITOR] Creative brief: brain injected = ${creativeBrainContext.length > 0 ? 'YES' : 'NO'} (${creativeBrainContext.length} chars)`)
 
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
@@ -3702,7 +3701,7 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
       : `אורך יעד לכל סרטון: ${targetDuration} שניות`
 
     const techBrainContext = getEditorBrainPrompt()
-    logBrainStatus()
+    console.log(`[AUTO-EDITOR] Technical plan: brain injected = ${techBrainContext.length > 0 ? 'YES' : 'NO'} (${techBrainContext.length} chars)`)
 
     const response = await ai.chat.completions.create({
       model: 'gpt-5.4',
@@ -8029,11 +8028,19 @@ Start directly with: "HOOK RULES:" and continue section by section.`
 function getEditorBrainPrompt(contentType?: string): string {
   try {
     const brainPath = path.join(__dirname, 'editor-brain.json')
-    if (!fs.existsSync(brainPath)) return ''
+    if (!fs.existsSync(brainPath)) {
+      console.log('[BRAIN] No editor brain file found')
+      return ''
+    }
 
     const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
 
-    if (!brain.masterPrompt || brain.masterPrompt.length < 50) return ''
+    if (!brain.masterPrompt || brain.masterPrompt.length < 50) {
+      console.log('[BRAIN] Editor brain has no master prompt')
+      return ''
+    }
+
+    console.log(`[BRAIN] ✅ Injecting editor brain v${brain.version} into ${contentType || 'general'} prompt (${brain.stats?.masterPromptWords || 0} words, ${brain.stats?.editingRules || 0} rules, ${brain.stats?.activeTrends || 0} trends)`)
 
     let prompt = `\n\n=== AI EDITOR KNOWLEDGE (v${brain.version}, ${brain.stats?.masterPromptWords || 0} words, updated ${brain.lastUpdatedIsrael || 'unknown'}) ===\n\n`
 
@@ -8064,7 +8071,8 @@ function getEditorBrainPrompt(contentType?: string): string {
     prompt += `IMPORTANT: Apply these rules when making ALL editing decisions. They are based on analysis of ${brain.version} real viral videos.\n`
 
     return prompt
-  } catch {
+  } catch (e: any) {
+    console.log('[BRAIN] Failed to load editor brain:', e.message)
     return ''
   }
 }
