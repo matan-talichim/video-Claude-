@@ -10504,20 +10504,129 @@ app.get('/api/learning/status', (_req, res) => {
   })
 })
 
+// ==================== DAILY PROMPT OPTIMIZATION ====================
+
+async function optimizeMasterPrompt() {
+  console.log('[BRAIN] Starting daily prompt optimization...')
+
+  const brain = loadEditorBrain()
+
+  if (!brain.masterPrompt || brain.masterPrompt.length < 100) {
+    console.log('[BRAIN] No master prompt to optimize')
+    return
+  }
+
+  const currentWords = brain.masterPrompt.split(/\s+/).length
+  console.log(`[BRAIN] Current prompt: ${currentWords} words, ${brain.masterPrompt.length} chars`)
+
+  try {
+    const ai = await getOpenAI()
+    if (!ai) {
+      console.error('[BRAIN] OpenAI not configured, skipping optimization')
+      return
+    }
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 4000,
+      messages: [{
+        role: 'user',
+        content: `You are an expert prompt engineer optimizing an AI video editor's instruction prompt.
+CURRENT MASTER PROMPT (${currentWords} words):
+---
+${brain.masterPrompt}
+---
+YOUR TASK: Optimize this prompt to be MORE EFFECTIVE while being SHORTER.
+OPTIMIZATION RULES:
+1. MERGE rules that say similar things into one stronger rule
+2. REMOVE redundant instructions (if two rules say "use zoom on key moments", keep one)
+3. SHARPEN vague rules into specific ones (replace "use good pacing" with exact timings)
+4. KEEP all specific numbers (1.2x zoom, 0.5s, 15% volume) - never remove parameters
+5. KEEP all unique insights - don't lose any technique that's mentioned only once
+6. PRIORITIZE rules by impact - put the most important rules first in each section
+7. USE shorter sentences - every word must earn its place
+8. COMBINE small sections if they overlap
+9. Target: ${Math.round(currentWords * 0.85)}-${Math.round(currentWords * 0.95)} words (5-15% shorter)
+10. If the prompt is already tight and well-optimized, make minimal changes
+ALSO:
+- Fix any contradictions between rules
+- If two rules contradict, keep the one with more specific parameters
+- Ensure each section flows logically
+- Add any obvious missing connections between rules
+Return ONLY the optimized prompt. No explanations, no markdown, no headers with ===.
+Start directly with the content.`,
+      }],
+    })
+
+    const optimizedPrompt = response.choices[0].message.content?.trim() || ''
+    const newWords = optimizedPrompt.split(/\s+/).length
+
+    if (optimizedPrompt.length < 100) {
+      console.warn('[BRAIN] Optimization returned too short, keeping original')
+      return
+    }
+
+    // Don't accept if it's way too different in size (safety check)
+    if (newWords < currentWords * 0.5 || newWords > currentWords * 1.2) {
+      console.warn(`[BRAIN] Optimization size suspicious: ${currentWords} → ${newWords} words. Keeping original.`)
+      return
+    }
+
+    const reduction = Math.round((1 - newWords / currentWords) * 100)
+
+    // Save optimized version
+    brain.masterPrompt = optimizedPrompt
+    brain.lastOptimized = new Date().toISOString()
+    brain.lastOptimizedIsrael = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })
+    brain.optimizationHistory = brain.optimizationHistory || []
+    brain.optimizationHistory.push({
+      date: new Date().toISOString(),
+      beforeWords: currentWords,
+      afterWords: newWords,
+      reduction: `${reduction}%`,
+    })
+    // Keep last 30 optimization records
+    if (brain.optimizationHistory.length > 30) {
+      brain.optimizationHistory = brain.optimizationHistory.slice(-30)
+    }
+
+    brain.stats.masterPromptWords = newWords
+    brain.stats.masterPromptChars = optimizedPrompt.length
+
+    fs.writeFileSync(editorBrainPath, JSON.stringify(brain, null, 2))
+
+    console.log(`[BRAIN] ✅ Optimized: ${currentWords} → ${newWords} words (${reduction}% reduction)`)
+
+    // Send Telegram notification
+    await sendTelegram(
+      `🧠 אופטימיזציית פרומפט יומית\n` +
+      `📝 לפני: ${currentWords} מילים\n` +
+      `📝 אחרי: ${newWords} מילים\n` +
+      `📉 קיצור: ${reduction}%\n` +
+      `✅ הפרומפט עודכן ומוכן לעריכות`
+    )
+
+  } catch (e: any) {
+    console.error('[BRAIN] Optimization failed:', e.message?.substring(0, 150))
+    await sendTelegram(`❌ אופטימיזציית פרומפט נכשלה: ${e.message?.substring(0, 200)}`)
+  }
+}
+
 // ==================== DAILY LEARNING SCHEDULER ====================
 
 function scheduleDailyLearning() {
   const ISRAEL_TIMEZONE = 'Asia/Jerusalem'
   const RUN_TIMES = [
-    { hour: 7, minute: 0, label: 'בוקר' },
-    { hour: 19, minute: 0, label: 'ערב' },
+    { hour: 3, minute: 0, label: 'אופטימיזציה', type: 'optimize' },
+    { hour: 7, minute: 0, label: 'בוקר', type: 'learn' },
+    { hour: 19, minute: 0, label: 'ערב', type: 'learn' },
   ]
 
-  function getNextRunTime(): { ms: number; label: string; timeStr: string } {
+  function getNextRunTime(): { ms: number; label: string; timeStr: string; type: string } {
     const now = new Date()
     const israelNow = new Date(now.toLocaleString('en-US', { timeZone: ISRAEL_TIMEZONE }))
 
-    let closest = { ms: Infinity, label: '', timeStr: '' }
+    let closest = { ms: Infinity, label: '', timeStr: '', type: 'learn' }
 
     for (const runTime of RUN_TIMES) {
       const target = new Date(israelNow)
@@ -10531,6 +10640,7 @@ function scheduleDailyLearning() {
           ms: msUntil,
           label: runTime.label,
           timeStr: `${String(runTime.hour).padStart(2, '0')}:${String(runTime.minute).padStart(2, '0')}`,
+          type: runTime.type,
         }
       }
     }
@@ -10557,7 +10667,7 @@ function scheduleDailyLearning() {
   if (!hasLearnedThisSession()) {
     const shouldRunNow = RUN_TIMES.some(rt => {
       const hoursSince = israelHour - rt.hour
-      return hoursSince >= 0 && hoursSince < 6
+      return rt.type === 'learn' && hoursSince >= 0 && hoursSince < 6
     })
 
     if (shouldRunNow) {
@@ -10575,22 +10685,27 @@ function scheduleDailyLearning() {
   function scheduleNext() {
     const next = getNextRunTime()
     const hoursUntil = (next.ms / (1000 * 60 * 60)).toFixed(1)
-    console.log(`[LEARN] Next session: ${next.timeStr} Israel time (${next.label}) - in ${hoursUntil} hours`)
+
+    console.log(`[LEARN] Next: ${next.timeStr} Israel (${next.label}) - in ${hoursUntil}h`)
 
     setTimeout(async () => {
-      if (hasLearnedThisSession()) {
-        console.log('[LEARN] Already learned this session, skipping')
-        scheduleNext()
-        return
-      }
-
-      console.log(`[LEARN] Starting ${next.label} learning session...`)
       try {
-        await runServerLearning()
+        if (next.type === 'optimize') {
+          console.log('[BRAIN] Starting scheduled optimization...')
+          await optimizeMasterPrompt()
+        } else {
+          if (hasLearnedThisSession()) {
+            console.log('[LEARN] Already learned this session, skipping')
+            scheduleNext()
+            return
+          }
+          console.log(`[LEARN] Starting ${next.label} learning session...`)
+          await runServerLearning()
+        }
       } catch (err: any) {
-        console.error('[LEARN] Learning failed:', err.message)
+        console.error(`[LEARN] ${next.label} failed:`, err.message)
         try {
-          await sendTelegram(`❌ שגיאה בלמידה (${next.label}):\n${err.message?.substring(0, 500)}`)
+          await sendTelegram(`❌ ${next.label} נכשל:\n${err.message?.substring(0, 500)}`)
         } catch {}
       }
       scheduleNext()
@@ -10662,6 +10777,16 @@ function startTelegramBotListener() {
                   await sendTelegram(`❌ הלמידה נכשלה: ${e.message?.substring(0, 300)}`)
                 }
               })()
+            } else if (text === 'אופטימיזציה' || text === 'optimize') {
+              console.log('[TELEGRAM BOT] Manual optimization triggered')
+              await sendTelegram('🧠 מתחיל אופטימיזציית פרומפט...')
+              ;(async () => {
+                try {
+                  await optimizeMasterPrompt()
+                } catch (e: any) {
+                  await sendTelegram(`❌ נכשל: ${e.message?.substring(0, 300)}`)
+                }
+              })()
             } else if (text === 'שרת' || text === 'server' || text === 'ping') {
               console.log('[TELEGRAM BOT] Server status requested')
               const uptime = process.uptime()
@@ -10693,7 +10818,8 @@ function startTelegramBotListener() {
                 `  📊 דוח - דוח מלא\n` +
                 `  📈 סטטוס - סטטוס מהיר\n` +
                 `  🖥️ שרת - סטטוס שרת\n` +
-                `  🚀 צא ללמוד - למידה מיידית ($1)`
+                `  🚀 צא ללמוד - למידה מיידית ($1)\n` +
+                `  🧠 אופטימיזציה - אופטימיזציית פרומפט`
               )
             }
           } catch (cmdError: any) {
@@ -10713,7 +10839,7 @@ function startTelegramBotListener() {
     setTimeout(pollUpdates, 3000)
   }
 
-  console.log('[TELEGRAM BOT] Listening for commands (דוח / סטטוס / שרת / צא ללמוד)')
+  console.log('[TELEGRAM BOT] Listening for commands (דוח / סטטוס / שרת / צא ללמוד / אופטימיזציה)')
   pollUpdates()
 }
 
@@ -10823,6 +10949,14 @@ async function sendFullReport() {
         message += `  💰 ממומן: ${brain.stats?.paidAdsInsights || 0}\n`
         message += `  🔥 טרנדים: ${brain.stats?.activeTrends || 0}\n`
         message += `  ⚙️ רעיונות: ${brain.stats?.systemIdeas || 0}\n`
+
+        if (brain.lastOptimizedIsrael) {
+          message += `\n🔧 אופטימיזציה אחרונה: ${brain.lastOptimizedIsrael}\n`
+          if (brain.optimizationHistory?.length > 0) {
+            const last = brain.optimizationHistory[brain.optimizationHistory.length - 1]
+            message += `  ${last.beforeWords} → ${last.afterWords} מילים (${last.reduction} קיצור)\n`
+          }
+        }
 
         if (brain.masterPrompt) {
           message += `\n📋 תצוגה מקדימה:\n`
@@ -10958,7 +11092,7 @@ app.listen(PORT, () => {
   // Social Learning Agent
   console.log('[LEARN] Social Learning Agent: ✅ Active')
   console.log(`[LEARN]   Environment: ${process.env.NODE_ENV || 'development'}`)
-  console.log('[LEARN]   Schedule: 07:00 + 19:00 Israel time')
+  console.log('[LEARN]   Schedule: 03:00 (optimize) + 07:00 (learn) + 19:00 (learn) Israel time')
   console.log(`[LEARN]   Budget: $${DAILY_GPT_COST_LIMIT}/day, ${DAILY_GPT_CALLS_LIMIT} calls/day, $${MONTHLY_GPT_COST_LIMIT}/month`)
   console.log(`[LEARN]   Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? '✅' : '❌'}`)
   const totalCategories = Object.keys(LEARNING_CATEGORIES).length;
