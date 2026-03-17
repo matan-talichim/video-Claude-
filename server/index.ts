@@ -7823,6 +7823,7 @@ function loadLearningState(): any {
       const state = JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, 'utf-8'))
       // Validate that state has meaningful data (not a reset/empty state)
       if (state.totalCost > 0 || state.learningMetrics?.totalSessions > 0 || state.totalVideosAnalyzed > 0) {
+        console.log(`[LEARN] State loaded: ${state.learningMetrics?.totalSessions || 0} sessions, $${(state.totalCost || 0).toFixed(3)} total`)
         return state
       }
     }
@@ -7835,15 +7836,15 @@ function loadLearningState(): any {
       if (brain.cumulativeStats) {
         console.log('[LEARN] Recovering stats from editor brain:', JSON.stringify(brain.cumulativeStats))
         return {
-          lastLearnDate: 0,
+          lastLearnDate: brain.cumulativeStats.lastLearnDate || 0,
           totalVideosAnalyzed: brain.cumulativeStats.totalVideosAnalyzed || 0,
           learnedPatterns: {},
           missingFeatures: [],
           dailyYoutubeUnits: 0,
           dailyGptCalls: 0,
           dailyGptCost: 0,
-          dailyDate: '',
-          dailyCost: 0,
+          dailyDate: brain.cumulativeStats.dailyDate || '',
+          dailyCost: brain.cumulativeStats.dailyCost || 0,
           monthlyGptCost: 0,
           monthlyDate: '',
           monthlyCost: brain.cumulativeStats.monthlyCost || 0,
@@ -8447,13 +8448,18 @@ Start directly with: "HOOK RULES:" and continue section by section.`
     totalCost: state.totalCost || 0,
     monthlyCost: state.monthlyCost || 0,
     monthlyMonth: state.monthlyMonth || '',
+    dailyCost: state.dailyCost || 0,
+    dailyDate: state.dailyDate || '',
     totalSessions: state.learningMetrics?.totalSessions || 0,
     totalVideosAnalyzed: state.totalVideosAnalyzed || 0,
     totalRules: totalInsights,
     lastSessionCost: state.lastSessionCost || 0,
     sessionHistory: (state.sessionHistory || []).slice(-100),
+    lastLearnDate: state.lastLearnDate || null,
     lastUpdated: new Date().toISOString(),
   }
+
+  console.log('[BRAIN] Cumulative stats saved:', JSON.stringify(brain.cumulativeStats))
 
   const brainPath = path.join(__dirname, 'editor-brain.json')
   fs.writeFileSync(brainPath, JSON.stringify(brain, null, 2))
@@ -8624,6 +8630,12 @@ function addRulesToCategory(state: any, category: string, newRules: any[]): numb
 }
 
 async function sendLearningReport(state: any, results: any) {
+  // Safe number helper - prevents toFixed crashes on null/undefined
+  const safe = (val: any, decimals: number = 3): string => {
+    const num = Number(val)
+    return isNaN(num) ? '0' : num.toFixed(decimals)
+  }
+
   const israelHour = parseInt(new Date().toLocaleString('en-US', {
     timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false
   }))
@@ -8724,8 +8736,8 @@ async function sendLearningReport(state: any, results: any) {
     const m = state.learningMetrics
     message += `📈 מדדי למידה:\n`
     message += `  סשנים: ${m.totalSessions}\n`
-    message += `  ממוצע תובנות לסשן: ${(m.avgRulesPerSession || 0).toFixed(1)}\n`
-    message += `  ביטחון ממוצע: ${((m.avgConfidence || 0) * 100).toFixed(0)}%\n`
+    message += `  ממוצע תובנות לסשן: ${safe(m.avgRulesPerSession, 1)}\n`
+    message += `  ביטחון ממוצע: ${safe((m.avgConfidence || 0) * 100, 0)}%\n`
     message += `  קטגוריות שכוסו: ${m.uniqueCategories || 0}/${Object.keys(LEARNING_CATEGORIES).length}\n`
     message += `  סשנים עם תובנות: ${m.sessionsWithNewInsights || 0}/${m.totalSessions || 0}\n\n`
   }
@@ -8751,9 +8763,9 @@ async function sendLearningReport(state: any, results: any) {
 
   // Costs
   message += `💰 תקציב:\n`
-  message += `  היום: $${(state.dailyGptCost || 0).toFixed(3)} / $${DAILY_GPT_COST_LIMIT.toFixed(2)}\n`
+  message += `  היום: $${safe(state.dailyGptCost)} / $${safe(DAILY_GPT_COST_LIMIT, 2)}\n`
   message += `  קריאות: ${state.dailyGptCalls || 0} / ${DAILY_GPT_CALLS_LIMIT}\n`
-  message += `  החודש: $${(state.monthlyGptCost || 0).toFixed(2)} / $${MONTHLY_GPT_COST_LIMIT.toFixed(0)}\n`
+  message += `  החודש: $${safe(state.monthlyGptCost, 2)} / $${safe(MONTHLY_GPT_COST_LIMIT, 0)}\n`
   message += `  YouTube API: ${state.dailyYoutubeUnits || 0} יחידות (היום)\n`
 
   // Next session
@@ -9967,8 +9979,8 @@ function startTelegramBotListener() {
                 `📅 למידה אחרונה: ${srvState.lastLearnDateIsrael || 'טרם'}\n` +
                 `⏰ למידה הבאה: ${getNextSessionInfo()}\n` +
                 `🧠 סשנים: ${srvState.learningMetrics?.totalSessions || 0}\n` +
-                `💰 היום: $${(srvState.dailyGptCost || 0).toFixed(3)}/$${DAILY_GPT_COST_LIMIT}\n` +
-                `💰 החודש: $${(srvState.monthlyGptCost || 0).toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}\n` +
+                `💰 היום: $${Number(srvState.dailyGptCost || 0).toFixed(3)}/$${DAILY_GPT_COST_LIMIT}\n` +
+                `💰 החודש: $${Number(srvState.monthlyGptCost || 0).toFixed(2)}/$${MONTHLY_GPT_COST_LIMIT}\n` +
                 `\nפקודות:\n` +
                 `  📊 דוח - דוח מלא\n` +
                 `  📈 סטטוס - סטטוס מהיר\n` +
@@ -10000,6 +10012,12 @@ function startTelegramBotListener() {
 async function sendFullReport() {
   try {
     const state = loadLearningState()
+
+    // Safe number helper - prevents toFixed crashes on null/undefined
+    const safe = (val: any, decimals: number = 3): string => {
+      const num = Number(val)
+      return isNaN(num) ? '0' : num.toFixed(decimals)
+    }
 
     const now = new Date().toLocaleString('he-IL', {
       timeZone: 'Asia/Jerusalem',
@@ -10043,8 +10061,8 @@ async function sendFullReport() {
       const m = state.learningMetrics
       message += `📈 מדדי למידה:\n`
       message += `  סשנים: ${m.totalSessions}\n`
-      message += `  ממוצע תובנות לסשן: ${(m.avgRulesPerSession || 0).toFixed(1)}\n`
-      message += `  ביטחון ממוצע: ${((m.avgConfidence || 0) * 100).toFixed(0)}%\n`
+      message += `  ממוצע תובנות לסשן: ${safe(m.avgRulesPerSession, 1)}\n`
+      message += `  ביטחון ממוצע: ${safe((m.avgConfidence || 0) * 100, 0)}%\n`
       message += `  קטגוריות שכוסו: ${m.uniqueCategories || 0}/${Object.keys(LEARNING_CATEGORIES).length}\n`
       message += `  סשנים עם תובנות: ${m.sessionsWithNewInsights || 0}/${m.totalSessions || 0}\n\n`
     }
@@ -10133,11 +10151,11 @@ async function sendFullReport() {
     // Cost report
     const totalSessions = state.learningMetrics?.totalSessions || state.sessionHistory?.length || 0
     message += `💰 עלויות:\n`
-    message += `  היום: $${(state.dailyCost || state.dailyGptCost || 0).toFixed(3)} / $${state.dailyBudget || DAILY_GPT_COST_LIMIT}\n`
-    message += `  החודש: $${(state.monthlyCost || state.monthlyGptCost || 0).toFixed(3)} / $${state.monthlyBudget || MONTHLY_GPT_COST_LIMIT}\n`
-    message += `  כולל (כל הזמנים): $${(state.totalCost || 0).toFixed(3)}\n`
+    message += `  היום: $${safe(state.dailyCost || state.dailyGptCost)} / $${state.dailyBudget || DAILY_GPT_COST_LIMIT}\n`
+    message += `  החודש: $${safe(state.monthlyCost || state.monthlyGptCost)} / $${state.monthlyBudget || MONTHLY_GPT_COST_LIMIT}\n`
+    message += `  כולל (כל הזמנים): $${safe(state.totalCost)}\n`
     message += `  סשנים: ${totalSessions}\n`
-    message += `  ממוצע לסשן: $${totalSessions > 0 ? ((state.totalCost || 0) / totalSessions).toFixed(3) : '0.000'}\n`
+    message += `  ממוצע לסשן: $${totalSessions > 0 ? safe((state.totalCost || 0) / totalSessions) : '0.000'}\n`
     message += `  קריאות היום: ${state.dailyGptCalls || 0} / ${DAILY_GPT_CALLS_LIMIT}\n`
     message += `  YouTube API: ${state.dailyYoutubeUnits || 0} יחידות (היום)\n\n`
 
@@ -10171,7 +10189,8 @@ async function sendFullReport() {
     await sendTelegram(message)
 
   } catch (e: any) {
-    await sendTelegram(`❌ שגיאה ביצירת דוח: ${e.message}`)
+    console.error('[REPORT] Error:', e.message)
+    await sendTelegram(`❌ שגיאה ביצירת דוח: ${e.message?.substring(0, 200)}`)
   }
 }
 
@@ -10267,7 +10286,12 @@ app.listen(PORT, () => {
   // Schedule learning at 7:00 + 19:00 Israel time (handles restart catch-up internally)
   scheduleDailyLearning()
 
-  // Start Telegram bot listener for commands
-  console.log('[TELEGRAM BOT] Commands: דוח / סטטוס / שרת / צא ללמוד / report')
-  startTelegramBotListener()
+  // Start Telegram bot listener for commands (production only to avoid conflicts with Railway)
+  if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
+    console.log('[TELEGRAM BOT] Commands: דוח / סטטוס / שרת / צא ללמוד / report')
+    startTelegramBotListener()
+    console.log('[TELEGRAM BOT] Listening for commands (production mode)')
+  } else {
+    console.log('[TELEGRAM BOT] Disabled in development (use Railway for Telegram)')
+  }
 })
