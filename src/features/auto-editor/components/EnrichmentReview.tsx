@@ -274,14 +274,6 @@ function SpeakerSelector({ speakers, selectedPresenter, onSelect, detectedPresen
     audioRef.current = audio
     setPlayingSpeaker(speaker)
 
-    audio.addEventListener('canplay', () => {
-      console.log('[SPEAKER UI] Audio canplay, playing...')
-      audio.play().catch(err => {
-        console.error('[SPEAKER UI] Play failed:', err.message)
-        setPlayingSpeaker(null)
-      })
-    })
-
     audio.addEventListener('error', () => {
       console.error('[SPEAKER UI] Audio error:', audio.error?.message, 'code:', audio.error?.code, 'URL:', sampleUrl)
       setPlayingSpeaker(null)
@@ -294,9 +286,10 @@ function SpeakerSelector({ speakers, selectedPresenter, onSelect, detectedPresen
       audioRef.current = null
     })
 
-    // Also try direct play as fallback
+    // Single play call — no double-play race condition
     audio.play().catch(err => {
-      console.warn('[SPEAKER UI] Direct play failed, waiting for canplay:', err.message)
+      console.warn('[SPEAKER UI] Play failed:', err.message)
+      setPlayingSpeaker(null)
     })
   }
 

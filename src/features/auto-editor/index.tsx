@@ -6,7 +6,7 @@ import ExportScreen from './components/ExportScreen'
 import EnrichmentReview from './components/EnrichmentReview'
 import CompareVersions from './components/CompareVersions'
 import { useAutoEditorStore, type AutoEditorInput } from './store/autoEditorStore'
-import { runAutoEditor, continueAfterEnrichment } from './orchestrator'
+import { runAutoEditor, continueAfterEnrichment, resetAutoEditorSession } from './orchestrator'
 
 const API_BASE = 'http://localhost:3001/api'
 
@@ -100,6 +100,7 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
   }
 
   const handleReset = () => {
+    resetAutoEditorSession()
     reset()
     onBack()
   }

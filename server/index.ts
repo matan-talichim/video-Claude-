@@ -4297,11 +4297,10 @@ app.post('/api/generate-broll', async (req, res) => {
 
       console.log('[SEEDANCE] Saved:', videoPath, (videoBuffer.length / 1024 / 1024).toFixed(1) + 'MB')
 
-      // Send file to client
-      res.setHeader('Content-Type', 'video/mp4')
-      const readStream = fs.createReadStream(videoPath)
-      readStream.pipe(res)
-      readStream.on('end', () => { try { fs.unlinkSync(videoPath) } catch {} })
+      // Return server URL (same pattern as VEO) so server-side FFmpeg can access the file later
+      const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(videoPath)}`
+      console.log('[SEEDANCE] Serving at:', serverUrl)
+      res.json({ url: serverUrl })
 
     } catch (error: any) {
       console.error('[SEEDANCE ERROR]', error.message)
@@ -6504,10 +6503,15 @@ app.post('/api/auto-editor/process', async (req, res) => {
     if (brollAssets.length > 0) {
       console.log(`[PROCESS] Step 1.75: Inserting ${brollAssets.length} B-Roll clips...`)
 
+      // Track accumulated time offset from previously inserted B-Rolls
+      // so subsequent insertAt timestamps are correctly adjusted
+      let brollTimeOffset = 0
+
       for (let i = 0; i < brollAssets.length; i++) {
         const broll = brollAssets[i]
         const brollUrl = broll.url || broll.localPath || ''
-        const insertAt = parseFloat(broll.insertAt || broll.insert_at || broll.time || 0)
+        const rawInsertAt = parseFloat(broll.insertAt || broll.insert_at || broll.time || 0)
+        const insertAt = rawInsertAt + brollTimeOffset  // Adjust for previously inserted clips
         const duration = parseFloat(broll.duration || 4)
 
         if (!brollUrl) {
@@ -6586,10 +6590,34 @@ app.post('/api/auto-editor/process', async (req, res) => {
           }
 
           // Scale B-Roll to match main video dimensions
-          execSync(
-            `"${ffmpegPath}" -i "${brollFile}" -t ${duration} -vf "scale=${vidWidth}:${vidHeight}:force_original_aspect_ratio=decrease,pad=${vidWidth}:${vidHeight}:(ow-iw)/2:(oh-ih)/2" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -shortest "${brollScaled}" -y`,
-            { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
-          )
+          // When keepAudio is true, replace B-Roll audio with original presenter audio from that time segment
+          const keepBrollAudio = broll.keepAudio !== false
+          if (keepBrollAudio) {
+            // Extract original audio from the insert segment, then combine with B-Roll video
+            const origAudio = path.join(uploadsDir, `ba_${timestamp}_${i}.aac`)
+            filesToCleanup.push(origAudio)
+            try {
+              execSync(
+                `"${ffmpegPath}" -i "${currentFile}" -ss ${insertAt} -t ${duration} -vn -c:a aac -b:a 128k "${origAudio}" -y`,
+                { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
+              )
+              execSync(
+                `"${ffmpegPath}" -i "${brollFile}" -i "${origAudio}" -t ${duration} -vf "scale=${vidWidth}:${vidHeight}:force_original_aspect_ratio=decrease,pad=${vidWidth}:${vidHeight}:(ow-iw)/2:(oh-ih)/2" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -shortest "${brollScaled}" -y`,
+                { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+              )
+            } catch {
+              // Fallback: scale B-Roll with its own audio
+              execSync(
+                `"${ffmpegPath}" -i "${brollFile}" -t ${duration} -vf "scale=${vidWidth}:${vidHeight}:force_original_aspect_ratio=decrease,pad=${vidWidth}:${vidHeight}:(ow-iw)/2:(oh-ih)/2" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -shortest "${brollScaled}" -y`,
+                { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+              )
+            }
+          } else {
+            execSync(
+              `"${ffmpegPath}" -i "${brollFile}" -t ${duration} -vf "scale=${vidWidth}:${vidHeight}:force_original_aspect_ratio=decrease,pad=${vidWidth}:${vidHeight}:(ow-iw)/2:(oh-ih)/2" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -shortest "${brollScaled}" -y`,
+              { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+            )
+          }
 
           // Part 2: main video after insert point
           execSync(
@@ -6615,7 +6643,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
           if (fs.existsSync(output) && fs.statSync(output).size > 50000) {
             currentFile = output
             brollInserted++
-            console.log(`[B-ROLL] Clip ${i} inserted at ${insertAt}s`)
+            brollTimeOffset += duration  // Next insertAt must account for this clip's duration
+            console.log(`[B-ROLL] Clip ${i} inserted at ${insertAt}s (offset now ${brollTimeOffset}s)`)
           }
         } catch (e: any) {
           console.warn(`[B-ROLL] Insert ${i} failed:`, e.stderr?.toString().substring(0, 200))
@@ -6804,12 +6833,20 @@ app.post('/api/auto-editor/process', async (req, res) => {
     filesToCleanup.push(gradedFile)
 
     console.log(`[PROCESS] Step I: Color grading (${colorGradeName})...`)
-    execSync(
-      `"${ffmpegPath}" -i "${currentFile}" -vf "${gradeFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
-      { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
-    )
-    currentFile = gradedFile
-    console.log('[PROCESS] Step I done')
+    try {
+      execSync(
+        `"${ffmpegPath}" -i "${currentFile}" -vf "${gradeFilter}" -c:v libx264 -preset fast -crf 23 -c:a copy "${gradedFile}" -y`,
+        { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+      )
+      if (fs.existsSync(gradedFile) && fs.statSync(gradedFile).size > 50000) {
+        currentFile = gradedFile
+        console.log('[PROCESS] Step I done')
+      } else {
+        console.warn('[PROCESS] Step I: Graded file invalid, keeping previous')
+      }
+    } catch (e: any) {
+      console.warn('[PROCESS] Step I: Color grading failed, continuing without:', e.message?.slice(0, 150))
+    }
 
     // ============================================
     // STEP J: ZOOM / KEN BURNS EFFECTS (every 5-6 seconds)
@@ -7215,7 +7252,7 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: LowerThird,Sans,28,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB07C5CFF,-1,0,0,0,100,100,0,0,3,2,1,1,20,20,40,1
+Style: LowerThird,Arial,28,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB07C5CFF,-1,0,0,0,100,100,0,0,3,2,1,1,20,20,40,177
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -7316,7 +7353,7 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: GraphicOverlay,Sans,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC7C5CFF,-1,0,0,0,100,100,0,0,3,2,1,7,20,20,20,1
+Style: GraphicOverlay,Arial,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC7C5CFF,-1,0,0,0,100,100,0,0,3,2,1,7,20,20,20,177
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -7419,7 +7456,17 @@ ${gfxDialogueLines.join('\n')}
         filesToCleanup.push(logoOutput)
 
         try {
+          // Probe current file dimensions (may differ from source after processing)
           let videoWidth = sourceWidth || 1080
+          try {
+            const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+            const probeOut = execSync(
+              `"${ffprobePath}" -v quiet -select_streams v:0 -show_entries stream=width -of csv=p=0 "${currentFile}"`,
+              { timeout: 10000, encoding: 'utf-8' }
+            ).trim()
+            const pw = parseInt(probeOut)
+            if (pw > 0) videoWidth = pw
+          } catch { /* use sourceWidth fallback */ }
           const logoPixelWidth = Math.round(videoWidth * logoScale)
 
           execSync(
@@ -10371,12 +10418,33 @@ app.listen(PORT, () => {
   console.log(`   YouTube API: ${process.env.YOUTUBE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Telegram:    ${process.env.TELEGRAM_BOT_TOKEN ? '✅ Connected' : '❌ Not configured'}`)
 
-  // Check FFmpeg availability
+  // Check FFmpeg availability and auto-editor dependencies
   console.log('Checking FFmpeg...')
   try {
     const ff = getFFmpeg()
     const ver = execSync(`"${ff}" -version`, { stdio: ['pipe', 'pipe', 'pipe'] }).toString().split('\n')[0]
     console.log('FFmpeg OK:', ver)
+
+    // Auto-editor dependency check
+    const filtersOut = execSync(`"${ff}" -filters 2>&1`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).toString()
+    const hasSubtitles = filtersOut.includes('subtitles')
+    const hasDrawtext = filtersOut.includes('drawtext')
+    const hasOverlay = filtersOut.includes('overlay')
+    const hasAss = filtersOut.includes(' ass ')
+    console.log('[AUTO-EDITOR] Dependency check:')
+    console.log(`  FFmpeg subtitles: ${hasSubtitles ? '✅' : '❌ (Hebrew subs will use drawtext fallback)'}`)
+    console.log(`  FFmpeg drawtext:  ${hasDrawtext ? '✅' : '❌'}`)
+    console.log(`  FFmpeg overlay:   ${hasOverlay ? '✅' : '❌'}`)
+    console.log(`  FFmpeg ass:       ${hasAss ? '✅' : '❌'}`)
+    console.log(`  AssemblyAI:       ${process.env.ASSEMBLYAI_API_KEY ? '✅' : '❌'}`)
+    console.log(`  OpenAI:           ${process.env.OPENAI_API_KEY ? '✅' : '❌'}`)
+    console.log(`  Gemini:           ${process.env.GEMINI_API_KEY ? '✅' : '❌'}`)
+    console.log(`  Seedance:         ${process.env.KIE_API_KEY ? '✅' : '❌'}`)
+    console.log(`  Pixabay:          ${process.env.PIXABAY_API_KEY ? '✅' : '❌'}`)
+    try {
+      const brainVersion = getEditorBrainPrompt().length > 100 ? '✅ loaded' : '❌ empty'
+      console.log(`  Editor brain:     ${brainVersion}`)
+    } catch { console.log('  Editor brain:     ❌ failed to load') }
   } catch {
     console.error('FFmpeg NOT FOUND - transcription will fail!')
   }
