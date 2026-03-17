@@ -1,4 +1,4 @@
-import { useAutoEditorStore, type AutoEditorInput, type VideoResult, type QualityReport } from './store/autoEditorStore'
+import { useAutoEditorStore, type AutoEditorInput, type VideoResult, type QualityReport, type BrandImage } from './store/autoEditorStore'
 import { useUserProfileStore } from '../../stores/userProfileStore'
 import { usePromptEvolutionStore } from '../../stores/promptEvolutionStore'
 import { transcribeVideos } from './services/whisperService'
@@ -98,10 +98,66 @@ async function checkApiAvailability(): Promise<{
   }
 }
 
+// Check if a brand image matches a B-Roll prompt
+function findMatchingBrandImage(
+  prompt: string,
+  brandImages: BrandImage[]
+): BrandImage | null {
+  if (!brandImages || brandImages.length === 0) return null
+  const promptLower = prompt.toLowerCase()
+  // First try: match by description
+  const match = brandImages.find(img => {
+    if (!img.description) return false
+    const desc = img.description.toLowerCase()
+    return promptLower.includes(desc) || desc.includes('מוצר') || desc.includes('product') || desc.includes('לוגו') || desc.includes('logo')
+  })
+  if (match) return match
+  // Second try: if prompt mentions product/brand concepts and we have brand images
+  const productKeywords = ['product', 'מוצר', 'brand', 'מותג', 'logo', 'לוגו', 'team', 'צוות', 'office', 'משרד']
+  if (productKeywords.some(kw => promptLower.includes(kw)) && brandImages.length > 0) {
+    return brandImages[0]
+  }
+  return null
+}
+
+// Generate a single B-Roll clip using image-to-video or text-to-video
+async function generateBRollClip(
+  prompt: string,
+  generator: 'seedance' | 'veo',
+  brandImages: BrandImage[],
+  duration: number = 4
+): Promise<string> {
+  const matchingImage = findMatchingBrandImage(prompt, brandImages)
+
+  if (matchingImage?.serverUrl) {
+    // Image-to-Video mode
+    console.log(`[B-ROLL] Using brand image: ${matchingImage.description || 'uploaded image'}`)
+    const res = await fetch(`${API_BASE}/generate-broll`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        provider: generator,
+        imageUrl: matchingImage.serverUrl,
+        duration: String(duration),
+        aspectRatio: '9:16',
+      }),
+    })
+    if (!res.ok) throw new Error(`Image-to-Video failed: ${res.status}`)
+    const data = await res.json()
+    return data.url || ''
+  }
+
+  // Text-to-Video fallback
+  const generateFn = generator === 'seedance' ? generateBrollSeedance : generateBrollVeo
+  return generateFn(prompt, duration)
+}
+
 async function generateAllBroll(
   prompts: Array<{ prompt: string; videoIndex: number; momentIndex: number }>,
   generator: 'seedance' | 'veo',
-  apis: { gemini: boolean; seedance: boolean }
+  apis: { gemini: boolean; seedance: boolean },
+  brandImages: BrandImage[] = []
 ): Promise<string[]> {
   const addLog = useAutoEditorStore.getState().addLog
 
@@ -116,12 +172,12 @@ async function generateAllBroll(
 
   if (prompts.length === 0) return []
 
-  const generateFn = generator === 'seedance' ? generateBrollSeedance : generateBrollVeo
   const BATCH_SIZE = 3
   const timer = timeLog(`B-Roll generation (${prompts.length} clips, batches of ${BATCH_SIZE})`)
 
-  console.log(`[PIPELINE] Starting: ${prompts.length} B-Roll clips (${BATCH_SIZE} parallel)...`)
-  addLog(`מייצר ${prompts.length} קטעי B-Roll (${BATCH_SIZE} במקביל)...`)
+  const hasBrandImages = brandImages.filter(img => !!img.serverUrl).length > 0
+  console.log(`[PIPELINE] Starting: ${prompts.length} B-Roll clips (${BATCH_SIZE} parallel)${hasBrandImages ? ` with ${brandImages.length} brand images` : ''}...`)
+  addLog(`מייצר ${prompts.length} קטעי B-Roll (${BATCH_SIZE} במקביל)${hasBrandImages ? ` + ${brandImages.length} תמונות מותג` : ''}...`)
 
   const results: string[] = []
   for (let i = 0; i < prompts.length; i += BATCH_SIZE) {
@@ -134,7 +190,7 @@ async function generateAllBroll(
     const batchResults = await Promise.all(
       batch.map((item, batchIdx) => {
         const globalIdx = i + batchIdx
-        return generateFn(item.prompt, 4)
+        return generateBRollClip(item.prompt, generator, brandImages)
           .then(url => {
             addLog(`B-Roll ${globalIdx + 1}/${prompts.length} הושלם ✓`)
             return url
@@ -549,6 +605,7 @@ async function processVideosWithPlan(
   versionLabel: 'A' | 'B',
   skipPlatformExport: boolean,
   brollClips: string[],
+  hookData?: { hook_start: number; hook_end: number; hook_text?: string; reason?: string; hook_type?: string } | null,
 ): Promise<VideoResult[]> {
   const addLog = useAutoEditorStore.getState().addLog
   const processedVideos: VideoResult[] = []
@@ -573,6 +630,16 @@ async function processVideosWithPlan(
         position: finalInput.logo.position,
         size: finalInput.logo.size,
         opacity: finalInput.logo.opacity,
+      }
+    }
+
+    // Attach hook data if detected (flash-forward hook)
+    if (hookData && hookData.hook_start > 0) {
+      processJob.hook = {
+        sourceStart: hookData.hook_start,
+        sourceEnd: hookData.hook_end,
+        text: hookData.hook_text || '',
+        type: hookData.hook_type || 'surprise',
       }
     }
 
@@ -1012,6 +1079,7 @@ export async function continueAfterEnrichment(
     let backgroundImage: string = ''
     let musicUrl: string = ''
     let brollClips: string[] = []
+    let hookData: { hook_start: number; hook_end: number; hook_text?: string; reason?: string; hook_type?: string } | null = null
     const cachedAssets = useAutoEditorStore.getState().cachedAssets
 
     if (!editingPlanA && !cachedAssets) {
@@ -1025,7 +1093,7 @@ export async function continueAfterEnrichment(
       const versionBStyle = getVersionBStyle(detectedType)
       addLog(`תכנון במקביל: גרסה A (${versionAStyle}) + B (${versionBStyle}) + מוזיקה + רקע`)
 
-      const [planAResult, planBResult, musicResult, bgResult] = await Promise.all([
+      const [planAResult, planBResult, musicResult, bgResult, hookResult] = await Promise.all([
         // 🧠 Plan Version A
         (async () => {
           console.log('[PIPELINE] Starting: Plan A...')
@@ -1096,12 +1164,39 @@ export async function continueAfterEnrichment(
             return ''
           }
         })(),
+
+        // 🎯 Hook detection (independent, fast)
+        (async () => {
+          console.log('[PIPELINE] Starting: Hook detection...')
+          try {
+            const segments = transcript?.segments || []
+            if (segments.length === 0) return null
+            const res = await fetch(`${API_BASE}/auto-editor/find-hook`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ segments, enrichment }),
+            })
+            if (!res.ok) return null
+            const hook = await res.json()
+            if (hook.hook_start > 0) {
+              addLog(`Hook נמצא ב-${hook.hook_start.toFixed(1)}s: "${(hook.hook_text || '').substring(0, 40)}..."`)
+            } else {
+              addLog('הפתיחה המקורית חזקה, לא נדרש hook')
+            }
+            console.log('[PIPELINE] Done: Hook detection')
+            return hook
+          } catch (e: any) {
+            console.warn(`[PIPELINE] Hook detection failed: ${e.message?.substring(0, 150)}`)
+            return null
+          }
+        })(),
       ])
 
       editingPlanA = planAResult
       editingPlanB = planBResult
       musicUrl = musicResult
       backgroundImage = bgResult
+      hookData = hookResult
 
       setCachedEditingPlan({ planA: editingPlanA, planB: editingPlanB })
 
@@ -1148,18 +1243,54 @@ export async function continueAfterEnrichment(
       addLog(`[אימות A] סרטון ${video.videoIndex}: ${cutsDuration.toFixed(1)}s (יעד: ${videoTarget}s)`)
     }
 
-    // ========== STAGE 3: B-ROLL (3 at a time) + LOGO UPLOAD (parallel) ==========
+    // ========== STAGE 3: B-ROLL (3 at a time) + LOGO UPLOAD + BRAND IMAGES (parallel) ==========
     // B-Roll depends on planning (needs prompts), so runs after Stage 2
-    // Logo upload runs alongside since it's independent
+    // Logo upload and brand image upload run alongside since they're independent
     if (!cachedAssets) {
       setStep('generating_assets')
-      const stage3Timer = timeLog('Stage 3: B-Roll + Logo upload')
+      const stage3Timer = timeLog('Stage 3: B-Roll + Logo + Brand images upload')
+
+      // Upload brand images to server before B-Roll generation
+      let uploadedBrandImages: BrandImage[] = []
+      if (finalInput.brandImages && finalInput.brandImages.length > 0) {
+        addLog(`מעלה ${finalInput.brandImages.length} תמונות מותג לשרת...`)
+        const uploadTimer = timeLog('Brand image upload')
+        try {
+          uploadedBrandImages = await Promise.all(
+            finalInput.brandImages.map(async (img) => {
+              try {
+                const formData = new FormData()
+                formData.append('file', img.file)
+                const res = await fetch(`${API_BASE}/upload-temp`, {
+                  method: 'POST',
+                  body: formData,
+                })
+                if (res.ok) {
+                  const { url } = await res.json()
+                  console.log(`[BRAND] Uploaded: ${img.description || 'image'} → ${url}`)
+                  return { ...img, serverUrl: url }
+                }
+                return img
+              } catch (e: any) {
+                console.warn(`[BRAND] Upload failed: ${e.message}`)
+                return img
+              }
+            })
+          )
+          const uploadedCount = uploadedBrandImages.filter(img => !!img.serverUrl).length
+          addLog(`${uploadedCount}/${finalInput.brandImages.length} תמונות מותג הועלו בהצלחה`)
+          uploadTimer.done(`${uploadedCount} uploaded`)
+        } catch (e: any) {
+          console.warn(`[BRAND] Brand image upload failed: ${e.message}`)
+          addLog('העלאת תמונות מותג נכשלה, ממשיך ללא תמונות')
+        }
+      }
 
       const [brollResult, _logoResult] = await Promise.all([
         // 🎬 B-Roll generation (3 at a time in parallel!)
         (async () => {
           try {
-            const clips = await generateAllBroll(editingPlanA.prompts.broll, finalInput.brollGenerator, apis)
+            const clips = await generateAllBroll(editingPlanA.prompts.broll, finalInput.brollGenerator, apis, uploadedBrandImages)
             return clips
           } catch (e: any) {
             console.warn(`[PIPELINE] B-Roll generation failed: ${e.message?.substring(0, 150)}`)
@@ -1219,7 +1350,7 @@ export async function continueAfterEnrichment(
     setProgress({ current: 0, total: 2, label: 'עורך גרסה A...' })
     const processedA = await processVideosWithPlan(
       job, editingPlanA, enrichment, finalInput,
-      musicUrl, backgroundImage, 'A', hasVersionB, brollClips,
+      musicUrl, backgroundImage, 'A', hasVersionB, brollClips, hookData,
     )
 
     // Process Version B
@@ -1229,7 +1360,7 @@ export async function continueAfterEnrichment(
       try {
         processedB = await processVideosWithPlan(
           job, editingPlanB, enrichment, finalInput,
-          musicUrl, backgroundImage, 'B', true, brollClips,
+          musicUrl, backgroundImage, 'B', true, brollClips, hookData,
         )
       } catch (err: any) {
         addLog(`גרסה B נכשלה: ${err.message}. ממשיך עם גרסה A בלבד.`)
