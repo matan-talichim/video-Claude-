@@ -74,6 +74,9 @@ function getGemini() {
 const app = express()
 const PORT = 3001
 
+// Global lock: prevents learning agent from running while auto-editor is processing
+let autoEditorBusy = false
+
 // CORS - allow any localhost port
 app.use(cors({
   origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
@@ -105,6 +108,8 @@ app.use('/api/audio', express.static(uploadsDir))
 // Serve uploaded files statically (for auto-editor local mode)
 app.use('/uploads', express.static(uploadsDir, {
   setHeaders: (res, filePath) => {
+    // Allow cross-origin access for all files (fixes CORS audio/video loading)
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (filePath.endsWith('.mp4')) {
       res.setHeader('Content-Type', 'video/mp4');
@@ -114,6 +119,10 @@ app.use('/uploads', express.static(uploadsDir, {
       res.setHeader('Content-Type', 'video/quicktime');
     } else if (filePath.endsWith('.mp3')) {
       res.setHeader('Content-Type', 'audio/mpeg');
+    } else if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) {
+      res.setHeader('Content-Type', 'image/jpeg');
+    } else if (filePath.endsWith('.png')) {
+      res.setHeader('Content-Type', 'image/png');
     }
   }
 }))
@@ -4734,6 +4743,9 @@ async function handleGPTAutoTranscribe(req: any, res: any) {
 }
 
 app.post('/api/auto-editor/transcribe', async (req, res) => {
+  autoEditorBusy = true
+  console.log('[AUTO-EDITOR] Session started, learning agent paused')
+
   const { fileUrl, language = 'he' } = req.body
   const timestamp = Date.now()
 
@@ -4926,7 +4938,7 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
     let presenterConfidence = 'low'
     console.log(`[TRANSCRIBE] Preliminary presenter: ${mainSpeaker}`)
 
-    // Run visual cross-reference to identify presenter
+    // Run visual cross-reference to identify presenter (AUTHORITATIVE for medium/high confidence)
     try {
       const presenterResult = await identifyPresenterWithVisualCrossReference(
         { segments: renamedSegments },
@@ -4934,9 +4946,17 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
         renamedSpeakerTimes,
         timestamp
       )
-      mainSpeaker = presenterResult.presenter
-      presenterConfidence = presenterResult.confidence
-      console.log(`[TRANSCRIBE] Presenter (visual cross-ref): ${mainSpeaker} (${presenterConfidence})`)
+      if (presenterResult.confidence === 'high' || presenterResult.confidence === 'medium') {
+        // Visual cross-reference is authoritative
+        mainSpeaker = presenterResult.presenter
+        presenterConfidence = presenterResult.confidence
+        console.log(`[PRESENTER] Visual cross-reference: ${mainSpeaker} (${presenterConfidence}) - AUTHORITATIVE`)
+      } else {
+        // Low confidence - fall back to most talking time
+        mainSpeaker = renamedSortedSpeakers[0]?.speaker || 'דובר 1'
+        presenterConfidence = 'low'
+        console.log(`[PRESENTER] Visual confidence low, using most talking time: ${mainSpeaker}`)
+      }
     } catch (e: any) {
       console.warn(`[TRANSCRIBE] Visual cross-reference failed, using time-based:`, e.message?.substring(0, 100))
     }
@@ -5650,34 +5670,27 @@ async function identifyPresenterWithVisualCrossReference(
       return `${speaker} (${Math.round(speakerTimes[speaker])}s דיבור):\n${segs.map((s: any) => `  [${s.start.toFixed(1)}s] "${(s.text || '').substring(0, 60)}"`).join('\n')}`
     }).join('\n\n')
 
-    const prompt = `אתה מנתח סרטון כדי לזהות מי הפרזנטור הראשי.
-אני מציג לך 6 פריימים מהסרטון עם timestamps. לכל פריים אני מציין מי הדובר לפי התמלול.
-דוברים בסרטון:
+    const prompt = `אתה מנתח סרטון כדי לזהות מי הפרזנטור הראשי - האדם שמצולם במצלמה ומדבר לקהל.
+אני מציג לך פריימים מהסרטון. לכל פריים אני מציין מי הדובר הפעיל לפי התמלול.
+דוברים:
 ${speakerSamples}
-המשימה שלך:
-1. הסתכל על כל פריים - מי נראה על המסך? האם הוא מדבר (פה פתוח, מחוות)?
-2. הפרזנטור הוא מי ש:
-   - נראה על המסך ומסתכל למצלמה
-   - מדבר תוכן (מסביר, מלמד, מוכר)
-   - נראה ברוב הפריימים
-3. עוזר הפקה / מראיין:
-   - לפעמים נשמע אבל לא נראה על המסך
-   - שואל שאלות קצרות
-   - אומר דברים כמו "ספר לי", "מה אתה חושב", "עוד פעם"
-4. צוות הפקה:
-   - אומר דברים כמו "מוכן?", "יופי", "עוד טייק"
-   - כמעט אף פעם לא נראה על המסך
-התבסס על הפריימים:
-- מי נראה על המסך ברוב הפריימים? → כנראה הפרזנטור
-- מי מדבר כשלא נראה אף אחד חדש על המסך? → כנראה הפרזנטור
-- מי שואל שאלות קצרות? → כנראה מראיין/עוזר הפקה
+כללים לזיהוי הפרזנטור:
+1. הפרזנטור הוא מי שנראה על המסך ומסתכל לכיוון המצלמה
+2. הפרזנטור מדבר תוכן ארוך ומשמעותי (לא שאלות קצרות)
+3. אם אדם נראה על המסך ברוב הפריימים - הוא כנראה הפרזנטור
+4. עוזר הפקה/מראיין: נשמע אבל לא נראה, שואל שאלות קצרות
+5. צוות: אומר "מוכן?", "עוד פעם", "יופי"
+חשוב מאוד:
+- הפרזנטור הוא לא בהכרח מי שמדבר הכי הרבה!
+- הפרזנטור הוא מי שנראה על המצלמה ומדבר ישירות לצופה
+- מישהו שמדבר הרבה אבל לא נראה על המסך הוא כנראה מראיין
 החזר JSON:
 {
   "presenter": "דובר X",
   "confidence": "high" | "medium" | "low",
   "reasoning": "הסבר קצר",
-  "on_camera": "דובר X - מי שנראה על המסך ברוב הפריימים",
-  "off_camera": ["דובר Y - נשמע אבל לא נראה"]
+  "on_camera": "דובר X",
+  "off_camera": ["דובר Y", "דובר Z"]
 }
 החזר רק JSON תקין.`
 
@@ -7799,6 +7812,9 @@ ${gfxDialogueLines.join('\n')}
 
       console.log(`[PROCESS] Done! Preview: ${fileUrl} (${fileSize.toFixed(1)}MB, quality: ${qualityScore})`)
 
+      autoEditorBusy = false
+      console.log('[AUTO-EDITOR] Session complete, learning agent resumed')
+
       return res.json({
         success: true,
         processedFile: fileUrl,
@@ -7942,6 +7958,9 @@ ${gfxDialogueLines.join('\n')}
 
     console.log('[PROCESS] Done! Created', outputFiles.length, 'files with professional effects')
 
+    autoEditorBusy = false
+    console.log('[AUTO-EDITOR] Session complete, learning agent resumed')
+
     res.json({
       success: true,
       files: outputFiles,
@@ -7951,6 +7970,8 @@ ${gfxDialogueLines.join('\n')}
       message: `נוצרו ${outputFiles.length} קבצים מקצועיים`,
     })
   } catch (error: any) {
+    autoEditorBusy = false
+    console.log('[AUTO-EDITOR] Session error, learning agent resumed')
     // Cleanup on error
     for (const f of filesToCleanup) {
       try { if (fs.existsSync(f)) fs.unlinkSync(f) } catch {}
@@ -9509,6 +9530,18 @@ async function sendLearningReport(state: any, results: any) {
 }
 
 async function runServerLearning(options?: { budget?: number, force?: boolean }) {
+  if (autoEditorBusy) {
+    console.log('[LEARN] Skipping: auto-editor is active')
+    // Reschedule for 10 minutes later
+    setTimeout(() => {
+      if (!autoEditorBusy) {
+        console.log('[LEARN] Retrying after auto-editor finished')
+        runServerLearning(options).catch(() => {})
+      }
+    }, 10 * 60 * 1000)
+    return
+  }
+
   const sessionBudget = options?.budget || 0.10
   const force = options?.force || false
   const maxGptCalls = Math.floor(sessionBudget / 0.02)
@@ -10705,6 +10738,12 @@ Start directly with the content.`,
 // ==================== DAILY LEARNING SCHEDULER ====================
 
 function scheduleDailyLearning() {
+  // In development: don't schedule ANY automatic learning
+  if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT) {
+    console.log('[LEARN] Development mode: automatic learning DISABLED (use Railway)')
+    return
+  }
+
   const ISRAEL_TIMEZONE = 'Asia/Jerusalem'
   const RUN_TIMES = [
     { hour: 3, minute: 0, label: 'אופטימיזציה', type: 'optimize' },
