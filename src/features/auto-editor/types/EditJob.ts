@@ -200,6 +200,8 @@ export interface PlatformFile {
   ratio: string
   url: string
   sizeMB: number
+  resolution?: string
+  filename?: string
 }
 
 export function createEmptyEditJob(sourceFile: string, sourceUrl: string): EditJob {

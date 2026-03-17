@@ -29,6 +29,11 @@ function matchesSpeakerClient(segmentSpeaker: any, targetPresenter: string): boo
 // === Module-level job storage: persists across Phase 1 → Phase 2 ===
 let currentJobA: EditJob | null = null
 
+/** Call this to clear stale module-level state between sessions */
+export function resetAutoEditorSession(): void {
+  currentJobA = null
+}
+
 interface ValidationResult {
   valid: boolean
   message?: string
@@ -321,8 +326,9 @@ function buildEditJobForProcessing(
   brollClips: string[],
   versionLabel: 'A' | 'B',
   skipPlatformExport: boolean,
+  videoIndex: number = 0,
 ): EditJob {
-  const videoPlan = editingPlan?.videos?.[0] || {}
+  const videoPlan = editingPlan?.videos?.[videoIndex] || editingPlan?.videos?.[0] || {}
 
   // Build cuts
   const cuts = (videoPlan?.cuts || []).map((c: any) => ({
@@ -519,7 +525,7 @@ async function processVideosWithPlan(
     const processJob = buildEditJobForProcessing(
       job, editingPlan, enrichment, finalInput,
       musicUrl, backgroundImage, brollClips,
-      versionLabel, skipPlatformExport,
+      versionLabel, skipPlatformExport, i,
     )
 
     // Attach logo data if available
@@ -953,8 +959,12 @@ export async function continueAfterEnrichment(
     const apis = await checkApiAvailability()
 
     // Step 4 — Two-step AI planning: 2 versions (A and B)
-    let editingPlanA = useAutoEditorStore.getState().cachedEditingPlan
-    let editingPlanB: any = null
+    const cachedPlan = useAutoEditorStore.getState().cachedEditingPlan
+    let editingPlanA = cachedPlan?.planA || cachedPlan
+    let editingPlanB: any = cachedPlan?.planB || null
+
+    // If cached plan is the new format with planA/planB, extract planA
+    if (cachedPlan?.planA) editingPlanA = cachedPlan.planA
 
     if (!editingPlanA) {
       setStep('planning')
@@ -979,10 +989,14 @@ export async function continueAfterEnrichment(
         userPrompt: `${finalInput.userPrompt}\n\nגישת עריכה: ${versionBStyle}`,
       }
       editingPlanB = await planWithChatGPT(transcript, inputB, detectedType, visualAnalysis, energyAnalysis)
+      // Cache both plans so B is available on retry
+      setCachedEditingPlan({ planA: editingPlanA, planB: editingPlanB })
 
       setProgress({ current: 4, total: 4, label: 'שני התכנונים הושלמו!' })
     } else {
-      addLog('משתמש בתכנון קיים מהמטמון (גרסה A בלבד)')
+      // Restore planB from cache if available
+      if (cachedPlan?.planB) editingPlanB = cachedPlan.planB
+      addLog('משתמש בתכנון קיים מהמטמון')
     }
 
     if (finalInput.targetDuration === -1 && editingPlanA?.videos) {
@@ -1127,9 +1141,9 @@ export async function continueAfterEnrichment(
           videoIndex: v.videoIndex,
           platform: f.platform,
           url: f.url,
-          fileName: f.filename,
-          width: parseInt(f.resolution.split('x')[0]) || 1080,
-          height: parseInt(f.resolution.split('x')[1]) || 1920,
+          fileName: f.filename || f.url.split('/').pop() || '',
+          width: parseInt(f.resolution?.split('x')[0] || '') || 1080,
+          height: parseInt(f.resolution?.split('x')[1] || '') || 1920,
         }))
       )
       setResults(legacyResults)
