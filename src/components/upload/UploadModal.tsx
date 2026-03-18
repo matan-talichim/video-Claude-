@@ -289,6 +289,15 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
 
   const handleClose = () => {
     if (isUploading) return // Don't close while uploading
+
+    // Don't close while auto-editor is processing
+    const autoEditorStep = useAutoEditorStore.getState().step
+    const isAutoEditorProcessing = autoEditorStep !== 'idle' && autoEditorStep !== 'done' && autoEditorStep !== 'error'
+    if (isAutoEditorProcessing) {
+      console.warn('[UPLOAD-MODAL] Blocked close during auto-editor processing, step:', autoEditorStep)
+      return
+    }
+
     setFiles([])
     setMergeEnabled(false)
     setTransition('none')
@@ -571,6 +580,12 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
           <AutoEditorEntry
             files={files}
             onBack={() => {
+              const step = useAutoEditorStore.getState().step
+              const isProcessing = step !== 'idle' && step !== 'done' && step !== 'error'
+              if (isProcessing) {
+                console.warn('[UPLOAD-MODAL] Blocked onBack during auto-editor processing, step:', step)
+                return
+              }
               setShowMarketingEditor(false)
               setShowChoice(true)
               resetAutoEditor()

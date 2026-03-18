@@ -229,6 +229,7 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
 
   setStep: (step) => {
     const prev = get().step
+    console.log(`[PIPELINE] Step: ${prev} → ${step}`)
     set({ step, error: null })
     if (prev !== 'idle' && prev !== 'error') {
       get().markStepCompleted(prev)
@@ -291,5 +292,12 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
     return { brandImages: s.brandImages.filter((_, i) => i !== index) }
   }),
 
-  reset: () => set(initialState),
+  reset: () => {
+    const state = get()
+    if (state.step !== 'idle' && state.step !== 'done' && state.step !== 'error') {
+      console.warn('[AUTO-EDITOR STORE] Blocked reset during active processing, step:', state.step)
+      return
+    }
+    set(initialState)
+  },
 }))
