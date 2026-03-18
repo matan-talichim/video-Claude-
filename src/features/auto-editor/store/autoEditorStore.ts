@@ -64,7 +64,7 @@ export interface AutoEditorInput {
   userPrompt: string
   targetDuration: number
   numberOfVideos: number
-  brollGenerator: 'seedance' | 'veo'
+  brollModel: string
   platforms: string[]
   includeSubtitles: boolean
   includeBackground: boolean
