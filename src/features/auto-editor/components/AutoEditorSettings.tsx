@@ -71,9 +71,13 @@ const DURATION_OPTIONS = [
   { value: 0, label: 'מותאם', desc: 'הזן ידנית' },
 ]
 
-const BROLL_OPTIONS: { value: 'seedance' | 'veo'; label: string; desc: string }[] = [
-  { value: 'seedance', label: 'Seedance 1.5 Pro', desc: 'מהיר ואיכותי' },
-  { value: 'veo', label: 'Google VEO', desc: 'ריאליסטי במיוחד' },
+const BROLL_MODEL_OPTIONS = [
+  { id: 'wan', label: 'WAN 2.5', cost: 0.10, quality: '720p', speed: '30-60 שניות', icon: '💰', badge: 'הכי זול' },
+  { id: 'kling', label: 'Kling v2.5 Turbo', cost: 0.15, quality: '720p', speed: '1 דקה', icon: '🎯', badge: 'מומלץ' },
+  { id: 'seedance', label: 'Seedance 1.5 Pro', cost: 0.36, quality: '720p', speed: '1-2 דקות', icon: '🌱', badge: '' },
+  { id: 'veo-3.1-fast', label: 'Veo 3.1 Fast', cost: 0.40, quality: '720p', speed: '1-2 דקות', icon: '⚡', badge: '' },
+  { id: 'sora-2', label: 'Sora 2', cost: 0.50, quality: '720p', speed: '2-3 דקות', icon: '🌀', badge: '' },
+  { id: 'veo-3.1-quality', label: 'Veo 3.1 Quality', cost: 2.00, quality: '1080p', speed: '3-5 דקות', icon: '🎬', badge: 'הכי איכותי' },
 ]
 
 const FORMAT_OPTIONS = [
@@ -686,11 +690,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
   const [targetDuration, setTargetDuration] = useState(-1)
   const [customDuration, setCustomDuration] = useState('')
   const [numberOfVideos, setNumberOfVideos] = useState(1)
-  const [brollGenerator, setBrollGenerator] = useState<'seedance' | 'veo'>(
-    (profile.preferredBrollProvider === 'seedance' || profile.preferredBrollProvider === 'veo')
-      ? profile.preferredBrollProvider
-      : 'seedance'
-  )
+  const [brollModel, setBrollModel] = useState('kling')
   const [selectedFormats, setSelectedFormats] = useState<string[]>(['portrait'])
   const [selectedOptions, setSelectedOptions] = useState<string[]>(
     PROFESSIONAL_OPTIONS.filter(opt => opt.defaultOn).map(opt => opt.id)
@@ -780,7 +780,7 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
       userPrompt: finalPrompt,
       targetDuration: effectiveDuration,
       numberOfVideos,
-      brollGenerator,
+      brollModel,
       platforms: derivedPlatforms,
       includeSubtitles,
       includeBackground,
@@ -1087,26 +1087,31 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
           </div>
 
           {/* B-Roll generator */}
-          <div className="space-y-3">
-            <label className="text-sm font-medium text-text-primary block">
+          <div className="space-y-2" dir="rtl">
+            <h4 className="text-white text-sm font-bold">
               <Film size={14} className="inline ml-1" />
-              מחולל B-Roll:
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              {BROLL_OPTIONS.map((opt) => (
+              מודל B-Roll
+            </h4>
+            <div className="grid grid-cols-2 gap-2">
+              {BROLL_MODEL_OPTIONS.map(model => (
                 <button
-                  key={opt.value}
-                  onClick={() => setBrollGenerator(opt.value)}
-                  className={`p-3 rounded-xl text-right transition-all border ${
-                    brollGenerator === opt.value
-                      ? 'border-accent-purple/50 bg-accent-purple/10 shadow-lg shadow-accent-purple/10'
-                      : 'border-white/[0.06] bg-white/[0.03] hover:border-white/[0.12]'
+                  key={model.id}
+                  onClick={() => setBrollModel(model.id)}
+                  className={`p-2 rounded-lg border text-right transition ${
+                    brollModel === model.id
+                      ? 'border-purple-500 bg-purple-500/10'
+                      : 'border-white/10 bg-white/5 hover:border-white/30'
                   }`}
                 >
-                  <div className={`text-sm font-medium ${brollGenerator === opt.value ? 'text-accent-purple' : 'text-text-primary'}`}>
-                    {opt.label}
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg">{model.icon}</span>
+                    {model.badge && (
+                      <span className="text-[9px] bg-purple-600/60 text-purple-200 px-1.5 py-0.5 rounded-full">{model.badge}</span>
+                    )}
                   </div>
-                  <div className="text-xs text-text-muted mt-0.5">{opt.desc}</div>
+                  <div className="text-white text-xs font-medium">{model.label}</div>
+                  <div className="text-gray-500 text-[10px]">{model.quality} • {model.speed}</div>
+                  <div className="text-green-400 text-xs font-bold">${model.cost.toFixed(2)} / קליפ</div>
                 </button>
               ))}
             </div>
@@ -1117,6 +1122,46 @@ export default function AutoEditorSettings({ files, onStart, onBack, onClose }: 
 
           {/* Brand images for B-Roll */}
           <BrandImageUpload />
+
+          {/* Cost estimate */}
+          {(() => {
+            const estimatedBRollClips = 4
+            const selectedModelCost = BROLL_MODEL_OPTIONS.find(m => m.id === brollModel)?.cost || 0.15
+            const brollCost = estimatedBRollClips * selectedModelCost
+            const gptCost = 0.15
+            const transcriptionCost = 0.05
+            const backgroundImageCost = selectedOptions.includes('background_image') ? 0.02 : 0
+            const totalEstimate = brollCost + gptCost + transcriptionCost + backgroundImageCost
+            return (
+              <div className="bg-white/5 rounded-lg p-3 border border-white/10" dir="rtl">
+                <h4 className="text-white text-sm font-bold mb-2">💰 עלות משוערת</h4>
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between text-gray-400">
+                    <span>תמלול (Deepgram)</span>
+                    <span>${transcriptionCost.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-gray-400">
+                    <span>תכנון AI (GPT)</span>
+                    <span>${gptCost.toFixed(2)}</span>
+                  </div>
+                  {selectedOptions.includes('background_image') && (
+                    <div className="flex justify-between text-gray-400">
+                      <span>תמונת רקע (Gemini)</span>
+                      <span>${backgroundImageCost.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-gray-400">
+                    <span>B-Roll ({estimatedBRollClips} קליפים × ${selectedModelCost.toFixed(2)})</span>
+                    <span>${brollCost.toFixed(2)}</span>
+                  </div>
+                  <div className="border-t border-white/10 pt-1 flex justify-between text-white font-bold">
+                    <span>סה"כ משוער</span>
+                    <span>${totalEstimate.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Personalization indicator */}
           {profile.confidenceScore >= 0.3 && (

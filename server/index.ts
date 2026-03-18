@@ -4339,378 +4339,149 @@ Style requirements:
   }
 })
 
-// POST /api/generate-broll — B-Roll video generation proxy (Seedance via kie.ai or VEO)
-// Supports both text-to-video and image-to-video (when imageUrl is provided)
+// B-Roll models available through KIE.ai
+const BROLL_MODELS: Record<string, { kieModel: string; label: string; costPerClip: number; duration: string; quality: string }> = {
+  'veo-3.1-fast': { kieModel: 'google/veo-3.1-generate-preview', label: 'Veo 3.1 Fast', costPerClip: 0.40, duration: '8s', quality: '720p' },
+  'veo-3.1-quality': { kieModel: 'google/veo-3.1-generate-preview', label: 'Veo 3.1 Quality', costPerClip: 2.00, duration: '8s', quality: '1080p' },
+  'sora-2': { kieModel: 'openai/sora-2-text-to-video-stable', label: 'Sora 2', costPerClip: 0.50, duration: '10s', quality: '720p' },
+  'kling': { kieModel: 'kling/v2-5-turbo-text-to-video-pro', label: 'Kling v2.5 Turbo', costPerClip: 0.15, duration: '5s', quality: '720p' },
+  'wan': { kieModel: 'wan/2-5-text-to-video', label: 'WAN 2.5', costPerClip: 0.10, duration: '5s', quality: '720p' },
+  'seedance': { kieModel: 'bytedance/seedance-1.5-pro', label: 'Seedance 1.5 Pro', costPerClip: 0.36, duration: '5s', quality: '720p' },
+}
+
+// Unified B-Roll generation through KIE.ai API
+async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: string): Promise<string | null> {
+  const kieApiKey = (process.env.KIE_API_KEY || '').trim()
+  if (!kieApiKey) {
+    console.warn('[B-ROLL] KIE_API_KEY not set')
+    return null
+  }
+
+  const modelConfig = BROLL_MODELS[modelId] || BROLL_MODELS['seedance']
+  console.log(`[B-ROLL] Generating with ${modelConfig.label}: "${prompt.substring(0, 60)}..."`)
+
+  try {
+    // Build request body
+    const params: any = { prompt }
+
+    // Image-to-video: attach base64 image
+    if (imageUrl) {
+      const imagePath = imageUrl.startsWith('http://localhost')
+        ? path.join(uploadsDir, path.basename(new URL(imageUrl).pathname))
+        : imageUrl
+
+      if (!fs.existsSync(imagePath)) {
+        console.warn('[B-ROLL] Brand image not found:', imagePath)
+        // Fall through to text-to-video
+      } else {
+        const imageBuffer = fs.readFileSync(imagePath)
+        params.image = imageBuffer.toString('base64')
+        console.log(`[B-ROLL] Image-to-Video with ${modelConfig.label}`)
+      }
+    }
+
+    // Create job
+    const createRes = await fetch('https://api.kie.ai/api/v1/jobs/create', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${kieApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: modelConfig.kieModel,
+        params,
+      }),
+    })
+
+    if (!createRes.ok) {
+      const errText = await createRes.text()
+      throw new Error(`KIE create failed ${createRes.status}: ${errText.substring(0, 200)}`)
+    }
+
+    const createData = await createRes.json()
+    const taskId = createData.data?.id || createData.data?.taskId || createData.data?.task_id || createData.data?.recordId
+    if (!taskId) throw new Error('No taskId returned')
+
+    console.log(`[B-ROLL] Task ${taskId} (${modelConfig.label})`)
+
+    // Poll for completion (max 10 minutes)
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r => setTimeout(r, 5000))
+
+      const pollRes = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`, {
+        headers: { 'Authorization': `Bearer ${kieApiKey}` },
+      })
+
+      const pollData = await pollRes.json()
+      const state = pollData.data?.state
+
+      if (state === 'success') {
+        let videoUrl: string | undefined
+
+        // Parse result - different models return URL differently
+        try {
+          const resultJson = typeof pollData.data.resultJson === 'string'
+            ? JSON.parse(pollData.data.resultJson)
+            : (pollData.data.resultJson || {})
+          videoUrl = resultJson.resultUrls?.[0] || resultJson.url || resultJson.videoUrl
+        } catch {
+          videoUrl = pollData.data?.resultUrl || pollData.data?.url
+        }
+
+        if (!videoUrl) {
+          console.error('[B-ROLL] No video URL in result:', JSON.stringify(pollData.data).substring(0, 300))
+          return null
+        }
+
+        // Download immediately to prevent URL expiry
+        const localPath = path.join(uploadsDir, `broll_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.mp4`)
+        const videoRes = await fetch(videoUrl)
+        if (!videoRes.ok) throw new Error(`Download failed: ${videoRes.status}`)
+
+        const buffer = Buffer.from(await videoRes.arrayBuffer())
+        fs.writeFileSync(localPath, buffer)
+
+        const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(localPath)}`
+        console.log(`[B-ROLL] ${modelConfig.label}: ${serverUrl} (${(buffer.length / 1024 / 1024).toFixed(1)}MB)`)
+
+        return serverUrl
+      }
+
+      if (state === 'fail' || state === 'failed' || state === 'error') {
+        console.error(`[B-ROLL] ${modelConfig.label} failed for task ${taskId}`)
+        return null
+      }
+
+      if (i % 12 === 0 && i > 0) {
+        console.log(`[B-ROLL] Polling ${taskId}: ${state} (${(i * 5 / 60).toFixed(1)} min)...`)
+      }
+    }
+
+    console.error(`[B-ROLL] Timeout after 10 minutes (${modelConfig.label})`)
+    return null
+
+  } catch (e: any) {
+    console.error(`[B-ROLL] ${modelConfig.label} error:`, e.message?.substring(0, 150))
+    return null
+  }
+}
+
+// POST /api/generate-broll — B-Roll video generation via KIE.ai (all models)
 app.post('/api/generate-broll', async (req, res) => {
-  const { prompt, provider, duration = '5', aspectRatio = '9:16', resolution = '720p', generateAudio = false, brollIndex, imageUrl } = req.body
+  const { prompt, model, imageUrl } = req.body
   if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
-  const clipLabel = brollIndex !== undefined ? `#${brollIndex}` : ''
-  const isImageToVideo = !!imageUrl
-  console.log(`[B-ROLL ${clipLabel}] Starting${isImageToVideo ? ' (Image-to-Video)' : ''}: "${prompt.substring(0, 50)}..." (provider: ${provider})`)
+  const modelId = model || 'seedance'
+  const modelLabel = BROLL_MODELS[modelId]?.label || modelId
+  console.log(`[B-ROLL] Starting: "${prompt.substring(0, 50)}..." (model: ${modelLabel})`)
 
-  // === IMAGE-TO-VIDEO: Seedance ===
-  if (provider === 'seedance' && isImageToVideo) {
-    const kieKey = process.env.KIE_API_KEY
-    if (!kieKey) {
-      return res.status(400).json({ message: 'KIE API Key לא מוגדר. הוסף KIE_API_KEY ב-.env (מ-kie.ai)' })
-    }
+  const result = await generateBRollViaKIE(prompt, modelId, imageUrl)
 
-    try {
-      // Resolve image path from URL
-      const imagePath = imageUrl.startsWith('http://localhost')
-        ? path.join(uploadsDir, path.basename(new URL(imageUrl).pathname))
-        : imageUrl
-
-      if (!fs.existsSync(imagePath)) {
-        return res.status(400).json({ message: 'תמונת מותג לא נמצאה' })
-      }
-
-      const imageBuffer = fs.readFileSync(imagePath)
-      const base64Image = imageBuffer.toString('base64')
-
-      console.log(`[B-ROLL] Image-to-Video with Seedance: ${prompt.substring(0, 60)}`)
-
-      const createRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${kieKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'bytedance/seedance-1.5-pro',
-          input: {
-            prompt,
-            image: base64Image,
-            aspect_ratio: aspectRatio,
-            resolution,
-            duration: String(duration),
-            fixed_lens: false,
-            generate_audio: generateAudio,
-          },
-        }),
-      })
-
-      if (!createRes.ok) {
-        const err = await createRes.json().catch(() => ({}))
-        console.error('[SEEDANCE IMG2VID] Create task failed:', err)
-        return res.status(createRes.status).json({
-          message: 'שגיאה ביצירת סרטון מתמונה (Seedance): ' + (err.message || err.error || 'Unknown error')
-        })
-      }
-
-      const taskData = await createRes.json()
-      const taskId = taskData.data?.taskId || taskData.data?.task_id || taskData.data?.recordId || taskData.data?.id || taskData.taskId || taskData.task_id || taskData.id
-      console.log('[SEEDANCE IMG2VID] Task created:', taskId)
-
-      if (!taskId) {
-        return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai (image-to-video)' })
-      }
-
-      // Poll for result
-      const pollUrl = `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`
-      let videoUrl: string | null = null
-      const maxAttempts = 60
-
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise(r => setTimeout(r, 5000))
-        try {
-          const statusRes = await fetch(pollUrl, {
-            headers: { 'Authorization': `Bearer ${kieKey}`, 'Content-Type': 'application/json' },
-          })
-          const statusData = await statusRes.json()
-          const state = statusData.data?.state || statusData.data?.status || ''
-
-          if (state === 'success') {
-            if (statusData.data?.resultJson) {
-              try {
-                const result = typeof statusData.data.resultJson === 'string'
-                  ? JSON.parse(statusData.data.resultJson)
-                  : statusData.data.resultJson
-                videoUrl = result?.resultUrls?.[0] || result?.url || null
-              } catch {}
-            }
-            if (!videoUrl) {
-              videoUrl = statusData.data?.resultUrl || statusData.data?.url || statusData.data?.videoUrl || null
-            }
-            break
-          }
-          if (state === 'fail' || state === 'failed' || state === 'error') break
-        } catch {}
-      }
-
-      if (!videoUrl) {
-        return res.status(408).json({ message: 'יצירת סרטון מתמונה לקחה יותר מדי זמן' })
-      }
-
-      // Download and save
-      const videoRes = await fetch(videoUrl)
-      if (!videoRes.ok) return res.status(500).json({ message: 'שגיאה בהורדת הסרטון מ-Seedance (img2vid)' })
-      const videoBuffer = Buffer.from(await videoRes.arrayBuffer())
-      const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
-      const videoPath = path.join(__dirname, 'uploads', `seedance_img2vid_${uniqueSuffix}.mp4`)
-      fs.writeFileSync(videoPath, videoBuffer)
-
-      const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(videoPath)}`
-      console.log(`[SEEDANCE IMG2VID] Success: ${serverUrl}`)
-      return res.json({ url: serverUrl })
-    } catch (error: any) {
-      console.error('[SEEDANCE IMG2VID ERROR]', error.message)
-      return res.status(500).json({ message: 'שגיאה ב-Seedance Image-to-Video: ' + error.message })
-    }
+  if (result) {
+    return res.json({ url: result, model: modelId })
   }
 
-  // === IMAGE-TO-VIDEO: VEO ===
-  if (provider === 'veo' && isImageToVideo) {
-    const ai = getGemini()
-    if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
-
-    try {
-      const imagePath = imageUrl.startsWith('http://localhost')
-        ? path.join(uploadsDir, path.basename(new URL(imageUrl).pathname))
-        : imageUrl
-
-      if (!fs.existsSync(imagePath)) {
-        return res.status(400).json({ message: 'תמונת מותג לא נמצאה' })
-      }
-
-      const imageBuffer = fs.readFileSync(imagePath)
-      const base64Image = imageBuffer.toString('base64')
-      const mimeType = imagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
-
-      console.log(`[B-ROLL] Image-to-Video with VEO: ${prompt.substring(0, 60)}`)
-
-      const operation = await ai.models.generateVideos({
-        model: 'veo-3.1-generate-preview',
-        prompt,
-        image: {
-          imageBytes: base64Image,
-          mimeType,
-        },
-        config: { aspectRatio: aspectRatio as any },
-      })
-
-      let result = operation
-      for (let i = 0; i < 60; i++) {
-        if (result.done) break
-        await new Promise((r) => setTimeout(r, 5000))
-        result = await ai.operations.get({ operation: result })
-      }
-
-      if (!result.done) {
-        return res.status(504).json({ message: 'VEO Image-to-Video: זמן המתנה חרג' })
-      }
-
-      const veoVideoUrl = result.response?.generatedVideos?.[0]?.video?.uri
-      if (!veoVideoUrl) {
-        return res.status(500).json({ message: 'VEO Image-to-Video לא החזיר סרטון' })
-      }
-
-      console.log(`[VEO IMG2VID] Success: ${veoVideoUrl}`)
-      return res.json({ url: veoVideoUrl })
-    } catch (err: any) {
-      console.error('[VEO IMG2VID ERROR]', err.message)
-      return res.status(500).json({ message: 'שגיאת VEO Image-to-Video: ' + err.message })
-    }
-  }
-
-  // === TEXT-TO-VIDEO (existing logic below) ===
-
-  if (provider === 'seedance') {
-    const kieKey = process.env.KIE_API_KEY
-    if (!kieKey) {
-      return res.status(400).json({ message: 'KIE API Key לא מוגדר. הוסף KIE_API_KEY ב-.env (מ-kie.ai)' })
-    }
-
-    try {
-      console.log('[SEEDANCE] Creating task via kie.ai...')
-      console.log('[SEEDANCE] Prompt:', prompt)
-      console.log('[SEEDANCE] Duration:', duration, 'Aspect:', aspectRatio)
-
-      // Step 1: Create generation task
-      const createRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${kieKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'bytedance/seedance-1.5-pro',
-          input: {
-            prompt: prompt,
-            aspect_ratio: aspectRatio,
-            resolution: resolution,
-            duration: String(duration),
-            fixed_lens: false,
-            generate_audio: generateAudio,
-          }
-        }),
-      })
-
-      if (!createRes.ok) {
-        const err = await createRes.json().catch(() => ({}))
-        console.error('[SEEDANCE] Create task failed:', err)
-        return res.status(createRes.status).json({
-          message: 'שגיאה ביצירת סרטון Seedance: ' + (err.message || err.error || 'Unknown error')
-        })
-      }
-
-      const taskData = await createRes.json()
-      console.log('[SEEDANCE] Full response:', JSON.stringify(taskData))
-      const taskId = taskData.data?.taskId || taskData.data?.task_id || taskData.data?.recordId || taskData.data?.id || taskData.taskId || taskData.task_id || taskData.id
-      console.log('[SEEDANCE] Task created:', taskId)
-
-      if (!taskId) {
-        console.error('[SEEDANCE] No task ID in response:', JSON.stringify(taskData))
-        return res.status(500).json({ message: 'לא התקבל task_id מ-kie.ai' })
-      }
-
-      // Step 2: Poll for result
-      const pollUrl = `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`
-      let videoUrl: string | null = null
-      const maxAttempts = 60
-      const pollInterval = 5000 // 5 seconds
-
-      console.log('[SEEDANCE] Polling:', pollUrl)
-
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise(r => setTimeout(r, pollInterval))
-
-        try {
-          const statusRes = await fetch(pollUrl, {
-            headers: {
-              'Authorization': `Bearer ${kieKey}`,
-              'Content-Type': 'application/json',
-            },
-          })
-
-          const statusData = await statusRes.json()
-
-          // FIXED: Use "state" not "status"
-          const state = statusData.data?.state || statusData.data?.status || ''
-
-          console.log(`[SEEDANCE] Poll ${i + 1}/${maxAttempts}: state=${state}`)
-
-          if (state === 'success') {
-            // FIXED: Parse resultJson to get video URL
-            if (statusData.data?.resultJson) {
-              try {
-                const result = typeof statusData.data.resultJson === 'string'
-                  ? JSON.parse(statusData.data.resultJson)
-                  : statusData.data.resultJson
-                videoUrl = result?.resultUrls?.[0] || result?.url || null
-                console.log('[SEEDANCE] Video URL from resultJson:', videoUrl)
-              } catch (parseErr) {
-                console.error('[SEEDANCE] Failed to parse resultJson:', statusData.data.resultJson)
-              }
-            }
-
-            // Fallback: check other possible fields
-            if (!videoUrl) {
-              videoUrl = statusData.data?.resultUrl || statusData.data?.url || statusData.data?.videoUrl || null
-            }
-
-            if (videoUrl) {
-              console.log('[SEEDANCE] Success! Video:', videoUrl)
-            } else {
-              console.error('[SEEDANCE] State is success but no URL found in:', JSON.stringify(statusData.data).substring(0, 500))
-            }
-            break
-          }
-
-          // FIXED: "fail" not "failed"
-          if (state === 'fail' || state === 'failed' || state === 'error') {
-            const errorMsg = statusData.data?.failMsg || statusData.data?.failCode || 'Unknown error'
-            console.error('[SEEDANCE] Task failed:', errorMsg)
-            videoUrl = null
-            break
-          }
-
-          // Still processing (waiting/queuing/generating)
-          if (i % 5 === 0) {
-            console.log(`[SEEDANCE] Still ${state || 'processing'}... (${i * 5}s elapsed)`)
-          }
-
-        } catch (pollErr: any) {
-          console.warn(`[SEEDANCE] Poll ${i + 1} error:`, pollErr.message)
-        }
-      }
-
-      if (!videoUrl) {
-        // FIXED: was "attempts" (undefined), now "maxAttempts"
-        console.log(`[SEEDANCE] No video after ${maxAttempts} polls - skipping`)
-        return res.status(408).json({ message: 'יצירת הסרטון לקחה יותר מדי זמן. נסה שוב.' })
-      }
-
-      console.log('[SEEDANCE] Video ready:', videoUrl)
-
-      // Step 3: Download video and send to client
-      const videoRes = await fetch(videoUrl)
-      if (!videoRes.ok) {
-        return res.status(500).json({ message: 'שגיאה בהורדת הסרטון מ-Seedance' })
-      }
-
-      const videoBuffer = Buffer.from(await videoRes.arrayBuffer())
-      const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
-      const videoPath = path.join(__dirname, 'uploads', `seedance_${uniqueSuffix}.mp4`)
-      fs.writeFileSync(videoPath, videoBuffer)
-
-      console.log('[SEEDANCE] Saved:', videoPath, (videoBuffer.length / 1024 / 1024).toFixed(1) + 'MB')
-
-      // Return server URL (same pattern as VEO) so server-side FFmpeg can access the file later
-      const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(videoPath)}`
-      console.log('[SEEDANCE] Serving at:', serverUrl)
-      res.json({ url: serverUrl })
-
-    } catch (error: any) {
-      console.error('[SEEDANCE ERROR]', error.message)
-      res.status(500).json({ message: 'שגיאה ב-Seedance: ' + error.message })
-    }
-    return
-  }
-
-  if (provider === 'veo') {
-    // VEO provider — uses GEMINI_API_KEY (same key as Nano Banana)
-    const ai = getGemini()
-    if (!ai) return res.status(400).json({ message: 'Gemini API Key לא מוגדר. הוסף GEMINI_API_KEY ב-.env' })
-
-    try {
-      console.log('[VEO] Starting video generation with Gemini SDK...')
-
-      // Use GoogleGenAI SDK for Veo
-      const operation = await ai.models.generateVideos({
-        model: 'veo-3.1-generate-preview',
-        prompt,
-        config: { aspectRatio: aspectRatio as any },
-      })
-
-      // Poll until done
-      let result = operation
-      for (let i = 0; i < 60; i++) {
-        if (result.done) break
-        await new Promise((r) => setTimeout(r, 5000))
-        result = await ai.operations.get({ operation: result })
-      }
-
-      if (!result.done) {
-        return res.status(504).json({ message: 'VEO: זמן המתנה חרג' })
-      }
-
-      // Extract video URL from result
-      const veoVideoUrl = result.response?.generatedVideos?.[0]?.video?.uri
-      if (!veoVideoUrl) {
-        return res.status(500).json({ message: 'VEO לא החזיר סרטון' })
-      }
-
-      return res.json({ url: veoVideoUrl })
-    } catch (err: any) {
-      console.error('[VEO ERROR]', err.message)
-      res.status(500).json({ message: err.message || 'שגיאת יצירת VEO' })
-    }
-    return
-  }
-
-  res.status(400).json({ message: 'חסר ספק (provider). בחר seedance או veo.' })
+  res.status(500).json({ message: `B-Roll generation failed (${modelLabel})` })
 })
 
 // POST /api/find-music — Pixabay music search proxy
