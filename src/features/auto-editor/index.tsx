@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import React, { useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import AutoEditorSettings from './components/AutoEditorSettings'
 import ProcessingProgress from './components/ProcessingProgress'
@@ -6,6 +6,42 @@ import ExportScreen from './components/ExportScreen'
 import EnrichmentReview from './components/EnrichmentReview'
 import { useAutoEditorStore, type AutoEditorInput } from './store/autoEditorStore'
 import { runAutoEditor, continueAfterEnrichment, resetAutoEditorSession } from './orchestrator'
+
+// Error boundary to catch React errors without redirecting away
+class AutoEditorErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: string }
+> {
+  state = { hasError: false, error: '' }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message }
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('[AUTO-EDITOR] React error caught:', error.message, error.stack)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center min-h-screen bg-gray-900 text-white p-8" dir="rtl">
+          <div className="text-center space-y-4 max-w-md">
+            <h2 className="text-xl font-bold text-red-400">שגיאה בעריכה</h2>
+            <p className="text-gray-400 text-sm">{this.state.error}</p>
+            <button
+              onClick={() => this.setState({ hasError: false, error: '' })}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors"
+            >
+              נסה שוב
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 const API_BASE = 'http://localhost:3001/api'
 
@@ -58,6 +94,30 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
   const step = useAutoEditorStore((s) => s.step)
   const enrichment = useAutoEditorStore((s) => s.enrichment)
   const reset = useAutoEditorStore((s) => s.reset)
+
+  // Warn user before closing tab during processing
+  useEffect(() => {
+    const isProcessing = step !== 'idle' && step !== 'done' && step !== 'error'
+    if (isProcessing) {
+      const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+        e.preventDefault()
+        e.returnValue = 'העריכה עדיין בתהליך. בטוח שרוצה לצאת?'
+        return e.returnValue
+      }
+      window.addEventListener('beforeunload', handleBeforeUnload)
+      return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [step])
+
+  // Warn if component unmounts during processing
+  useEffect(() => {
+    return () => {
+      const currentStep = useAutoEditorStore.getState().step
+      if (currentStep !== 'idle' && currentStep !== 'done' && currentStep !== 'error') {
+        console.error('[AUTO-EDITOR] Component unmounted during processing! Step:', currentStep)
+      }
+    }
+  }, [])
 
   const handleStart = async (settings: Omit<AutoEditorInput, 'videoUrls'>) => {
     const { setStep, setError } = useAutoEditorStore.getState()
@@ -136,5 +196,8 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
     )
   }
 
-  return createPortal(content, document.body)
+  return createPortal(
+    <AutoEditorErrorBoundary>{content}</AutoEditorErrorBoundary>,
+    document.body
+  )
 }
