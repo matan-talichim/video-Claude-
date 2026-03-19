@@ -8499,7 +8499,7 @@ const learningStatePath = path.join(DATA_DIR, 'learning-state.json');
 const editorBrainPath = path.join(DATA_DIR, 'editor-brain.json');
 
 // Budget constants
-const DAILY_GPT_COST_LIMIT = 1.0   // $1 per day
+const DAILY_GPT_COST_LIMIT = 2.0   // $2 per day
 const MONTHLY_GPT_COST_LIMIT = 30.0 // $30 per month
 const DAILY_GPT_CALLS_LIMIT = 50    // ~50 calls/day at ~$0.02/call
 
@@ -9924,15 +9924,23 @@ async function runServerLearning(options?: { budget?: number, force?: boolean })
 
   // Reset daily counters if new day (Israel timezone)
   if (state.dailyDate !== todayIsrael) {
+    console.log(`[LEARN] New day detected: ${state.dailyDate} → ${todayIsrael}. Resetting daily cost.`)
     state.dailyYoutubeUnits = 0
     state.dailyGptCalls = 0
+    state.dailyGptCost = 0
+    state.dailyCost = 0
     state.dailyDate = todayIsrael
+    saveLearningState(state)
   }
 
   // Reset monthly cost if new month
   if (state.monthlyDate !== thisMonth) {
+    console.log(`[LEARN] New month: ${state.monthlyDate} → ${thisMonth}. Resetting monthly cost.`)
     state.monthlyGptCost = 0
+    state.monthlyCost = 0
     state.monthlyDate = thisMonth
+    state.monthlyMonth = thisMonth
+    saveLearningState(state)
   }
 
   // Check if already learned this session (within 6 hours) - skip check if forced
@@ -10737,7 +10745,7 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
   stateAfter.dailyCost = (stateAfter.dailyCost || 0) + totalCost
   stateAfter.monthlyCost = (stateAfter.monthlyCost || 0) + totalCost
   stateAfter.lastSessionCost = totalCost
-  stateAfter.dailyBudget = 1    // $1/day
+  stateAfter.dailyBudget = 2    // $2/day
   stateAfter.monthlyBudget = 30  // $30/month
 
   // Track per-session history
