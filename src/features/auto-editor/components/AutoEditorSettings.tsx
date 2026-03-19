@@ -367,12 +367,21 @@ const PROFESSIONAL_OPTIONS: ProfessionalOption[] = [
     icon: '🔥',
     promptAddition: 'סגנון עריכה טרנדי: אפקטים פופולריים, חיתוכים על הביט, טקסט מונפש, זום מהיר.',
   },
+
+  // === AI AD ===
+  {
+    id: 'ai_ad_video',
+    label: 'סרטון פרסומת AI',
+    description: 'הוסף סצנות וידאו AI מותאמות לתסריט',
+    icon: '🎬',
+    promptAddition: 'שלב סצנות וידאו AI מיוצרות (Cinematic painterly animation, photorealistic, Israeli urban, 9:16) בין חלקי הסרטון.',
+  },
 ]
 
 const CONTENT_TYPE_RECOMMENDATIONS: Record<string, string[]> = {
   // Business
-  company_intro: ['background_blur', 'cinematic', 'calm_professional', 'subtitles_hebrew', 'music_calm', 'background_image'],
-  product_sales: ['energy_boost', 'subtitles_hebrew', 'music_energetic', 'background_image', 'eye_contact'],
+  company_intro: ['background_blur', 'cinematic', 'calm_professional', 'subtitles_hebrew', 'music_calm', 'background_image', 'ai_ad_video'],
+  product_sales: ['energy_boost', 'subtitles_hebrew', 'music_energetic', 'background_image', 'eye_contact', 'ai_ad_video'],
   customer_testimonial: ['background_blur', 'calm_professional', 'subtitles_hebrew', 'music_calm', 'eye_contact'],
   employee_training: ['calm_professional', 'subtitles_hebrew', 'remove_silence', 'eye_contact'],
 

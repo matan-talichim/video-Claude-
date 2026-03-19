@@ -2,16 +2,18 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Sparkles, Upload, MoreVertical, Play,
-  Clock, Zap, ArrowLeft, Copy, Share2, Trash2, FolderOpen
+  Clock, Zap, ArrowLeft, Copy, Share2, Trash2, FolderOpen, Clapperboard
 } from 'lucide-react'
 import { useProjectsStore } from '../stores/projectsStore'
 import { useUIStore } from '../stores/uiStore'
 import UploadModal from '../components/upload/UploadModal'
 import PromptWizard from './editor/PromptWizard'
+import AiAdPanel from '../features/ai-ad-builder/components/AiAdPanel'
 
 const quickActions = [
   { label: 'העלה קובץ', desc: 'העלה וידאו או אודיו', icon: Upload, gradient: 'from-blue-600/20 to-blue-400/5', hoverGradient: 'from-blue-600/30 to-blue-400/10', iconColor: 'text-accent-blue', action: 'upload' },
   { label: 'צור מפרומפט', desc: 'AI ייצור עבורך וידאו', icon: Sparkles, gradient: 'from-purple-600/20 to-purple-400/5', hoverGradient: 'from-purple-600/30 to-purple-400/10', iconColor: 'text-accent-purple', action: 'generatePrompt' },
+  { label: '🎬 צור סרטון פרסומת AI', desc: 'תסריט עברי → סרטון מלא', icon: Clapperboard, gradient: 'from-pink-600/20 to-orange-400/5', hoverGradient: 'from-pink-600/30 to-orange-400/10', iconColor: 'text-accent-pink', action: 'aiAd' },
 ]
 
 const statusConfig: Record<string, { dot: string; label: string }> = {
@@ -82,7 +84,7 @@ export default function Dashboard() {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
         {quickActions.map((action) => {
           const Icon = action.icon
           return (
@@ -253,6 +255,7 @@ export default function Dashboard() {
       {/* Modals */}
       <UploadModal isOpen={activeModal === 'upload'} onClose={closeModal} />
       <PromptWizard isOpen={activeModal === 'generatePrompt'} onClose={closeModal} />
+      <AiAdPanel isOpen={activeModal === 'aiAd'} onClose={closeModal} />
     </div>
   )
 }

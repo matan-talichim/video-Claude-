@@ -11523,6 +11523,299 @@ async function sendFullReport() {
   }
 }
 
+// ==================== AI AD BUILDER ====================
+
+// POST /api/ai-ad/generate-prompt — Translate Hebrew scene line to English video prompt
+app.post('/api/ai-ad/generate-prompt', async (req, res) => {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(400).json({ message: 'OpenAI API key לא מוגדר' })
+
+    const { hebrewText, sceneIndex, totalScenes, fullScript } = req.body
+    if (!hebrewText) return res.status(400).json({ message: 'חסר hebrewText' })
+
+    const systemPrompt = `You are a cinematic video prompt engineer. Convert Hebrew ad script lines into detailed English video generation prompts.
+
+Style requirements:
+- Cinematic painterly AI animation
+- Photorealistic lighting and textures
+- Israeli urban setting (Tel Aviv / modern Middle Eastern city)
+- 9:16 vertical format (portrait mode for social media)
+- Smooth camera movements
+- Warm golden-hour or neon-lit atmosphere
+- Professional ad quality
+
+For each scene, create a single detailed prompt that describes the visual action, camera angle, lighting, and mood.
+Keep it under 200 words. Output ONLY the English prompt, nothing else.`
+
+    const userMessage = `Full script context (${totalScenes} scenes total):
+${fullScript}
+
+Current scene (${sceneIndex + 1}/${totalScenes}):
+"${hebrewText}"
+
+Generate the English video prompt for this scene:`
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      temperature: 0.7,
+      max_tokens: 300,
+    })
+
+    const prompt = response.choices?.[0]?.message?.content?.trim()
+    if (!prompt) return res.status(500).json({ message: 'לא נוצר פרומפט' })
+
+    console.log(`[AI-AD] Scene ${sceneIndex + 1} prompt: "${prompt.substring(0, 80)}..."`)
+    res.json({ prompt })
+  } catch (e: any) {
+    console.error('[AI-AD] Generate prompt error:', e.message)
+    res.status(500).json({ message: 'שגיאה ביצירת פרומפט: ' + e.message })
+  }
+})
+
+// POST /api/ai-ad/generate-video — Generate video clip for a scene (Veo or Seedance)
+app.post('/api/ai-ad/generate-video', async (req, res) => {
+  try {
+    const { prompt, provider } = req.body
+    if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
+
+    console.log(`[AI-AD] Generating video (${provider}): "${prompt.substring(0, 60)}..."`)
+
+    if (provider === 'veo') {
+      // Try Veo 3.1 via Gemini API directly
+      const ai = getGemini()
+      if (!ai) return res.status(400).json({ message: 'GEMINI_API_KEY לא מוגדר' })
+
+      const operation = await ai.models.generateVideos({
+        model: 'veo-3.1-generate-preview',
+        prompt: prompt,
+        config: {
+          aspectRatio: '9:16',
+          resolution: '720p',
+        },
+      })
+
+      let result = operation
+      let attempts = 0
+      while (!result.done && attempts < 60) {
+        await new Promise(r => setTimeout(r, 5000))
+        result = await ai.operations.getVideosOperation(result)
+        attempts++
+      }
+
+      if (!result.done) {
+        return res.status(408).json({ message: 'Veo timeout' })
+      }
+
+      const video = result.response?.generatedVideos?.[0]
+      if (!video?.video) {
+        return res.status(500).json({ message: 'Veo לא הצליח לייצר וידאו' })
+      }
+
+      const videoPath = path.join(uploadsDir, `aiad_veo_${Date.now()}.mp4`)
+      const videoData = await ai.files.download(video.video)
+      fs.writeFileSync(videoPath, Buffer.from(videoData))
+
+      const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(videoPath)}`
+      console.log(`[AI-AD] Veo video: ${serverUrl}`)
+      return res.json({ url: serverUrl, provider: 'veo' })
+    }
+
+    if (provider === 'seedance') {
+      // Seedance via KIE.ai
+      const url = await generateBRollViaKIE(prompt, 'seedance')
+      if (!url) {
+        return res.status(500).json({ message: 'Seedance נכשל ביצירת וידאו' })
+      }
+      console.log(`[AI-AD] Seedance video: ${url}`)
+      return res.json({ url, provider: 'seedance' })
+    }
+
+    return res.status(400).json({ message: `ספק לא ידוע: ${provider}` })
+  } catch (e: any) {
+    console.error(`[AI-AD] Generate video error (${req.body?.provider}):`, e.message)
+    res.status(500).json({ message: 'שגיאה ביצירת וידאו: ' + e.message })
+  }
+})
+
+// POST /api/ai-ad/upload-r2 — Upload video clip to R2 (or keep local as fallback)
+app.post('/api/ai-ad/upload-r2', async (req, res) => {
+  try {
+    const { videoUrl, sceneIndex } = req.body
+    if (!videoUrl) return res.status(400).json({ message: 'חסר videoUrl' })
+
+    // If R2 credentials exist, upload there; otherwise keep local URL
+    const r2AccountId = process.env.R2_ACCOUNT_ID
+    const r2AccessKey = process.env.R2_ACCESS_KEY_ID
+    const r2SecretKey = process.env.R2_SECRET_ACCESS_KEY
+    const r2Bucket = process.env.R2_BUCKET_NAME
+    const r2PublicUrl = process.env.R2_PUBLIC_URL
+
+    if (r2AccountId && r2AccessKey && r2SecretKey && r2Bucket) {
+      // Download the video file
+      let filePath: string
+      if (videoUrl.startsWith(`http://localhost:${PORT}/uploads/`)) {
+        filePath = path.join(uploadsDir, path.basename(new URL(videoUrl).pathname))
+      } else {
+        const dlRes = await fetch(videoUrl)
+        const buffer = Buffer.from(await dlRes.arrayBuffer())
+        filePath = path.join(uploadsDir, `r2_upload_${Date.now()}_${sceneIndex}.mp4`)
+        fs.writeFileSync(filePath, buffer)
+      }
+
+      // Upload to R2 using S3-compatible API via fetch
+      const key = `ai-ad/${Date.now()}_scene_${sceneIndex}.mp4`
+      const fileBuffer = fs.readFileSync(filePath)
+
+      const putUrl = `https://${r2AccountId}.r2.cloudflarestorage.com/${r2Bucket}/${key}`
+      const uploadRes = await fetch(putUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'video/mp4',
+          'X-Amz-Content-Sha256': 'UNSIGNED-PAYLOAD',
+        },
+        body: fileBuffer,
+      })
+
+      if (uploadRes.ok && r2PublicUrl) {
+        const publicUrl = `${r2PublicUrl}/${key}`
+        console.log(`[AI-AD] R2 upload: ${publicUrl}`)
+        return res.json({ r2Url: publicUrl })
+      }
+    }
+
+    // Fallback: keep the local URL
+    console.log(`[AI-AD] R2 not configured, using local: ${videoUrl}`)
+    res.json({ r2Url: videoUrl })
+  } catch (e: any) {
+    console.error('[AI-AD] R2 upload error:', e.message)
+    // Fallback to local URL
+    res.json({ r2Url: req.body?.videoUrl || '' })
+  }
+})
+
+// POST /api/ai-ad/merge — Merge all scene clips with FFmpeg + Hebrew RTL text overlay
+app.post('/api/ai-ad/merge', async (req, res) => {
+  try {
+    const { scenes } = req.body
+    if (!scenes || !Array.isArray(scenes) || scenes.length === 0) {
+      return res.status(400).json({ message: 'חסרות סצנות למיזוג' })
+    }
+
+    const ffmpegPath = getFFmpeg()
+    console.log(`[AI-AD] Merging ${scenes.length} scenes with Hebrew text overlay`)
+
+    // Download all clips to local paths
+    const clipPaths: string[] = []
+    const overlayTexts: string[] = []
+
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i]
+      let clipPath: string
+
+      if (scene.r2Url.startsWith(`http://localhost:${PORT}/uploads/`)) {
+        clipPath = path.join(uploadsDir, path.basename(new URL(scene.r2Url).pathname))
+      } else {
+        const dlRes = await fetch(scene.r2Url)
+        if (!dlRes.ok) throw new Error(`Failed to download scene ${i + 1}`)
+        const buffer = Buffer.from(await dlRes.arrayBuffer())
+        clipPath = path.join(uploadsDir, `merge_input_${Date.now()}_${i}.mp4`)
+        fs.writeFileSync(clipPath, buffer)
+      }
+
+      if (!fs.existsSync(clipPath)) {
+        throw new Error(`קובץ סצנה ${i + 1} לא נמצא`)
+      }
+
+      clipPaths.push(clipPath)
+      overlayTexts.push(scene.hebrewText)
+    }
+
+    // Step 1: Add Hebrew text overlay to each clip using drawtext
+    const processedPaths: string[] = []
+
+    for (let i = 0; i < clipPaths.length; i++) {
+      const inputPath = clipPaths[i]
+      const outputPath = path.join(uploadsDir, `aiad_overlay_${Date.now()}_${i}.mp4`)
+
+      // Escape special characters for FFmpeg drawtext
+      const safeText = overlayTexts[i]
+        .replace(/'/g, "'\\''")
+        .replace(/:/g, '\\:')
+        .replace(/\\/g, '\\\\')
+
+      // Hebrew RTL text overlay at bottom center with semi-transparent background
+      const drawTextFilter = [
+        `drawtext=text='${safeText}'`,
+        'fontsize=36',
+        'fontcolor=white',
+        'borderw=2',
+        'bordercolor=black',
+        'x=(w-text_w)/2',
+        'y=h-th-80',
+        `box=1`,
+        `boxcolor=black@0.5`,
+        `boxborderw=12`,
+      ].join(':')
+
+      try {
+        execSync(
+          `"${ffmpegPath}" -i "${inputPath}" -vf "${drawTextFilter}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${outputPath}" -y`,
+          { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+        )
+        processedPaths.push(outputPath)
+      } catch (ffErr: any) {
+        // If drawtext fails (e.g. no font support), use clip as-is
+        console.warn(`[AI-AD] Text overlay failed for scene ${i + 1}, using original:`, ffErr.message?.substring(0, 100))
+        processedPaths.push(inputPath)
+      }
+    }
+
+    // Step 2: Normalize all clips to same resolution/codec for concat
+    const normalizedPaths: string[] = []
+    for (let i = 0; i < processedPaths.length; i++) {
+      const normPath = path.join(uploadsDir, `aiad_norm_${Date.now()}_${i}.mp4`)
+      try {
+        execSync(
+          `"${ffmpegPath}" -i "${processedPaths[i]}" -vf "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black" -r 30 -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -ar 44100 "${normPath}" -y`,
+          { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+        )
+        normalizedPaths.push(normPath)
+      } catch {
+        normalizedPaths.push(processedPaths[i])
+      }
+    }
+
+    // Step 3: Concatenate all clips
+    const listFile = path.join(uploadsDir, `aiad_concat_${Date.now()}.txt`)
+    fs.writeFileSync(listFile, normalizedPaths.map((p) => `file '${p}'`).join('\n'))
+
+    const outputPath = path.join(uploadsDir, `ai_ad_final_${Date.now()}.mp4`)
+    execSync(
+      `"${ffmpegPath}" -f concat -safe 0 -i "${listFile}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${outputPath}" -y`,
+      { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+    )
+
+    // Cleanup temp files
+    try { fs.unlinkSync(listFile) } catch {}
+    for (const p of [...processedPaths, ...normalizedPaths]) {
+      try { if (!clipPaths.includes(p)) fs.unlinkSync(p) } catch {}
+    }
+
+    const finalUrl = `http://localhost:${PORT}/uploads/${path.basename(outputPath)}`
+    console.log(`[AI-AD] Final merged video: ${finalUrl}`)
+
+    res.json({ url: finalUrl })
+  } catch (e: any) {
+    console.error('[AI-AD] Merge error:', e.message)
+    res.status(500).json({ message: 'שגיאה במיזוג: ' + e.message })
+  }
+})
+
 // ==================== START SERVER ====================
 
 app.listen(PORT, () => {
