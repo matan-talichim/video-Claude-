@@ -4346,7 +4346,7 @@ const BROLL_MODELS: Record<string, {
   costPerClip: number;
   duration: string;
   quality: string;
-  params?: (prompt: string) => any;
+  input?: (prompt: string) => any;
 }> = {
   'seedance': {
     kieModel: 'bytedance/seedance-1.5-pro',
@@ -4354,7 +4354,7 @@ const BROLL_MODELS: Record<string, {
     costPerClip: 0.36,
     duration: '5s',
     quality: '720p',
-    params: (prompt: string) => ({ prompt }),
+    input: (prompt: string) => ({ prompt }),
   },
   'kling': {
     kieModel: 'kling/v2-5-turbo-text-to-video-pro',
@@ -4362,7 +4362,7 @@ const BROLL_MODELS: Record<string, {
     costPerClip: 0.15,
     duration: '5s',
     quality: '720p',
-    params: (prompt: string) => ({ prompt }),
+    input: (prompt: string) => ({ prompt }),
   },
   'wan': {
     kieModel: 'wan/2-5-text-to-video',
@@ -4370,7 +4370,7 @@ const BROLL_MODELS: Record<string, {
     costPerClip: 0.10,
     duration: '5s',
     quality: '720p',
-    params: (prompt: string) => ({ prompt }),
+    input: (prompt: string) => ({ prompt }),
   },
   'veo-3.1-fast': {
     kieModel: 'google/veo-3.1-generate-preview',
@@ -4378,7 +4378,7 @@ const BROLL_MODELS: Record<string, {
     costPerClip: 0.20,
     duration: '4s',
     quality: '720p',
-    params: (prompt: string) => ({ prompt, durationSeconds: 4 }),
+    input: (prompt: string) => ({ prompt, durationSeconds: 4 }),
   },
   'veo-3.1-quality': {
     kieModel: 'google/veo-3.1-generate-preview',
@@ -4386,7 +4386,7 @@ const BROLL_MODELS: Record<string, {
     costPerClip: 1.00,
     duration: '4s',
     quality: '1080p',
-    params: (prompt: string) => ({ prompt, durationSeconds: 4 }),
+    input: (prompt: string) => ({ prompt, durationSeconds: 4 }),
   },
   'sora-2': {
     kieModel: 'openai/sora-2-text-to-video-stable',
@@ -4394,7 +4394,7 @@ const BROLL_MODELS: Record<string, {
     costPerClip: 0.25,
     duration: '5s',
     quality: '720p',
-    params: (prompt: string) => ({ prompt, durationSeconds: 5 }),
+    input: (prompt: string) => ({ prompt, durationSeconds: 5 }),
   },
 }
 
@@ -4409,8 +4409,8 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
   const modelConfig = BROLL_MODELS[modelId] || BROLL_MODELS['seedance']
 
   try {
-    // Build request params using model-specific params function
-    const params: any = modelConfig.params ? modelConfig.params(prompt) : { prompt }
+    // Build request input using model-specific input function
+    const input: any = modelConfig.input ? modelConfig.input(prompt) : { prompt }
 
     // Image-to-video: attach base64 image
     if (imageUrl) {
@@ -4423,23 +4423,25 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
         // Fall through to text-to-video
       } else {
         const imageBuffer = fs.readFileSync(imagePath)
-        params.image = imageBuffer.toString('base64')
+        input.image = imageBuffer.toString('base64')
         console.log(`[B-ROLL] Image-to-Video with ${modelConfig.label}`)
       }
     }
 
     const requestBody = {
       model: modelConfig.kieModel,
-      params,
+      input,
     }
 
+    const kieCreateUrl = 'https://api.kie.ai/api/v1/jobs/createTask'
+    console.log(`[B-ROLL] KIE URL: ${kieCreateUrl}`)
     console.log(`[B-ROLL] Creating job with KIE.ai:`)
     console.log(`[B-ROLL]   Model: ${modelConfig.kieModel}`)
     console.log(`[B-ROLL]   Prompt: "${prompt.substring(0, 80)}..."`)
     console.log(`[B-ROLL]   Body: ${JSON.stringify(requestBody).substring(0, 300)}`)
 
     // Create job
-    const createRes = await fetch('https://api.kie.ai/api/v1/jobs/create', {
+    const createRes = await fetch(kieCreateUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${kieApiKey}`,
