@@ -730,7 +730,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       start: s.start || 0,
       end: s.end || 0,
       text: s.text || '',
-      speaker: s.speaker || '',
+      speaker: s.speaker || 'דובר 1',
       isPresenter: false,
     }))
 

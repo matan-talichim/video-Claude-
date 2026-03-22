@@ -69,7 +69,8 @@ export default function Editor() {
                 start: s.start || 0,
                 end: s.end || 0,
                 text: s.text || '',
-                speaker: s.speaker || '',
+                speaker: s.speaker || 'דובר 1',
+                isPresenter: s.isPresenter,
               }))
               console.log('[EDITOR] Loaded auto-editor transcript:', autoTranscript?.length, 'segments')
             }

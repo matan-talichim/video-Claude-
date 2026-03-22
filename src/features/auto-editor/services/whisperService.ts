@@ -64,6 +64,8 @@ function mergeTranscripts(
         end: seg.end + offset,
         text: seg.text,
         sourceFile: fileIdx,
+        speaker: seg.speaker,
+        isPresenter: seg.isPresenter,
       })
     }
     offset += t.duration
