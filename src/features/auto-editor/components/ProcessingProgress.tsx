@@ -8,10 +8,9 @@ const STEPS_CONFIG: { key: AutoEditorStep; label: string; activeLabel?: string; 
   { key: 'cleaning', label: 'ניקוי טעויות וגמגומים', activeLabel: 'מנקה טעויות וגמגומים...', icon: '🧹' },
   { key: 'enriching', label: 'AI ניתח תוכן', activeLabel: 'AI מנתח את התוכן ומשפר פרומפט...', icon: '🧠' },
   { key: 'review_enrichment', label: 'סקירת הצעות', activeLabel: 'ממתין לאישור...', icon: '📋' },
-  { key: 'planning', label: 'תכנון דו-שלבי: במאי + עורך טכני', activeLabel: 'מתכנן 2 גרסאות עריכה...', icon: '🎬' },
+  { key: 'planning', label: 'תכנון דו-שלבי: במאי + עורך טכני', activeLabel: 'מתכנן גרסה אחת...', icon: '🎬' },
   { key: 'generating_assets', label: 'יצירת נכסים (רקע, B-Roll, מוזיקה)', activeLabel: 'מייצר נכסים...', icon: '🎨' },
-  { key: 'editing', label: 'עריכת סרטונים (2 גרסאות)', activeLabel: 'עורך 2 גרסאות...', icon: '✂️' },
-  { key: 'comparing', label: 'השוואת גרסאות', activeLabel: 'ממתין לבחירה...', icon: '⚖️' },
+  { key: 'editing', label: 'עריכת סרטונים', activeLabel: 'עורך...', icon: '✂️' },
   { key: 'exporting', label: 'ייצוא לפלטפורמות', activeLabel: 'מייצא...' },
 ]
 

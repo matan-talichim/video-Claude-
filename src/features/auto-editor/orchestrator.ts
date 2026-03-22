@@ -1342,12 +1342,11 @@ export async function continueAfterEnrichment(
 }
 
 /**
- * Phase 3: Called after user selects version(s) - A, B, or both
- * Now exports to platforms ONLY after selection
+ * Phase 3: Export the single version to platforms
  */
 export async function selectABVersion(
-  choices: Array<'A' | 'B'>,
-  preferredForDesign?: 'A' | 'B' | null
+  choices: Array<'A'>,
+  _preferredForDesign?: 'A' | null
 ): Promise<void> {
   const store = useAutoEditorStore.getState()
   const { setStep, setProcessedVideos, setResults, setSelectedVersion, addLog, setProgress } = store
@@ -1359,15 +1358,14 @@ export async function selectABVersion(
     return
   }
 
-  const choice = choices.length === 1 ? choices[0] : (preferredForDesign || choices[0])
-  setSelectedVersion(choice)
+  setSelectedVersion('A')
 
   const profile = useUserProfileStore.getState()
   profile.recordABChoice({
     contentType: enrichment?.detected_type || 'corporate',
-    chosenVersion: choice,
+    chosenVersion: 'A',
     versionAApproach: store.versionAApproach,
-    versionBApproach: store.versionBApproach,
+    versionBApproach: '',
     timestamp: Date.now(),
   })
 
@@ -1375,16 +1373,15 @@ export async function selectABVersion(
   const allResults: VideoResult[] = []
 
   for (const ver of choices) {
-    const chosen = ver === 'A' ? store.versionA : store.versionB
-    const approach = ver === 'A' ? store.versionAApproach : store.versionBApproach
+    const chosen = store.versionA
 
     if (!chosen || chosen.length === 0) {
-      addLog(`שגיאה: גרסה ${ver} ריקה`)
+      addLog('שגיאה: גרסה ריקה')
       continue
     }
 
-    addLog(`מייצא גרסה ${ver} לפלטפורמות: ${approach}`)
-    setProgress({ current: choices.indexOf(ver), total: choices.length, label: `מייצא גרסה ${ver} לפלטפורמות...` })
+    addLog(`מייצא לפלטפורמות: ${store.versionAApproach}`)
+    setProgress({ current: choices.indexOf(ver), total: choices.length, label: 'מייצא לפלטפורמות...' })
 
     for (const v of chosen) {
       const mainFile = v.files[0]
@@ -1417,7 +1414,7 @@ export async function selectABVersion(
         exportJob.output = {
           platforms: finalInput.platforms.map(p => ({ name: p, ratio: getPlatformRatio(p) })),
           skipPlatformExport: false,
-          version: ver,
+          version: 'A',
         }
 
         const processRes = await fetch(`${API_BASE}/auto-editor/process`, {
@@ -1437,13 +1434,13 @@ export async function selectABVersion(
             qualityScore: result.qualityScore,
             qualityReport: result.qualityReport,
           })
-          addLog(`גרסה ${ver} סרטון ${v.videoIndex}: ${result.files?.length || 0} קבצי פלטפורמה`)
+          addLog(`סרטון ${v.videoIndex}: ${result.files?.length || 0} קבצי פלטפורמה`)
         } else {
-          addLog(`ייצוא גרסה ${ver} נכשל, משתמש בקובץ המקורי`)
+          addLog('ייצוא נכשל, משתמש בקובץ המקורי')
           allResults.push(v)
         }
       } catch (err: any) {
-        addLog(`שגיאה בייצוא גרסה ${ver}: ${err.message}`)
+        addLog(`שגיאה בייצוא: ${err.message}`)
         allResults.push(v)
       }
     }

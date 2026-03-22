@@ -224,8 +224,6 @@ async function getTechnicalPlan(
       platforms: input.platforms,
       promptEvolution: evolvedPlanPrompt !== BASE_TECHNICAL_PLAN_PROMPT ? evolvedPlanPrompt : undefined,
       socialLearningRules: techSocialRules,
-      // Use higher temperature for Version B to ensure different results
-      temperature: input.userPrompt?.includes('VERSION B') ? 1.0 : undefined,
     }),
   })
 

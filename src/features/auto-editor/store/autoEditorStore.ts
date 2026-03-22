@@ -137,12 +137,10 @@ interface AutoEditorStore {
   presenterConfidence: 'high' | 'medium' | 'low' | null
   presenterDescription: string | null
 
-  // A/B version comparison
+  // Version result
   versionA: ABVersionResult[] | null
-  versionB: ABVersionResult[] | null
   versionAApproach: string
-  versionBApproach: string
-  selectedVersion: 'A' | 'B' | null
+  selectedVersion: 'A' | null
 
   // Quality report
   qualityReport: QualityReport | null
@@ -174,10 +172,9 @@ interface AutoEditorStore {
   setVisualAnalysis: (data: any) => void
   setEnergyAnalysis: (data: any) => void
   setVersionA: (data: ABVersionResult[], approach: string) => void
-  setVersionB: (data: ABVersionResult[], approach: string) => void
   setMainPresenter: (speaker: string | null) => void
   setDetectedPresenter: (speaker: string | null, confidence: 'high' | 'medium' | 'low', description?: string) => void
-  setSelectedVersion: (v: 'A' | 'B') => void
+  setSelectedVersion: (v: 'A') => void
   setQualityReport: (report: QualityReport) => void
   setCachedTranscript: (t: any) => void
   setCachedEditingPlan: (p: any) => void
@@ -213,10 +210,8 @@ const initialState = {
   presenterConfidence: null as 'high' | 'medium' | 'low' | null,
   presenterDescription: null as string | null,
   versionA: null as ABVersionResult[] | null,
-  versionB: null as ABVersionResult[] | null,
   versionAApproach: '',
-  versionBApproach: '',
-  selectedVersion: null as 'A' | 'B' | null,
+  selectedVersion: null as 'A' | null,
   qualityReport: null as QualityReport | null,
   input: null as AutoEditorInput | null,
   brandImages: [] as BrandImage[],
@@ -260,7 +255,6 @@ export const useAutoEditorStore = create<AutoEditorStore>((set, get) => ({
   setVisualAnalysis: (visualAnalysis) => set({ visualAnalysis }),
   setEnergyAnalysis: (energyAnalysis) => set({ energyAnalysis }),
   setVersionA: (data, approach) => set({ versionA: data, versionAApproach: approach }),
-  setVersionB: (data, approach) => set({ versionB: data, versionBApproach: approach }),
   setMainPresenter: (mainPresenter) => set({ mainPresenter }),
   setDetectedPresenter: (detectedPresenter, presenterConfidence, presenterDescription) =>
     set({ detectedPresenter, presenterConfidence, presenterDescription: presenterDescription || null }),

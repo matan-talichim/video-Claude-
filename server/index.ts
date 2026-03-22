@@ -4340,13 +4340,62 @@ Style requirements:
 })
 
 // B-Roll models available through KIE.ai
-const BROLL_MODELS: Record<string, { kieModel: string; label: string; costPerClip: number; duration: string; quality: string }> = {
-  'veo-3.1-fast': { kieModel: 'google/veo-3.1-generate-preview', label: 'Veo 3.1 Fast', costPerClip: 0.40, duration: '8s', quality: '720p' },
-  'veo-3.1-quality': { kieModel: 'google/veo-3.1-generate-preview', label: 'Veo 3.1 Quality', costPerClip: 2.00, duration: '8s', quality: '1080p' },
-  'sora-2': { kieModel: 'openai/sora-2-text-to-video-stable', label: 'Sora 2', costPerClip: 0.50, duration: '10s', quality: '720p' },
-  'kling': { kieModel: 'kling/v2-5-turbo-text-to-video-pro', label: 'Kling v2.5 Turbo', costPerClip: 0.15, duration: '5s', quality: '720p' },
-  'wan': { kieModel: 'wan/2-5-text-to-video', label: 'WAN 2.5', costPerClip: 0.10, duration: '5s', quality: '720p' },
-  'seedance': { kieModel: 'bytedance/seedance-1.5-pro', label: 'Seedance 1.5 Pro', costPerClip: 0.36, duration: '5s', quality: '720p' },
+const BROLL_MODELS: Record<string, {
+  kieModel: string;
+  label: string;
+  costPerClip: number;
+  duration: string;
+  quality: string;
+  params?: (prompt: string) => any;
+}> = {
+  'seedance': {
+    kieModel: 'bytedance/seedance-1.5-pro',
+    label: 'Seedance 1.5 Pro',
+    costPerClip: 0.36,
+    duration: '5s',
+    quality: '720p',
+    params: (prompt: string) => ({ prompt }),
+  },
+  'kling': {
+    kieModel: 'kling/v2-5-turbo-text-to-video-pro',
+    label: 'Kling v2.5 Turbo',
+    costPerClip: 0.15,
+    duration: '5s',
+    quality: '720p',
+    params: (prompt: string) => ({ prompt }),
+  },
+  'wan': {
+    kieModel: 'wan/2-5-text-to-video',
+    label: 'WAN 2.5',
+    costPerClip: 0.10,
+    duration: '5s',
+    quality: '720p',
+    params: (prompt: string) => ({ prompt }),
+  },
+  'veo-3.1-fast': {
+    kieModel: 'google/veo-3.1-generate-preview',
+    label: 'Veo 3.1 Fast',
+    costPerClip: 0.20,
+    duration: '4s',
+    quality: '720p',
+    params: (prompt: string) => ({ prompt, durationSeconds: 4 }),
+  },
+  'veo-3.1-quality': {
+    kieModel: 'google/veo-3.1-generate-preview',
+    label: 'Veo 3.1 Quality',
+    costPerClip: 1.00,
+    duration: '4s',
+    quality: '1080p',
+    params: (prompt: string) => ({ prompt, durationSeconds: 4 }),
+  },
+  'sora-2': {
+    kieModel: 'openai/sora-2-text-to-video-stable',
+    label: 'Sora 2',
+    costPerClip: 0.25,
+    duration: '5s',
+    quality: '720p',
+    params: (prompt: string) => ({ prompt, durationSeconds: 5 }),
+  },
 }
 
 // Unified B-Roll generation through KIE.ai API
@@ -4358,11 +4407,10 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
   }
 
   const modelConfig = BROLL_MODELS[modelId] || BROLL_MODELS['seedance']
-  console.log(`[B-ROLL] Generating with ${modelConfig.label}: "${prompt.substring(0, 60)}..."`)
 
   try {
-    // Build request body
-    const params: any = { prompt }
+    // Build request params using model-specific params function
+    const params: any = modelConfig.params ? modelConfig.params(prompt) : { prompt }
 
     // Image-to-video: attach base64 image
     if (imageUrl) {
@@ -4380,6 +4428,16 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
       }
     }
 
+    const requestBody = {
+      model: modelConfig.kieModel,
+      params,
+    }
+
+    console.log(`[B-ROLL] Creating job with KIE.ai:`)
+    console.log(`[B-ROLL]   Model: ${modelConfig.kieModel}`)
+    console.log(`[B-ROLL]   Prompt: "${prompt.substring(0, 80)}..."`)
+    console.log(`[B-ROLL]   Body: ${JSON.stringify(requestBody).substring(0, 300)}`)
+
     // Create job
     const createRes = await fetch('https://api.kie.ai/api/v1/jobs/create', {
       method: 'POST',
@@ -4387,22 +4445,32 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
         'Authorization': `Bearer ${kieApiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: modelConfig.kieModel,
-        params,
-      }),
+      body: JSON.stringify(requestBody),
     })
 
+    const createText = await createRes.text()
+    console.log(`[B-ROLL] KIE response (${createRes.status}): ${createText.substring(0, 300)}`)
+
     if (!createRes.ok) {
-      const errText = await createRes.text()
-      throw new Error(`KIE create failed ${createRes.status}: ${errText.substring(0, 200)}`)
+      console.error(`[B-ROLL] KIE create failed ${createRes.status}: ${createText.substring(0, 200)}`)
+      return null
     }
 
-    const createData = await createRes.json()
-    const taskId = createData.data?.id || createData.data?.taskId || createData.data?.task_id || createData.data?.recordId
-    if (!taskId) throw new Error('No taskId returned')
+    let createData
+    try {
+      createData = JSON.parse(createText)
+    } catch {
+      console.error('[B-ROLL] Failed to parse KIE response')
+      return null
+    }
 
-    console.log(`[B-ROLL] Task ${taskId} (${modelConfig.label})`)
+    const taskId = createData.data?.id || createData.data?.taskId || createData.data?.task_id || createData.data?.recordId
+    if (!taskId) {
+      console.error('[B-ROLL] No taskId in response:', createText.substring(0, 200))
+      return null
+    }
+
+    console.log(`[B-ROLL] Task created: ${taskId} (${modelConfig.label})`)
 
     // Poll for completion (max 10 minutes)
     for (let i = 0; i < 120; i++) {
@@ -4418,42 +4486,51 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
       if (state === 'success') {
         let videoUrl: string | undefined
 
-        // Parse result - different models return URL differently
+        // Try multiple ways to extract video URL
         try {
           const resultJson = typeof pollData.data.resultJson === 'string'
             ? JSON.parse(pollData.data.resultJson)
             : (pollData.data.resultJson || {})
-          videoUrl = resultJson.resultUrls?.[0] || resultJson.url || resultJson.videoUrl
-        } catch {
-          videoUrl = pollData.data?.resultUrl || pollData.data?.url
+          videoUrl = resultJson?.resultUrls?.[0] || resultJson?.url || resultJson?.videoUrl
+        } catch {}
+
+        if (!videoUrl) {
+          videoUrl = pollData.data?.resultUrl || pollData.data?.url || pollData.data?.videoUrl
         }
 
         if (!videoUrl) {
-          console.error('[B-ROLL] No video URL in result:', JSON.stringify(pollData.data).substring(0, 300))
+          console.error('[B-ROLL] Success but no URL. Full response:', JSON.stringify(pollData.data).substring(0, 500))
           return null
         }
+
+        console.log(`[B-ROLL] Video URL: ${videoUrl.substring(0, 100)}`)
 
         // Download immediately to prevent URL expiry
         const localPath = path.join(uploadsDir, `broll_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.mp4`)
         const videoRes = await fetch(videoUrl)
-        if (!videoRes.ok) throw new Error(`Download failed: ${videoRes.status}`)
+
+        if (!videoRes.ok) {
+          console.error(`[B-ROLL] Download failed: ${videoRes.status}`)
+          return null
+        }
 
         const buffer = Buffer.from(await videoRes.arrayBuffer())
         fs.writeFileSync(localPath, buffer)
 
         const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(localPath)}`
-        console.log(`[B-ROLL] ${modelConfig.label}: ${serverUrl} (${(buffer.length / 1024 / 1024).toFixed(1)}MB)`)
+        console.log(`[B-ROLL] ✅ ${modelConfig.label}: ${serverUrl} (${(buffer.length / 1024 / 1024).toFixed(1)}MB)`)
 
         return serverUrl
       }
 
       if (state === 'fail' || state === 'failed' || state === 'error') {
-        console.error(`[B-ROLL] ${modelConfig.label} failed for task ${taskId}`)
+        console.error(`[B-ROLL] Task ${taskId} failed. Response:`, JSON.stringify(pollData.data).substring(0, 300))
         return null
       }
 
-      if (i % 12 === 0 && i > 0) {
-        console.log(`[B-ROLL] Polling ${taskId}: ${state} (${(i * 5 / 60).toFixed(1)} min)...`)
+      // Log progress every 30 seconds
+      if (i % 6 === 0 && i > 0) {
+        console.log(`[B-ROLL] Polling ${taskId}: ${state} (${(i * 5 / 60).toFixed(1)} min)`)
       }
     }
 
