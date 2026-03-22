@@ -115,6 +115,7 @@ export interface TranscriptSegment {
   text: string
   speaker: string
   isPresenter: boolean
+  words?: { word: string; start: number; end: number; confidence?: number; speaker?: string }[]
 }
 
 export interface SpeakerInfo {
