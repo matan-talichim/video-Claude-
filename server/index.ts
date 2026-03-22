@@ -5202,6 +5202,547 @@ app.post('/api/auto-editor/transcribe', async (req, res) => {
   }
 })
 
+// ==================== SPEAKER VERIFICATION ====================
+// Multi-signal verification: Repetition Pattern + Volume Analysis + GPT-5.4 + Visual Cross-Reference
+
+/**
+ * Method 1: Repetition Pattern Detection (FREE, most reliable)
+ * Detects dictation pairs where production assistant says a line and presenter repeats it.
+ */
+function detectRepetitionPatterns(segments: any[]): void {
+  for (let i = 0; i < segments.length - 1; i++) {
+    const segA = segments[i]
+    const segB = segments[i + 1]
+    if (!segA.text || !segB.text) continue
+
+    const wordsA = segA.text.replace(/[,.\-!?״"׳']/g, '').split(/\s+/).filter((w: string) => w.length > 0)
+    const wordsB = segB.text.replace(/[,.\-!?״"׳']/g, '').split(/\s+/).filter((w: string) => w.length > 0)
+    if (wordsA.length === 0 || wordsB.length === 0) continue
+
+    // Word overlap
+    const setA = new Set(wordsA.map((w: string) => w.toLowerCase()))
+    const setB = new Set(wordsB.map((w: string) => w.toLowerCase()))
+    let overlap = 0
+    for (const w of setA) { if (setB.has(w)) overlap++ }
+    const shorter = Math.min(setA.size, setB.size)
+    const similarity = shorter > 0 ? overlap / shorter : 0
+
+    // Check time gap (within 3 seconds)
+    const gap = segB.start - segA.end
+
+    // Dictation pair: high similarity or (moderate similarity + close timing)
+    if (similarity > 0.5 || (similarity > 0.4 && gap < 3)) {
+      segA._verification = segA._verification || {}
+      segA._verification.repetitionRole = 'dictator'
+      segA._verification.repetitionSimilarity = Math.round(similarity * 100)
+      segA._verification.repetitionPairIndex = i + 1
+
+      segB._verification = segB._verification || {}
+      segB._verification.repetitionRole = 'repeater'
+      segB._verification.repetitionSimilarity = Math.round(similarity * 100)
+      segB._verification.repetitionPairIndex = i
+
+      console.log(`[SPEAKER VERIFY] Dictation pair: seg ${i} → seg ${i + 1} (similarity=${(similarity * 100).toFixed(0)}%, gap=${gap.toFixed(1)}s)`)
+    }
+  }
+
+  // Mark remaining segments as 'none'
+  for (const seg of segments) {
+    if (!seg._verification) seg._verification = {}
+    if (!seg._verification.repetitionRole) seg._verification.repetitionRole = 'none'
+  }
+}
+
+/**
+ * Method 2: Volume Analysis (FREE)
+ * Measures mean volume per segment using FFmpeg volumedetect.
+ */
+async function analyzeSegmentVolumes(segments: any[], videoPath: string): Promise<{ medianDb: number }> {
+  const ffmpeg = getFFmpeg()
+  const volumes: number[] = []
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    seg._verification = seg._verification || {}
+
+    // Skip segments shorter than 0.5 seconds
+    const duration = seg.end - seg.start
+    if (duration < 0.5) {
+      seg._verification.volumeDb = null
+      seg._verification.volumeFlag = 'normal'
+      continue
+    }
+
+    try {
+      const cmd = `"${ffmpeg}" -i "${videoPath}" -ss ${seg.start.toFixed(3)} -to ${seg.end.toFixed(3)} -af "volumedetect" -f null /dev/null 2>&1`
+      const output = execSync(cmd, { timeout: 10000, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 })
+      const match = output.match(/mean_volume:\s*([-\d.]+)\s*dB/)
+      if (match) {
+        const db = parseFloat(match[1])
+        seg._verification.volumeDb = db
+        volumes.push(db)
+      } else {
+        seg._verification.volumeDb = null
+        seg._verification.volumeFlag = 'normal'
+      }
+    } catch {
+      seg._verification.volumeDb = null
+      seg._verification.volumeFlag = 'normal'
+    }
+  }
+
+  // Calculate median
+  if (volumes.length === 0) return { medianDb: 0 }
+  const sorted = [...volumes].sort((a, b) => a - b)
+  const medianDb = sorted[Math.floor(sorted.length / 2)]
+
+  // Flag segments more than 5dB quieter than median
+  for (const seg of segments) {
+    if (seg._verification.volumeDb == null) continue
+    const diff = medianDb - seg._verification.volumeDb
+    if (diff > 5) {
+      seg._verification.volumeFlag = 'quiet'
+    } else if (diff < -5) {
+      seg._verification.volumeFlag = 'loud'
+    } else {
+      seg._verification.volumeFlag = 'normal'
+    }
+  }
+
+  return { medianDb }
+}
+
+/**
+ * Method 3: GPT-5.4 Deep Analysis (~$0.03)
+ * Sends all segments with context to GPT for classification.
+ */
+async function classifyWithGPT(segments: any[], medianDb: number): Promise<boolean> {
+  try {
+    const ai = await getOpenAI()
+    if (!ai) {
+      console.warn('[SPEAKER VERIFY] OpenAI not available, skipping GPT classification')
+      return false
+    }
+
+    const segmentData = segments.map((seg: any, i: number) => ({
+      index: i,
+      start: parseFloat(seg.start.toFixed(1)),
+      end: parseFloat(seg.end.toFixed(1)),
+      text: seg.text,
+      current_speaker_label: seg.speaker,
+      volume_db: seg._verification?.volumeDb ?? null,
+      word_count: (seg.text || '').split(/\s+/).filter((w: string) => w.length > 0).length,
+      gap_to_next_segment_seconds: i < segments.length - 1
+        ? parseFloat((segments[i + 1].start - seg.end).toFixed(1))
+        : null,
+    }))
+
+    const systemPrompt = `You are an expert video editor analyzing a Hebrew transcript from a marketing video shoot.
+FILMING SCENARIO:
+* One PRESENTER sits in front of camera delivering content
+* One PRODUCTION ASSISTANT stands behind the camera
+* The assistant DICTATES lines to the presenter
+* The presenter REPEATS what the assistant said, speaking to camera
+* Sometimes the assistant also gives directions: "עוד פעם", "יופי", "מוכן?", "בוא נעשה עוד טייק"
+YOUR JOB: For each segment, determine if the speaker is the PRESENTER or the PRODUCTION ASSISTANT.
+DETECTION RULES:
+1. DICTATION PATTERN: If two consecutive segments have very similar text, the FIRST one is the assistant dictating and the SECOND is the presenter repeating. This is the most reliable signal.
+2. DIRECTIONS: Short phrases like "עוד פעם", "נתחיל", "יופי", "מוכן?", "בוא", "תגיד", "תחזור", "עצור", "מצוין", "פעם אחרונה", "בוא נעשה" are ALWAYS the production assistant.
+3. REACTIONS: Very short segments (1-3 words) that are reactions like "פאק", "יאללה", "אוקיי", "כן" between longer segments are usually the production assistant.
+4. DELIVERY STYLE: The presenter speaks in complete, polished sentences directed at an audience. The assistant speaks in casual, directive tone to the presenter.
+5. VOLUME DATA: Lower volume (more negative dB) suggests the person is further from the mic (likely assistant), but this is not always reliable.
+6. CONTEXT: Consider the flow — if the presenter was speaking, then a quiet/short segment appears, then the presenter continues the same topic — that middle segment is likely the assistant giving feedback.
+Be VERY careful: the assistant and presenter often say THE SAME WORDS. The difference is in the PATTERN (who said it first) and CONTEXT.`
+
+    const userPrompt = `Here are all transcript segments with timing and volume data:
+${JSON.stringify(segmentData, null, 1)}
+
+For each segment respond with:
+* segment_index: number
+* is_presenter: true or false
+* confidence: "high", "medium", or "low"
+* reason: brief explanation
+
+CRITICAL: Respond ONLY with a valid JSON array. No markdown, no backticks, no explanation outside the array.`
+
+    const response = await callOpenAIWithRetry(ai, {
+      model: 'gpt-5.4',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.1,
+      max_tokens: 4000,
+    })
+
+    const content = response.choices[0]?.message?.content?.trim() || ''
+    const cleanContent = content.replace(/```json|```/g, '').trim()
+    const classifications = JSON.parse(cleanContent)
+
+    if (!Array.isArray(classifications)) {
+      console.warn('[SPEAKER VERIFY] GPT returned non-array, skipping')
+      return false
+    }
+
+    for (const cls of classifications) {
+      const idx = cls.segment_index
+      if (idx != null && segments[idx]) {
+        segments[idx]._verification = segments[idx]._verification || {}
+        segments[idx]._verification.gptClassification = {
+          isPresenter: cls.is_presenter,
+          confidence: cls.confidence || 'low',
+          reason: cls.reason || '',
+        }
+      }
+    }
+
+    console.log(`[SPEAKER VERIFY] GPT classified ${classifications.length} segments`)
+    return true
+  } catch (e: any) {
+    console.warn(`[SPEAKER VERIFY] GPT classification failed: ${e.message?.substring(0, 150)}`)
+    return false
+  }
+}
+
+/**
+ * Method 4: Visual Cross-Reference (FREE, uses existing frames)
+ * For uncertain segments, check if the presenter's mouth is open.
+ */
+async function visualCrossReference(segments: any[], videoPath: string, maxChecks: number = 5): Promise<number> {
+  const ai = await getOpenAI()
+  if (!ai) return 0
+
+  const ffmpeg = getFFmpeg()
+  let checksPerformed = 0
+
+  // Find uncertain segments: methods disagree or low confidence
+  const uncertainIndices: number[] = []
+  for (let i = 0; i < segments.length; i++) {
+    const v = segments[i]._verification || {}
+    if (v.repetitionRole !== 'none') continue // repetition already decided
+
+    const gptConf = v.gptClassification?.confidence
+    const gptPresenter = v.gptClassification?.isPresenter
+    const volumeQuiet = v.volumeFlag === 'quiet'
+
+    // Uncertain: GPT low confidence, or GPT and volume disagree
+    if (gptConf === 'low' || (gptConf === 'medium' && gptPresenter && volumeQuiet)) {
+      uncertainIndices.push(i)
+    }
+  }
+
+  if (uncertainIndices.length === 0) {
+    console.log('[SPEAKER VERIFY] No uncertain segments for visual check')
+    return 0
+  }
+
+  const toCheck = uncertainIndices.slice(0, maxChecks)
+  console.log(`[SPEAKER VERIFY] Visual cross-reference for ${toCheck.length} uncertain segments`)
+
+  for (const idx of toCheck) {
+    const seg = segments[idx]
+    const midpoint = (seg.start + seg.end) / 2
+
+    try {
+      // Extract a frame at the midpoint
+      const framePath = path.join(uploadsDir, `sv_frame_${Date.now()}_${idx}.jpg`)
+      execSync(
+        `"${ffmpeg}" -i "${videoPath}" -ss ${midpoint.toFixed(3)} -frames:v 1 -q:v 2 "${framePath}" -y`,
+        { timeout: 10000, maxBuffer: 5 * 1024 * 1024 }
+      )
+
+      if (!fs.existsSync(framePath) || fs.statSync(framePath).size < 500) {
+        seg._verification.visualCheck = 'not_checked'
+        continue
+      }
+
+      const imageBuffer = fs.readFileSync(framePath)
+      const base64Image = imageBuffer.toString('base64')
+
+      const visionResponse = await ai.chat.completions.create({
+        model: 'gpt-4.1',
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Is the person in this image speaking (mouth open) or listening (mouth closed)? Respond with ONLY one word: "speaking" or "listening".',
+            },
+            {
+              type: 'image_url',
+              image_url: { url: `data:image/jpeg;base64,${base64Image}`, detail: 'low' },
+            },
+          ],
+        }],
+        max_tokens: 10,
+      })
+
+      const answer = visionResponse.choices[0]?.message?.content?.trim().toLowerCase() || ''
+      if (answer.includes('speaking')) {
+        seg._verification.visualCheck = 'speaking'
+      } else if (answer.includes('listening')) {
+        seg._verification.visualCheck = 'listening'
+      } else {
+        seg._verification.visualCheck = 'not_checked'
+      }
+
+      checksPerformed++
+
+      // Clean up frame
+      try { fs.unlinkSync(framePath) } catch {}
+    } catch (e: any) {
+      console.warn(`[SPEAKER VERIFY] Visual check failed for seg ${idx}: ${e.message?.substring(0, 80)}`)
+      seg._verification.visualCheck = 'not_checked'
+    }
+  }
+
+  return checksPerformed
+}
+
+/**
+ * Voting Logic: Combine all signals to make a final decision per segment.
+ */
+function applyVotingLogic(segments: any[]): void {
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    const v = seg._verification || {}
+    const wordCount = (seg.text || '').split(/\s+/).filter((w: string) => w.length > 0).length
+
+    let verdict: 'presenter' | 'production_assistant' = 'presenter'
+    let confidenceLevel: 'high' | 'medium' | 'low' = 'low'
+
+    // Rule 1: Repetition pattern wins
+    if (v.repetitionRole === 'dictator') {
+      verdict = 'production_assistant'
+      confidenceLevel = 'high'
+    } else if (v.repetitionRole === 'repeater') {
+      verdict = 'presenter'
+      confidenceLevel = 'high'
+    }
+    // Rule 2: GPT high confidence + short segment
+    else if (v.gptClassification?.confidence === 'high' && !v.gptClassification.isPresenter && wordCount < 5) {
+      verdict = 'production_assistant'
+      confidenceLevel = 'high'
+    }
+    // Rule 3: Multiple signals agree
+    else {
+      let notPresenterSignals = 0
+      if (v.gptClassification && !v.gptClassification.isPresenter) notPresenterSignals++
+      if (v.volumeFlag === 'quiet') notPresenterSignals++
+      if (v.visualCheck === 'listening') notPresenterSignals++
+
+      if (notPresenterSignals >= 2) {
+        verdict = 'production_assistant'
+        confidenceLevel = 'medium'
+      }
+      // Rule 4: GPT medium + volume quiet
+      else if (v.gptClassification?.confidence === 'medium' && !v.gptClassification.isPresenter && v.volumeFlag === 'quiet') {
+        verdict = 'production_assistant'
+        confidenceLevel = 'medium'
+      }
+      // Rule 5: Visual tiebreaker
+      else if (v.visualCheck === 'listening') {
+        verdict = 'production_assistant'
+        confidenceLevel = 'low'
+      }
+      // Rule 6: Default — keep as presenter
+      else {
+        if (v.gptClassification) {
+          verdict = v.gptClassification.isPresenter ? 'presenter' : 'production_assistant'
+          confidenceLevel = v.gptClassification.confidence || 'low'
+        } else {
+          verdict = 'presenter'
+          confidenceLevel = 'low'
+        }
+      }
+    }
+
+    v.finalVerdict = verdict
+    v.confidenceLevel = confidenceLevel
+    seg._verification = v
+  }
+}
+
+app.post('/api/auto-editor/verify-speakers', async (req, res) => {
+  const { segments, videoUrl, framesDir } = req.body
+
+  if (!segments || !Array.isArray(segments) || segments.length === 0) {
+    return res.status(400).json({ message: 'חסר segments' })
+  }
+
+  console.log(`[SPEAKER VERIFY] === Starting verification for ${segments.length} segments ===`)
+  const startTime = Date.now()
+
+  // Resolve local video path
+  let localFilePath = ''
+  try {
+    if (videoUrl.startsWith(`http://localhost:${PORT}/uploads/`) || videoUrl.startsWith('/uploads/')) {
+      const filename = path.basename(new URL(videoUrl, `http://localhost:${PORT}`).pathname)
+      localFilePath = path.join(uploadsDir, filename)
+    } else if (videoUrl.startsWith('http')) {
+      // Download remote file
+      const fileResponse = await fetch(videoUrl)
+      if (!fileResponse.ok) throw new Error(`Download failed: ${fileResponse.statusText}`)
+      const fileBuffer = Buffer.from(await fileResponse.arrayBuffer())
+      localFilePath = path.join(uploadsDir, `temp-sv-${Date.now()}.mp4`)
+      fs.writeFileSync(localFilePath, fileBuffer)
+    }
+  } catch (e: any) {
+    console.warn(`[SPEAKER VERIFY] Could not resolve video path: ${e.message?.substring(0, 100)}`)
+  }
+
+  const hasVideo = localFilePath && fs.existsSync(localFilePath)
+
+  // Make working copies with _verification field
+  const workingSegments = segments.map((s: any) => ({ ...s, _verification: {} }))
+
+  // --- Method 1: Repetition Pattern Detection ---
+  console.log('[SPEAKER VERIFY] Method 1: Repetition pattern detection...')
+  detectRepetitionPatterns(workingSegments)
+  const dictationPairs = workingSegments.filter((s: any) => s._verification.repetitionRole === 'dictator').length
+  console.log(`[SPEAKER VERIFY] Found ${dictationPairs} dictation pairs`)
+
+  // --- Method 2: Volume Analysis ---
+  let medianDb = 0
+  let volumeFlagged = 0
+  if (hasVideo) {
+    console.log('[SPEAKER VERIFY] Method 2: Volume analysis...')
+    const volumeResult = await analyzeSegmentVolumes(workingSegments, localFilePath)
+    medianDb = volumeResult.medianDb
+    volumeFlagged = workingSegments.filter((s: any) => s._verification.volumeFlag === 'quiet').length
+    console.log(`[SPEAKER VERIFY] Volume: median=${medianDb.toFixed(1)}dB, ${volumeFlagged} flagged as quiet`)
+  } else {
+    console.log('[SPEAKER VERIFY] Method 2: Skipped (no video file)')
+    workingSegments.forEach((s: any) => { s._verification.volumeFlag = 'normal' })
+  }
+
+  // --- Method 3: GPT-5.4 Deep Analysis ---
+  console.log('[SPEAKER VERIFY] Method 3: GPT-5.4 deep analysis...')
+  const gptSuccess = await classifyWithGPT(workingSegments, medianDb)
+  const gptClassified = gptSuccess ? workingSegments.filter((s: any) => s._verification.gptClassification).length : 0
+
+  // --- Method 4: Visual Cross-Reference (only for uncertain segments) ---
+  let visualChecked = 0
+  if (hasVideo) {
+    console.log('[SPEAKER VERIFY] Method 4: Visual cross-reference (uncertain segments only)...')
+    visualChecked = await visualCrossReference(workingSegments, localFilePath, 5)
+    console.log(`[SPEAKER VERIFY] Visual: ${visualChecked} segments checked`)
+  } else {
+    workingSegments.forEach((s: any) => { s._verification.visualCheck = 'not_checked' })
+  }
+
+  // --- Apply Voting Logic ---
+  console.log('[SPEAKER VERIFY] Applying voting logic...')
+  applyVotingLogic(workingSegments)
+
+  // --- Determine which speaker label is the presenter ---
+  const presenterVotes: Record<string, number> = {}
+  for (const seg of workingSegments) {
+    if (seg._verification.finalVerdict === 'presenter') {
+      presenterVotes[seg.speaker] = (presenterVotes[seg.speaker] || 0) + 1
+    }
+  }
+  const presenterLabel = Object.entries(presenterVotes)
+    .sort((a, b) => (b[1] as number) - (a[1] as number))[0]?.[0] || segments[0]?.speaker || 'דובר 1'
+
+  // --- Per-segment logging & relabeling ---
+  let presenterSegCount = 0
+  let presenterDuration = 0
+  let assistantSegCount = 0
+  let assistantDuration = 0
+  let highConf = 0
+  let medConf = 0
+  let lowConf = 0
+
+  const correctedSegments = workingSegments.map((seg: any, i: number) => {
+    const v = seg._verification
+    const dur = seg.end - seg.start
+    const isPresenter = v.finalVerdict === 'presenter'
+    const conf = v.confidenceLevel || 'low'
+
+    if (conf === 'high') highConf++
+    else if (conf === 'medium') medConf++
+    else lowConf++
+
+    if (isPresenter) {
+      presenterSegCount++
+      presenterDuration += dur
+    } else {
+      assistantSegCount++
+      assistantDuration += dur
+    }
+
+    // Per-segment log
+    const repInfo = v.repetitionRole !== 'none'
+      ? `repetition=${v.repetitionRole} (sim=${v.repetitionSimilarity || 0}% with seg ${v.repetitionPairIndex ?? '?'})`
+      : 'repetition=none'
+    const volInfo = v.volumeDb != null
+      ? `volume=${v.volumeDb.toFixed(1)}dB (median=${medianDb.toFixed(1)}, diff=${(medianDb - v.volumeDb).toFixed(1)}dB, ${v.volumeFlag})`
+      : 'volume=skipped'
+    const gptInfo = v.gptClassification
+      ? `gpt=${v.gptClassification.isPresenter ? 'presenter' : 'not_presenter'} (${v.gptClassification.confidence}) "${v.gptClassification.reason}"`
+      : 'gpt=skipped'
+    const visInfo = v.visualCheck !== 'not_checked' ? `visual=${v.visualCheck}` : ''
+    const resultLabel = isPresenter ? `${presenterLabel} ✓` : 'עוזר הפקה ✗'
+
+    console.log(`[SPEAKER VERIFY] Seg ${i} (${seg.start.toFixed(1)}-${seg.end.toFixed(1)}s) "${(seg.text || '').substring(0, 30)}..." [${seg.speaker}]: ${repInfo} ${volInfo} ${gptInfo} ${visInfo} → RESULT: ${resultLabel}`)
+
+    // Return corrected segment
+    const corrected: any = {
+      start: seg.start,
+      end: seg.end,
+      text: seg.text,
+      speaker: isPresenter ? presenterLabel : 'עוזר הפקה',
+      isPresenter,
+      words: seg.words,
+      speakerVerification: {
+        repetitionRole: v.repetitionRole || 'none',
+        repetitionSimilarity: v.repetitionSimilarity,
+        repetitionPairIndex: v.repetitionPairIndex,
+        volumeDb: v.volumeDb,
+        volumeFlag: v.volumeFlag || 'normal',
+        gptClassification: v.gptClassification,
+        visualCheck: v.visualCheck || 'not_checked',
+        finalVerdict: v.finalVerdict,
+      },
+    }
+    return corrected
+  })
+
+  // --- Summary log ---
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+  console.log(`[SPEAKER VERIFY] === Summary ===`)
+  console.log(`[SPEAKER VERIFY] Total segments: ${segments.length}`)
+  console.log(`[SPEAKER VERIFY] Presenter (${presenterLabel}): ${presenterSegCount} segments (${presenterDuration.toFixed(1)}s)`)
+  console.log(`[SPEAKER VERIFY] Production assistant: ${assistantSegCount} segments (${assistantDuration.toFixed(1)}s)`)
+  console.log(`[SPEAKER VERIFY] Detection methods used: repetition=${dictationPairs} pairs found, volume=${volumeFlagged} flagged, gpt=${gptClassified} classified`)
+  console.log(`[SPEAKER VERIFY] Dictation pairs found: ${dictationPairs} (assistant dictates, presenter repeats)`)
+  console.log(`[SPEAKER VERIFY] High confidence: ${highConf}/${segments.length}, Medium: ${medConf}/${segments.length}, Low: ${lowConf}/${segments.length}`)
+  console.log(`[SPEAKER VERIFY] Completed in ${elapsed}s`)
+
+  const summary = {
+    totalSegments: segments.length,
+    presenterSegments: presenterSegCount,
+    presenterDuration: parseFloat(presenterDuration.toFixed(1)),
+    assistantSegments: assistantSegCount,
+    assistantDuration: parseFloat(assistantDuration.toFixed(1)),
+    dictationPairsFound: dictationPairs,
+    volumeFlagged,
+    gptClassified,
+    highConfidence: highConf,
+    mediumConfidence: medConf,
+    lowConfidence: lowConf,
+    presenterLabel,
+    elapsed: parseFloat(elapsed),
+  }
+
+  res.json({
+    segments: correctedSegments,
+    summary,
+    presenterLabel,
+  })
+})
+
 // ==================== AUTO-EDITOR: VIDEO PROCESSING ====================
 
 function formatSrtTime(seconds: number): string {

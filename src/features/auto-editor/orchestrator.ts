@@ -7,7 +7,7 @@ import { generateBackground } from './services/nanoBananaService'
 // B-Roll now goes through unified KIE.ai API on server side
 import { findMusic } from './services/pixabayService'
 import { BASE_VISUAL_PROMPT, BASE_ENRICH_PROMPT } from './constants/basePrompts'
-import type { EditJob, TranscriptSegment, SubtitleSegment } from './types/EditJob'
+import type { EditJob, TranscriptSegment, SubtitleSegment, SpeakerVerificationSummary } from './types/EditJob'
 import { createEmptyEditJob } from './types/EditJob'
 
 const API_BASE = 'http://localhost:3001/api'
@@ -754,6 +754,84 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
 
     // Also keep store updated for UI
     setTranscript(transcript)
+
+    // Step 1.5 — Speaker Verification (detect presenter vs production assistant)
+    setStep('verifying_speakers')
+    setProgress({ current: 0, total: 1, label: 'מזהה דוברים — מפריד בין פרזנטור לעוזר הפקה...' })
+
+    try {
+      const verifyTimer = timeLog('Speaker Verification')
+      addLog('[SPEAKER VERIFY] מתחיל אימות דוברים — 4 שיטות זיהוי...')
+
+      const verifyRes = await fetch(`${API_BASE}/auto-editor/verify-speakers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          segments: job.transcript!.segments,
+          videoUrl: enrichedInput.videoUrls[0],
+        }),
+      })
+
+      if (verifyRes.ok) {
+        const verifyData = await verifyRes.json()
+        const corrected: TranscriptSegment[] = (verifyData.segments || []).map((s: any) => ({
+          start: s.start || 0,
+          end: s.end || 0,
+          text: s.text || '',
+          speaker: s.speaker || 'דובר 1',
+          isPresenter: s.isPresenter ?? false,
+          speakerVerification: s.speakerVerification,
+          words: s.words,
+        }))
+
+        // Update EditJob with corrected segments
+        job.transcript!.segments = corrected
+        job.transcript!.speakerVerificationSummary = verifyData.summary as SpeakerVerificationSummary
+
+        // Re-calculate speaker times after correction
+        const newSpeakerTimes: Record<string, number> = {}
+        for (const seg of corrected) {
+          newSpeakerTimes[seg.speaker] = (newSpeakerTimes[seg.speaker] || 0) + (seg.end - seg.start)
+        }
+        job.transcript!.speakers = Object.entries(newSpeakerTimes).map(([name, totalTime]) => ({
+          name,
+          totalTime,
+          isPresenter: name === verifyData.presenterLabel,
+        }))
+
+        // If verification found a presenter, set it
+        if (verifyData.presenterLabel) {
+          job.transcript!.mainPresenter = verifyData.presenterLabel
+          job.transcript!.presenterConfidence = 'high'
+        }
+
+        // Update store transcript
+        transcript.segments = corrected.map((s: TranscriptSegment) => ({
+          start: s.start,
+          end: s.end,
+          text: s.text,
+          sourceFile: 0,
+          speaker: s.speaker,
+          isPresenter: s.isPresenter,
+        }))
+        if (verifyData.presenterLabel) {
+          transcript.mainSpeaker = verifyData.presenterLabel
+        }
+        setTranscript({ ...transcript })
+
+        const sum = verifyData.summary
+        addLog(`[SPEAKER VERIFY] הושלם: ${sum.presenterSegments} קטעי פרזנטור (${sum.presenterDuration}ש), ${sum.assistantSegments} קטעי עוזר הפקה (${sum.assistantDuration}ש)`)
+        addLog(`[SPEAKER VERIFY] זוגות דיקטציה: ${sum.dictationPairsFound}, ביטחון גבוה: ${sum.highConfidence}/${sum.totalSegments}`)
+        verifyTimer.done(`${sum.presenterSegments} presenter, ${sum.assistantSegments} assistant, ${sum.dictationPairsFound} dictation pairs`)
+      } else {
+        addLog('[SPEAKER VERIFY] אימות דוברים נכשל, ממשיך עם תמלול מקורי')
+      }
+    } catch (e: any) {
+      console.warn('[AUTO-EDIT] Speaker verification failed, continuing:', e.message)
+      addLog('[SPEAKER VERIFY] שגיאה באימות דוברים, ממשיך ללא')
+    }
+
+    store.markStepCompleted('verifying_speakers')
 
     // Step 2 — Validation
     setStep('validating')
