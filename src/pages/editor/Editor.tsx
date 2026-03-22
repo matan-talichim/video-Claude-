@@ -46,11 +46,16 @@ export default function Editor() {
 
       // Check if auto-editor stored a video URL as fallback
       const autoEditorUrl = localStorage.getItem('autoEditorVideoUrl')
-      if (autoEditorUrl && (!mediaBlobUrl || mediaBlobUrl.startsWith('blob:') && !mediaFile)) {
+      if (autoEditorUrl && (!mediaBlobUrl || (mediaBlobUrl.startsWith('blob:') && !mediaFile))) {
         console.log('[EDITOR] Using auto-editor video URL:', autoEditorUrl)
         mediaBlobUrl = autoEditorUrl
       }
       localStorage.removeItem('autoEditorVideoUrl')
+
+      // Ensure mediaType is 'video' when we have an auto-editor video URL
+      if (mediaBlobUrl && !mediaType) {
+        console.log('[EDITOR] mediaType not set, defaulting to video')
+      }
 
       // Load auto-editor transcript if available
       let autoTranscript: any[] | undefined = transcript
@@ -116,7 +121,7 @@ export default function Editor() {
         isDemo: false,
         mediaFile,
         mediaBlobUrl,
-        mediaType,
+        mediaType: mediaType ?? (mediaBlobUrl ? 'video' : undefined),
         transcript: autoTranscript,
         editHistory: project.editHistory,
         deletedRegions: project.deletedRegions,

@@ -337,6 +337,7 @@ export default function Canvas({ selectedItem, onSelect }: CanvasProps) {
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleLoadedMetadata}
               onEnded={handleEnded}
+              onError={(e) => console.error('[CANVAS] Video load error:', mediaBlobUrl, e)}
               playsInline
             />
           )}

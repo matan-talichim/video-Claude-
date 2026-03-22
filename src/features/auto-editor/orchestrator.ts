@@ -649,6 +649,8 @@ async function processVideosWithPlan(
       optimalDuration: videoPlan.optimalDuration,
       durationReasoning: videoPlan.durationReasoning,
       recommendedPlatform: videoPlan.recommendedPlatform,
+      qualityScore: result.qualityScore,
+      qualityReport: result.qualityReport,
     })
   }
 
@@ -1286,11 +1288,12 @@ export async function continueAfterEnrichment(
 
     stage4Timer.done(`${processedA.length} videos`)
 
-    // === Quality metrics ===
-    const videoPlanA = editingPlanA?.videos?.[0]
-    const videoTargetDur = finalInput.targetDuration === -1 ? (videoPlanA?.optimalDuration || 60) : finalInput.targetDuration
-    const cutsDurA = videoPlanA?.cuts?.reduce((sum: number, c: any) => sum + (parseFloat(String(c.keepEnd ?? 0)) - parseFloat(String(c.keepStart ?? 0))), 0) || 0
-    const qualityReport = evaluateEditQuality(job, videoPlanA, cutsDurA, videoTargetDur)
+    // === Quality metrics (use server's score as single source of truth) ===
+    const serverReport = processedA[0]?.qualityReport
+    const serverScore = processedA[0]?.qualityScore
+    const qualityReport: QualityReport = serverReport && typeof serverScore === 'number'
+      ? { score: serverScore, issues: serverReport.issues || [], passed: serverReport.passed || [] }
+      : evaluateEditQuality(job, editingPlanA?.videos?.[0], 0, finalInput.targetDuration === -1 ? 60 : finalInput.targetDuration)
     setQualityReport(qualityReport)
     addLog(`דוח איכות: ${qualityReport.score}/100 (${qualityReport.passed.length} עברו, ${qualityReport.issues.length} בעיות)`)
 
@@ -1431,6 +1434,8 @@ export async function selectABVersion(
             optimalDuration: v.optimalDuration,
             durationReasoning: v.durationReasoning,
             recommendedPlatform: v.recommendedPlatform,
+            qualityScore: result.qualityScore,
+            qualityReport: result.qualityReport,
           })
           addLog(`גרסה ${ver} סרטון ${v.videoIndex}: ${result.files?.length || 0} קבצי פלטפורמה`)
         } else {

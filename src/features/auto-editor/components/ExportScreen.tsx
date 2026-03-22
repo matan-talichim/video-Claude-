@@ -319,10 +319,13 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
       }
 
       const projectsStore = useProjectsStore.getState()
+      const firstVideo = videoFiles[0]
       const projectId = projectsStore.addProject({
         name: projectName,
         source: 'upload',
         videos: videoFiles,
+        mediaBlobUrl: firstVideo?.blobUrl,
+        mediaType: firstVideo?.mediaType ?? 'video',
       })
 
       console.log('[TRANSFER] Project created:', projectId)

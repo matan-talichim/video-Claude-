@@ -31,6 +31,8 @@ export interface VideoResult {
   optimalDuration?: number
   durationReasoning?: string
   recommendedPlatform?: string
+  qualityScore?: number
+  qualityReport?: QualityReport
 }
 
 // Keep old type for backward compat
