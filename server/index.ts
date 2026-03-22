@@ -4572,7 +4572,7 @@ app.post('/api/find-music', async (req, res) => {
 
     const encodedQuery = encodeURIComponent(searchTerm)
     const response = await fetch(
-      `https://pixabay.com/api/videos/music/?key=${apiKey}&q=${encodedQuery}&per_page=5`
+      `https://pixabay.com/api/music/?key=${apiKey}&q=${encodedQuery}&per_page=5`
     )
 
     if (!response.ok) {
@@ -4584,7 +4584,7 @@ app.post('/api/find-music', async (req, res) => {
     // Fallback to generic search if no results
     if (!data.hits || data.hits.length === 0) {
       const fallbackResponse = await fetch(
-        `https://pixabay.com/api/videos/music/?key=${apiKey}&q=background+music&per_page=5`
+        `https://pixabay.com/api/music/?key=${apiKey}&q=background+music&per_page=5`
       )
       data = await fallbackResponse.json()
     }
@@ -5372,7 +5372,7 @@ CRITICAL: Respond ONLY with a valid JSON array. No markdown, no backticks, no ex
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.1,
-      max_tokens: 4000,
+      max_completion_tokens: 4000,
     })
 
     const content = response.choices[0]?.message?.content?.trim() || ''
