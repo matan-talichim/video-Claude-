@@ -23,6 +23,7 @@ export interface EditJob {
       removed_reasons?: Record<string, number>
       error?: string
     }
+    speakerVerificationSummary?: SpeakerVerificationSummary
     speakers: SpeakerInfo[]
     mainPresenter: string         // "דובר 2" etc
     presenterConfidence: 'high' | 'medium' | 'low'
@@ -109,12 +110,38 @@ export interface EditJob {
   }
 }
 
+export interface SpeakerVerificationResult {
+  repetitionRole: 'dictator' | 'repeater' | 'none'
+  repetitionSimilarity?: number
+  repetitionPairIndex?: number
+  volumeDb?: number
+  volumeFlag: 'quiet' | 'normal' | 'loud'
+  gptClassification?: { isPresenter: boolean; confidence: 'high' | 'medium' | 'low'; reason: string }
+  visualCheck: 'speaking' | 'listening' | 'not_checked'
+  finalVerdict: 'presenter' | 'production_assistant'
+}
+
+export interface SpeakerVerificationSummary {
+  totalSegments: number
+  presenterSegments: number
+  presenterDuration: number
+  assistantSegments: number
+  assistantDuration: number
+  dictationPairsFound: number
+  volumeFlagged: number
+  gptClassified: number
+  highConfidence: number
+  mediumConfidence: number
+  lowConfidence: number
+}
+
 export interface TranscriptSegment {
   start: number
   end: number
   text: string
   speaker: string
   isPresenter: boolean
+  speakerVerification?: SpeakerVerificationResult
   words?: { word: string; start: number; end: number; confidence?: number; speaker?: string }[]
 }
 

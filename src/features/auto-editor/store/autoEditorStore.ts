@@ -3,6 +3,7 @@ import { create } from 'zustand'
 export type AutoEditorStep =
   | 'idle'
   | 'transcribing'
+  | 'verifying_speakers'
   | 'validating'
   | 'analyzing_visuals'
   | 'cleaning'
