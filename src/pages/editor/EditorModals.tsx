@@ -907,8 +907,14 @@ function ExportContent() {
     const hasAnimatedCaptions = captions.length > 0 && showCaptions && captionAnim && !['none', 'fade', 'slideUp', 'zoom'].includes(captionAnim)
     if (hasAnimatedCaptions && baseFormat !== 'webm') {
       try {
+        const mappedCaptions = captions.map(c => ({
+          text: c.text,
+          startTime: c.startTime,
+          endTime: c.endTime,
+          words: c.words?.map(w => ({ word: w.text, start: w.start, end: w.end })),
+        }))
         return await exportVideoWithAnimatedSubtitles(
-          mediaBlobUrl, captions, captionAnim, baseFormat, () => {}
+          mediaBlobUrl, mappedCaptions, captionAnim, baseFormat, () => {}
         )
       } catch (err) {
         console.warn('[EXPORT] Server-side animated subtitle burn failed, falling back to standard:', err)
