@@ -5192,6 +5192,112 @@ function logFirstSubtitles(label: string, subs: Array<{ start: number; end: numb
   }
 }
 
+// Word-level timing from Deepgram transcript
+interface WordTiming {
+  word: string
+  start: number
+  end: number
+}
+
+// A phrase group: 3-5 words with their timestamps
+interface PhraseGroup {
+  words: WordTiming[]
+  start: number  // start of first word
+  end: number    // end of last word
+  text: string   // joined words
+}
+
+// Group words into phrases of 3-5 words, splitting on pauses > 300ms, sentence boundaries, or max 5 words
+function groupWordsIntoPhrases(words: WordTiming[], maxWords: number = 5, pauseThreshold: number = 0.3): PhraseGroup[] {
+  if (words.length === 0) return []
+  const groups: PhraseGroup[] = []
+  let currentGroup: WordTiming[] = []
+
+  for (let i = 0; i < words.length; i++) {
+    currentGroup.push(words[i])
+
+    const isLast = i === words.length - 1
+    const reachedMax = currentGroup.length >= maxWords
+    // Check for pause before next word
+    const hasPause = !isLast && (words[i + 1].start - words[i].end) > pauseThreshold
+    // Check for sentence boundary (period, question mark, exclamation)
+    const isSentenceEnd = /[.?!。؟]$/.test(words[i].word)
+
+    if (isLast || reachedMax || hasPause || isSentenceEnd) {
+      if (currentGroup.length > 0) {
+        groups.push({
+          words: [...currentGroup],
+          start: currentGroup[0].start,
+          end: currentGroup[currentGroup.length - 1].end,
+          text: currentGroup.map(w => w.word).join(' '),
+        })
+        currentGroup = []
+      }
+    }
+  }
+
+  return groups
+}
+
+// Extract word-level timings from a segment, with fallback to equal distribution
+function extractWordTimings(seg: any): WordTiming[] {
+  // If segment has Deepgram word-level data, use it
+  if (seg.words && Array.isArray(seg.words) && seg.words.length > 0) {
+    return seg.words.map((w: any) => ({
+      word: w.word || w.punctuated_word || w.text || '',
+      start: w.start ?? 0,
+      end: w.end ?? 0,
+    })).filter((w: WordTiming) => w.word.trim())
+  }
+  // Fallback: split text and distribute timing equally
+  const text = (seg.text || '').trim()
+  if (!text) return []
+  const textWords = text.split(/\s+/).filter((w: string) => w)
+  const segStart = seg.start ?? 0
+  const segEnd = seg.end ?? 0
+  const duration = segEnd - segStart
+  const wordDur = duration / textWords.length
+  return textWords.map((w: string, i: number) => ({
+    word: w,
+    start: segStart + i * wordDur,
+    end: segStart + (i + 1) * wordDur,
+  }))
+}
+
+// Remap word timings from original timeline to post-cut timeline
+function remapWordTimings(words: WordTiming[], cuts: any[]): WordTiming[] {
+  const remapped: WordTiming[] = []
+  for (const w of words) {
+    let offset = 0
+    for (const cut of cuts) {
+      const cutDur = cut.keep_end - cut.keep_start
+      if (w.start >= cut.keep_start && w.end <= cut.keep_end) {
+        remapped.push({
+          word: w.word,
+          start: offset + (w.start - cut.keep_start),
+          end: offset + (w.end - cut.keep_start),
+        })
+        break
+      }
+      // Partial overlap: clamp to cut
+      if (w.start < cut.keep_end && w.end > cut.keep_start) {
+        const cStart = Math.max(w.start, cut.keep_start)
+        const cEnd = Math.min(w.end, cut.keep_end)
+        if (cEnd - cStart > 0.02) {
+          remapped.push({
+            word: w.word,
+            start: offset + (cStart - cut.keep_start),
+            end: offset + (cEnd - cut.keep_start),
+          })
+        }
+        break
+      }
+      offset += cutDur
+    }
+  }
+  return remapped
+}
+
 // Subtitle style presets (ASS format) — using Heebo Hebrew font
 // Alignment=2 (bottom center), MarginV=40 (distance from bottom edge)
 const subtitleStyles: Record<string, string> = {
@@ -5314,7 +5420,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   return ass
 }
 
-// Generate animated ASS subtitles (word-by-word karaoke/pop/typewriter/glow/bounce/slide)
+// Generate animated ASS subtitles with word-level Deepgram timestamps
+// Supports: bold_pop, karaoke, word_flash, neon_glow + legacy styles
 function buildAnimatedASS(subtitles: any[], style: string, cuts: any[]): string {
   const F = HEBREW_FONT_NAME // Short alias for font name
   let ass = `[Script Info]
@@ -5327,35 +5434,34 @@ WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 `
-  // --- 5 professional animated subtitle presets ---
-  // All use Alignment=2 (bottom center), MarginV=35-40, Hebrew font (Heebo)
+  // --- Premium animated subtitle style definitions ---
+  // All use Hebrew font (Heebo), Encoding=177
   switch (style) {
     case 'bold_pop':
-      // Large bold text, word-by-word reveal with scale pop, key word highlighted in yellow
-      ass += `Style: Default,${F},24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
-      ass += `Style: Highlight,${F},26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      // White text with black outline, current word yellow — bottom center, large
+      ass += `Style: Default,${F},52,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,10,10,120,177\n`
       break
     case 'neon_glow':
-      // White text with colored glow outline, slide up
-      ass += `Style: Default,${F},22,&H00FFFFFF,&H00FF88FF,&H00FF00FF,&H60000000,-1,0,0,0,100,100,0,0,1,4,2,2,10,10,35,177\n`
-      ass += `Style: Highlight,${F},24,&H00FFFFFF,&H00FF88FF,&H0000AAFF,&H60000000,-1,0,0,0,100,100,0,0,1,5,2,2,10,10,35,177\n`
+      // White text, current word has colored glow + blur
+      ass += `Style: Default,${F},48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H60000000,-1,0,0,0,100,100,0,0,1,1,2,2,10,10,120,177\n`
+      break
+    case 'word_flash':
+      // One word at a time, large, center screen
+      ass += `Style: Default,${F},72,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,5,10,10,10,177\n`
+      ass += `Style: Alt,${F},72,&H0000FFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,5,10,10,10,177\n`
+      break
+    case 'karaoke':
+      // Full phrase in white, progressive RTL fill with highlight
+      ass += `Style: Default,${F},48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,120,177\n`
       break
     case 'boxing':
-      // Each word in a colored box, appears one by one
       ass += `Style: Default,${F},20,&H00FFFFFF,&H00FFFFFF,&H00AA00AA,&H00AA00AA,-1,0,0,0,100,100,0,0,3,0,6,2,15,15,35,177\n`
       ass += `Style: Highlight,${F},22,&H00FFFFFF,&H00FFFFFF,&H000055FF,&H000055FF,-1,0,0,0,100,100,0,0,3,0,8,2,15,15,35,177\n`
       break
     case 'minimal':
-      // Clean thin font, fade in/out, no fancy animation
       ass += `Style: Default,${F},18,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,40,177\n`
-      ass += `Style: Highlight,${F},18,&H0000DDFF,&H0000DDFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,40,177\n`
       break
-    case 'karaoke':
-      // Text appears all at once (gray), each word highlights (white) as spoken
-      ass += `Style: Default,${F},22,&H00888888,&H00888888,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,35,177\n`
-      ass += `Style: Spoken,${F},22,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,35,177\n`
-      break
-    // Legacy styles mapped to new presets
+    // Legacy styles
     case 'pop':
       ass += `Style: Default,${F},24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       ass += `Style: Highlight,${F},26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
@@ -5374,190 +5480,245 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
       break
     default:
       // Default to bold_pop
-      ass += `Style: Default,${F},24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
-      ass += `Style: Highlight,${F},26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Default,${F},52,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,10,10,120,177\n`
   }
   ass += `\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`
 
-  // Recalculate timestamps relative to cut video with overlap/clamp support
-  const adjustedSubs: Array<{ start: number; end: number; text: string }> = []
-  let currentOffset = 0
-  for (const cut of cuts) {
-    const cutDuration = cut.keep_end - cut.keep_start
-    for (const seg of subtitles) {
-      const segStart = seg.start ?? seg.keepStart ?? 0
-      const segEnd = seg.end ?? seg.keepEnd ?? 0
-      // Use overlap check instead of strict containment
-      if (segStart < cut.keep_end && segEnd > cut.keep_start) {
-        // Clamp segment to cut range
-        const clampedStart = Math.max(segStart, cut.keep_start)
-        const clampedEnd = Math.min(segEnd, cut.keep_end)
-        const relStart = currentOffset + (clampedStart - cut.keep_start)
-        const relEnd = currentOffset + (clampedEnd - cut.keep_start)
-        if (relEnd - relStart < 0.1) continue // Skip tiny fragments
-        adjustedSubs.push({
-          start: relStart,
-          end: relEnd,
-          text: seg.text || '',
-        })
-      }
-    }
-    currentOffset += cutDuration
+  // --- Collect all word-level timings from segments, remap to post-cut timeline ---
+  const allWords: WordTiming[] = []
+  for (const seg of subtitles) {
+    const segWords = extractWordTimings(seg)
+    const remapped = remapWordTimings(segWords, cuts)
+    allWords.push(...remapped)
   }
 
-  // Fix overlaps: sort by start time, trim overlapping events, add 50ms gaps
-  deoverlapSubtitleEvents(adjustedSubs)
+  // Group words into phrases (3-5 words, split on pauses/sentence ends)
+  const phrases = groupWordsIntoPhrases(allWords)
 
-  // Log first 3 subtitle entries for debugging
-  logFirstSubtitles('buildAnimatedASS', adjustedSubs)
+  // Fix overlaps between phrases
+  deoverlapSubtitleEvents(phrases.map(p => ({ start: p.start, end: p.end, text: p.text })))
 
-  console.log(`[SUBTITLE] Synced ${adjustedSubs.length} animated subtitle segments to cut timeline. Offset adjustments applied.`)
+  // Log debug info
+  console.log(`[SUBTITLE] Style: ${style}, ${allWords.length} words → ${phrases.length} phrase groups`)
+  if (phrases.length > 0) {
+    const logCount = Math.min(3, phrases.length)
+    console.log(`[SUBTITLE DEBUG] buildAnimatedASS — first ${logCount} of ${phrases.length} phrases:`)
+    for (let i = 0; i < logCount; i++) {
+      const p = phrases[i]
+      console.log(`  [${i + 1}] ${p.start.toFixed(2)}s → ${p.end.toFixed(2)}s | "${p.text}" (${p.words.length} words)`)
+    }
+  }
 
-  for (const sub of adjustedSubs) {
-    const text = sub.text
-    const words = text.split(' ').filter((w: string) => w.trim())
-    if (words.length === 0) continue
+  // Premium styles that use word-level phrases
+  const premiumStyles = ['bold_pop', 'karaoke', 'word_flash', 'neon_glow']
 
-    const subDuration = sub.end - sub.start
-    const wordDuration = subDuration / words.length
-
-    // Detect key word for highlighting (longest meaningful word, or first capitalized/number)
-    const keyWord = detectKeyWordLocal(words)
-
+  if (premiumStyles.includes(style)) {
+    // === PREMIUM WORD-LEVEL ANIMATIONS ===
     switch (style) {
       case 'bold_pop': {
-        // Word-by-word appearance with scale pop effect, key word highlighted
-        words.forEach((word: string, wi: number) => {
-          const wStart = sub.start + wi * wordDuration
-          const wEnd = sub.end
-          const ws = formatAssTime(wStart)
-          const we = formatAssTime(wEnd)
-          const isKey = keyWord && word.includes(keyWord)
-          const styleName = isKey ? 'Highlight' : 'Default'
-          ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,100,\\fscx110\\fscy110)\\t(100,200,\\fscx100\\fscy100)}${word} \n`
-        })
-        break
-      }
-      case 'neon_glow': {
-        // Full line slides up from below + fade in
-        const startTime = formatAssTime(sub.start)
-        const endTime = formatAssTime(sub.end)
-        ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\move(640,500,640,460)\\fad(200,150)}${text}\n`
-        break
-      }
-      case 'boxing': {
-        // Each word in a colored box, appears one by one with slight overlap
-        const boxWordDuration = Math.min(wordDuration, 0.4)
-        words.forEach((word: string, wi: number) => {
-          const wStart = sub.start + wi * boxWordDuration * 0.7
-          const wEnd = sub.end
-          const ws = formatAssTime(wStart)
-          const we = formatAssTime(wEnd)
-          const isKey = keyWord && word.includes(keyWord)
-          const styleName = isKey ? 'Highlight' : 'Default'
-          ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(150,100)\\t(0,100,\\fscx105\\fscy105)\\t(100,200,\\fscx100\\fscy100)}${word} \n`
-        })
-        break
-      }
-      case 'minimal': {
-        // Clean fade in/out, no fancy animation
-        const startTime = formatAssTime(sub.start)
-        const endTime = formatAssTime(sub.end)
-        ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(300,200)}${text}\n`
-        break
-      }
-      case 'karaoke': {
-        // Show full text in gray, highlight each word as spoken in white
-        const startTime = formatAssTime(sub.start)
-        const endTime = formatAssTime(sub.end)
-        // Background: full text in gray (Default style)
-        ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,${text}\n`
-        // Each word highlighted when spoken
-        words.forEach((word: string, wi: number) => {
-          const wordStart = sub.start + wi * wordDuration
-          const wordEnd = wordStart + wordDuration
-          const ws = formatAssTime(wordStart)
-          const we = formatAssTime(wordEnd)
-          const beforeWords = words.slice(0, wi).join(' ')
-          const afterWords = words.slice(wi + 1).join(' ')
-          const highlighted = `${beforeWords ? beforeWords + ' ' : ''}{\\c&HFFFFFF&\\fscx110\\fscy110\\b1}${word}{\\r}${afterWords ? ' ' + afterWords : ''}`
-          ass += `Dialogue: 1,${ws},${we},Default,,0,0,0,,${highlighted}\n`
-        })
-        break
-      }
-      // Legacy styles mapped to work with bottom positioning
-      case 'pop': {
-        words.forEach((word: string, wi: number) => {
-          const wordStart = sub.start + wi * wordDuration
-          const wordEnd = sub.end
-          const ws = formatAssTime(wordStart)
-          const we = formatAssTime(wordEnd)
-          const isKey = keyWord && word.includes(keyWord)
-          const styleName = isKey ? 'Highlight' : 'Default'
-          ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${word} \n`
-        })
-        break
-      }
-      case 'typewriter': {
-        const chars = text.split('')
-        const charDuration = subDuration / Math.max(chars.length, 1)
-        let charIdx = 0
-        for (let ci = 0; ci < chars.length; ci++) {
-          if (chars[ci] === ' ') { charIdx++; continue }
-          const charStart = sub.start + charIdx * charDuration
-          const cs = formatAssTime(charStart)
-          const we = formatAssTime(sub.end)
-          const visibleText = text.substring(0, ci + 1)
-          ass += `Dialogue: 0,${cs},${we},Default,,0,0,0,,${visibleText}\n`
-          charIdx++
+        // Phrase-based: all words visible in white, current word highlighted yellow
+        for (const phrase of phrases) {
+          const pStart = formatAssTime(phrase.start)
+          const pEnd = formatAssTime(phrase.end)
+
+          // Build the phrase text with per-word color transitions
+          // Each word gets a \t transform that changes it to yellow at its start time and back to white at the next word
+          let phraseAss = ''
+          for (let wi = 0; wi < phrase.words.length; wi++) {
+            const w = phrase.words[wi]
+            const relWordStart = Math.round((w.start - phrase.start) * 1000)
+            const relWordEnd = Math.round((w.end - phrase.start) * 1000)
+
+            // Current word: white initially, turns yellow when spoken, then back to white
+            // Using override blocks per word
+            if (wi > 0) phraseAss += ' '
+            // Yellow highlight: \c&H00FFFF& (ASS BGR = yellow), scale up
+            phraseAss += `{\\c&HFFFFFF&\\bord4\\t(${relWordStart},${relWordStart + 50},\\c&H00FFFF&\\fscx110\\fscy110)\\t(${relWordEnd},${relWordEnd + 50},\\c&HFFFFFF&\\fscx100\\fscy100)}${w.word}`
+          }
+
+          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\fad(100,0)}${phraseAss}\n`
         }
         break
       }
-      case 'glow': {
-        words.forEach((word: string, wi: number) => {
-          const wordStart = sub.start + wi * wordDuration
-          const wordEnd = wordStart + wordDuration
-          const ws = formatAssTime(wordStart)
-          const we = formatAssTime(wordEnd)
-          const beforeWords = words.slice(0, wi).join(' ')
-          const afterWords = words.slice(wi + 1).join(' ')
-          const glowLine = `${beforeWords ? beforeWords + ' ' : ''}{\\c&HFF00FF&\\bord5\\blur3\\b1}${word}{\\r}${afterWords ? ' ' + afterWords : ''}`
-          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,${glowLine}\n`
-        })
+
+      case 'karaoke': {
+        // Full phrase visible in white, words progressively fill with highlight color
+        // Hebrew RTL: ASS \kf tag fills from logical start (right side for RTL)
+        for (const phrase of phrases) {
+          const pStart = formatAssTime(phrase.start)
+          const pEnd = formatAssTime(phrase.end)
+
+          // Build karaoke line with \kf tags — duration in centiseconds
+          let karaokeText = '{\\fad(150,100)}'
+          for (let wi = 0; wi < phrase.words.length; wi++) {
+            const w = phrase.words[wi]
+            const wordDurCs = Math.round((w.end - w.start) * 100) // centiseconds
+            if (wi > 0) karaokeText += ' '
+            // \kf = smooth fill karaoke, duration in centiseconds
+            karaokeText += `{\\kf${wordDurCs}}${w.word}`
+          }
+
+          // Layer 0: base text (dimmed), Layer 1: karaoke fill
+          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\c&H888888&\\fad(150,100)}${phrase.text}\n`
+          ass += `Dialogue: 1,${pStart},${pEnd},Default,,0,0,0,,${karaokeText}\n`
+        }
         break
       }
-      case 'bounce': {
-        words.forEach((word: string, wi: number) => {
-          const wordStart = sub.start + wi * wordDuration * 0.5
-          const wordEnd = sub.end
-          const ws = formatAssTime(wordStart)
-          const we = formatAssTime(wordEnd)
-          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\fad(100,0)\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)}${word} \n`
-        })
+
+      case 'word_flash': {
+        // ONE word at a time, large, center screen, alternating white/yellow
+        for (let i = 0; i < allWords.length; i++) {
+          const w = allWords[i]
+          if (!w.word.trim()) continue
+          const wStart = formatAssTime(w.start)
+          const wEnd = formatAssTime(w.end)
+          const styleName = (i % 2 === 0) ? 'Default' : 'Alt'
+          // Pop in with scale overshoot then ease back
+          ass += `Dialogue: 0,${wStart},${wEnd},${styleName},,0,0,0,,{\\fscx130\\fscy130\\t(0,150,\\fscx100\\fscy100)}${w.word}\n`
+        }
         break
       }
-      case 'slide': {
-        words.forEach((word: string, wi: number) => {
-          const wordStart = sub.start + wi * wordDuration * 0.3
-          const wordEnd = sub.end
-          const ws = formatAssTime(wordStart)
-          const we = formatAssTime(wordEnd)
-          const finalX = 960 - ((words.length - 1) * 35) + (wi * 70)
-          ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(2000,950,${finalX},950,0,250)\\fad(0,150)}${word}\n`
-        })
+
+      case 'neon_glow': {
+        // Like bold_pop but current word has blur + colored border, others plain white
+        for (const phrase of phrases) {
+          const pStart = formatAssTime(phrase.start)
+          const pEnd = formatAssTime(phrase.end)
+
+          let phraseAss = ''
+          for (let wi = 0; wi < phrase.words.length; wi++) {
+            const w = phrase.words[wi]
+            const relWordStart = Math.round((w.start - phrase.start) * 1000)
+            const relWordEnd = Math.round((w.end - phrase.start) * 1000)
+
+            if (wi > 0) phraseAss += ' '
+            // Non-active: white, \bord1, no blur. Active: colored, \blur2, \bord3, \shad2
+            phraseAss += `{\\c&HFFFFFF&\\bord1\\blur0\\shad0\\t(${relWordStart},${relWordStart + 50},\\c&HFF8800&\\bord3\\blur2\\shad2)\\t(${relWordEnd},${relWordEnd + 50},\\c&HFFFFFF&\\bord1\\blur0\\shad0)}${w.word}`
+          }
+
+          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\fad(100,0)}${phraseAss}\n`
+        }
         break
       }
-      default: {
-        // Default to bold_pop behavior
-        words.forEach((word: string, wi: number) => {
-          const wStart = sub.start + wi * wordDuration
-          const wEnd = sub.end
-          const ws = formatAssTime(wStart)
-          const we = formatAssTime(wEnd)
-          const isKey = keyWord && word.includes(keyWord)
-          const styleName = isKey ? 'Highlight' : 'Default'
-          ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,100,\\fscx110\\fscy110)\\t(100,200,\\fscx100\\fscy100)}${word} \n`
-        })
+    }
+  } else {
+    // === LEGACY STYLES (use segment-level timing with equal word distribution) ===
+    // Recalculate timestamps relative to cut video
+    const adjustedSubs: Array<{ start: number; end: number; text: string }> = []
+    let currentOffset = 0
+    for (const cut of cuts) {
+      const cutDuration = cut.keep_end - cut.keep_start
+      for (const seg of subtitles) {
+        const segStart = seg.start ?? seg.keepStart ?? 0
+        const segEnd = seg.end ?? seg.keepEnd ?? 0
+        if (segStart < cut.keep_end && segEnd > cut.keep_start) {
+          const clampedStart = Math.max(segStart, cut.keep_start)
+          const clampedEnd = Math.min(segEnd, cut.keep_end)
+          const relStart = currentOffset + (clampedStart - cut.keep_start)
+          const relEnd = currentOffset + (clampedEnd - cut.keep_start)
+          if (relEnd - relStart < 0.1) continue
+          adjustedSubs.push({ start: relStart, end: relEnd, text: seg.text || '' })
+        }
+      }
+      currentOffset += cutDuration
+    }
+    deoverlapSubtitleEvents(adjustedSubs)
+
+    for (const sub of adjustedSubs) {
+      const text = sub.text
+      const words = text.split(' ').filter((w: string) => w.trim())
+      if (words.length === 0) continue
+      const subDuration = sub.end - sub.start
+      const wordDuration = subDuration / words.length
+      const keyWord = detectKeyWordLocal(words)
+
+      switch (style) {
+        case 'boxing': {
+          const boxWordDuration = Math.min(wordDuration, 0.4)
+          words.forEach((word: string, wi: number) => {
+            const wStart = sub.start + wi * boxWordDuration * 0.7
+            const wEnd = sub.end
+            const ws = formatAssTime(wStart)
+            const we = formatAssTime(wEnd)
+            const isKey = keyWord && word.includes(keyWord)
+            const styleName = isKey ? 'Highlight' : 'Default'
+            ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(150,100)\\t(0,100,\\fscx105\\fscy105)\\t(100,200,\\fscx100\\fscy100)}${word} \n`
+          })
+          break
+        }
+        case 'minimal': {
+          const startTime = formatAssTime(sub.start)
+          const endTime = formatAssTime(sub.end)
+          ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(300,200)}${text}\n`
+          break
+        }
+        case 'pop': {
+          words.forEach((word: string, wi: number) => {
+            const wordStart = sub.start + wi * wordDuration
+            const wordEnd = sub.end
+            const ws = formatAssTime(wordStart)
+            const we = formatAssTime(wordEnd)
+            const isKey = keyWord && word.includes(keyWord)
+            const styleName = isKey ? 'Highlight' : 'Default'
+            ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${word} \n`
+          })
+          break
+        }
+        case 'typewriter': {
+          const chars = text.split('')
+          const charDuration = subDuration / Math.max(chars.length, 1)
+          let charIdx = 0
+          for (let ci = 0; ci < chars.length; ci++) {
+            if (chars[ci] === ' ') { charIdx++; continue }
+            const charStart = sub.start + charIdx * charDuration
+            const cs = formatAssTime(charStart)
+            const we = formatAssTime(sub.end)
+            const visibleText = text.substring(0, ci + 1)
+            ass += `Dialogue: 0,${cs},${we},Default,,0,0,0,,${visibleText}\n`
+            charIdx++
+          }
+          break
+        }
+        case 'glow': {
+          words.forEach((word: string, wi: number) => {
+            const wordStart = sub.start + wi * wordDuration
+            const wordEnd = wordStart + wordDuration
+            const ws = formatAssTime(wordStart)
+            const we = formatAssTime(wordEnd)
+            const beforeWords = words.slice(0, wi).join(' ')
+            const afterWords = words.slice(wi + 1).join(' ')
+            const glowLine = `${beforeWords ? beforeWords + ' ' : ''}{\\c&HFF00FF&\\bord5\\blur3\\b1}${word}{\\r}${afterWords ? ' ' + afterWords : ''}`
+            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,${glowLine}\n`
+          })
+          break
+        }
+        case 'bounce': {
+          words.forEach((word: string, wi: number) => {
+            const wordStart = sub.start + wi * wordDuration * 0.5
+            const wordEnd = sub.end
+            const ws = formatAssTime(wordStart)
+            const we = formatAssTime(wordEnd)
+            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\fad(100,0)\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)}${word} \n`
+          })
+          break
+        }
+        case 'slide': {
+          words.forEach((word: string, wi: number) => {
+            const wordStart = sub.start + wi * wordDuration * 0.3
+            const wordEnd = sub.end
+            const ws = formatAssTime(wordStart)
+            const we = formatAssTime(wordEnd)
+            const finalX = 960 - ((words.length - 1) * 35) + (wi * 70)
+            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(2000,950,${finalX},950,0,250)\\fad(0,150)}${word}\n`
+          })
+          break
+        }
+        default: {
+          // Fallback: simple fade per segment
+          const startTime = formatAssTime(sub.start)
+          const endTime = formatAssTime(sub.end)
+          ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(200,200)}${text}\n`
+        }
       }
     }
   }
@@ -6785,6 +6946,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       }
     }
     // Split long subtitle text (max 8 words/line, max 2 lines)
+    // Preserve word-level timestamps when splitting
     filteredSubtitleSegments = filteredSubtitleSegments.flatMap((seg: any) => {
       const chunks = splitSubtitleText(seg.text || '')
       if (chunks.length <= 1) return [seg]
@@ -6793,12 +6955,21 @@ app.post('/api/auto-editor/process', async (req, res) => {
       const segEnd = seg.end ?? seg.keepEnd ?? 0
       const segDuration = segEnd - segStart
       const chunkDuration = segDuration / chunks.length
-      return chunks.map((chunk: string, i: number) => ({
-        ...seg,
-        text: chunk,
-        start: segStart + i * chunkDuration,
-        end: segStart + (i + 1) * chunkDuration,
-      }))
+      // Also split word-level data if available
+      const segWords: any[] = seg.words || []
+      let wordIdx = 0
+      return chunks.map((chunk: string, i: number) => {
+        const chunkWordCount = chunk.replace(/\\N/g, ' ').split(/\s+/).filter((w: string) => w).length
+        const chunkWords = segWords.slice(wordIdx, wordIdx + chunkWordCount)
+        wordIdx += chunkWordCount
+        return {
+          ...seg,
+          text: chunk,
+          start: chunkWords.length > 0 ? (chunkWords[0].start ?? segStart + i * chunkDuration) : segStart + i * chunkDuration,
+          end: chunkWords.length > 0 ? (chunkWords[chunkWords.length - 1].end ?? segStart + (i + 1) * chunkDuration) : segStart + (i + 1) * chunkDuration,
+          words: chunkWords.length > 0 ? chunkWords : undefined,
+        }
+      })
     })
 
     console.log('[PROCESS] Plan:', {
@@ -8455,10 +8626,12 @@ app.post('/api/export/burn-subtitles', async (req, res) => {
     }
 
     // Build subtitles in format expected by buildAnimatedASS
+    // Preserve word-level timestamps if available (from Deepgram)
     const subs = captions.map((c: any) => ({
       start: c.startTime || c.start || 0,
       end: c.endTime || c.end || 0,
       text: c.text || '',
+      words: c.words || undefined,
     }))
 
     // For main editor export, cuts = entire video as one cut

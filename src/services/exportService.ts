@@ -216,7 +216,7 @@ function formatTime(seconds: number, format: 'srt' | 'vtt' | 'simple'): string {
 // Server-side export with animated subtitles burned in
 export async function exportVideoWithAnimatedSubtitles(
   videoUrl: string,
-  captions: Array<{ text: string; startTime: number; endTime: number }>,
+  captions: Array<{ text: string; startTime: number; endTime: number; words?: { word: string; start: number; end: number }[] }>,
   animationStyle: string,
   format: string,
   onProgress: (progress: number) => void,
