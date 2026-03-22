@@ -5155,14 +5155,51 @@ const colorGrades: Record<string, string> = {
   film: "eq=brightness=0.0:contrast=1.15:saturation=0.9,curves=r='0/0.03:0.5/0.5:1/0.95':g='0/0.02:0.5/0.48:1/0.95':b='0/0.05:0.5/0.5:1/0.92',vignette=PI/4.5,colorbalance=rm=0.03:gm=-0.01:bm=-0.02",
 }
 
-// Subtitle style presets (ASS format)
+// Hebrew font path for ASS subtitles — Heebo variable font (supports Bold weight)
+const HEBREW_FONT_PATH = path.resolve(__dirname, 'assets', 'fonts', 'Heebo-Bold.ttf')
+const HEBREW_FONT_DIR = path.resolve(__dirname, 'assets', 'fonts')
+const HEBREW_FONT_NAME = 'Heebo'
+
+// Ensure the font file is available next to the ASS file for FFmpeg fontsdir
+function ensureFontInDir(targetDir: string): string {
+  const targetFont = path.join(targetDir, 'Heebo-Bold.ttf')
+  if (!fs.existsSync(targetFont) && fs.existsSync(HEBREW_FONT_PATH)) {
+    fs.copyFileSync(HEBREW_FONT_PATH, targetFont)
+  }
+  return targetFont
+}
+
+// Remove overlapping subtitle events: sort by start time, trim overlaps, add 50ms gaps
+function deoverlapSubtitleEvents(events: Array<{ start: number; end: number; text: string }>): Array<{ start: number; end: number; text: string }> {
+  if (events.length === 0) return events
+  // Sort by start time
+  events.sort((a, b) => a.start - b.start)
+  // Trim overlaps — each event must end before next starts (50ms gap)
+  const GAP = 0.05 // 50ms
+  for (let i = 0; i < events.length - 1; i++) {
+    if (events[i].end > events[i + 1].start - GAP) {
+      events[i].end = Math.max(events[i].start + 0.1, events[i + 1].start - GAP)
+    }
+  }
+  return events
+}
+
+// Log first N subtitle entries for debugging
+function logFirstSubtitles(label: string, subs: Array<{ start: number; end: number; text: string }>, count: number = 3): void {
+  console.log(`[SUBTITLE DEBUG] ${label} — first ${Math.min(count, subs.length)} of ${subs.length}:`)
+  for (let i = 0; i < Math.min(count, subs.length); i++) {
+    console.log(`  [${i + 1}] ${subs[i].start.toFixed(2)}s → ${subs[i].end.toFixed(2)}s | "${subs[i].text}"`)
+  }
+}
+
+// Subtitle style presets (ASS format) — using Heebo Hebrew font
 // Alignment=2 (bottom center), MarginV=40 (distance from bottom edge)
 const subtitleStyles: Record<string, string> = {
-  modern: 'Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177',
-  karaoke: 'Style: Default,Arial,26,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177',
-  bold_white: 'Style: Default,Arial,28,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,177',
-  minimal: 'Style: Default,Arial,22,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,40,177',
-  colorful: 'Style: Default,Arial,26,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177',
+  modern: `Style: Default,${HEBREW_FONT_NAME},24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177`,
+  karaoke: `Style: Default,${HEBREW_FONT_NAME},26,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177`,
+  bold_white: `Style: Default,${HEBREW_FONT_NAME},28,&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,40,177`,
+  minimal: `Style: Default,${HEBREW_FONT_NAME},22,&H00FFFFFF,&H00000000,&H00000000,&H40000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,40,177`,
+  colorful: `Style: Default,${HEBREW_FONT_NAME},26,&H0000D7FF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,177`,
 }
 
 // Filter out speaker labels, production cues, and very short segments from subtitles
@@ -5238,8 +5275,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `
 
   // Recalculate timestamps relative to cut video with overlap/clamp support
+  const adjustedEvents: Array<{ start: number; end: number; text: string }> = []
   let currentOffset = 0
-  let syncedCount = 0
   for (const cut of cuts) {
     const cutDuration = cut.keep_end - cut.keep_start
     for (const seg of segments) {
@@ -5253,23 +5290,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const relStart = currentOffset + (clampedStart - cut.keep_start)
         const relEnd = currentOffset + (clampedEnd - cut.keep_start)
         if (relEnd - relStart < 0.1) continue // Skip tiny fragments
-        const start = formatAssTime(relStart)
-        const end = formatAssTime(relEnd)
-        // Add fade-in/fade-out animation
-        const text = `{\\fad(200,200)}${seg.text}`
-        ass += `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}\n`
-        syncedCount++
+        adjustedEvents.push({ start: relStart, end: relEnd, text: seg.text || '' })
       }
     }
     currentOffset += cutDuration
   }
 
-  console.log(`[SUBTITLE] Synced ${syncedCount} subtitle segments to cut timeline. Offset adjustments applied.`)
+  // Fix overlaps: sort by start time, trim overlapping events, add 50ms gaps
+  deoverlapSubtitleEvents(adjustedEvents)
+
+  // Log first 3 subtitle entries for debugging
+  logFirstSubtitles('generateStyledSubtitles', adjustedEvents)
+
+  // Write dialogue lines
+  for (const ev of adjustedEvents) {
+    const start = formatAssTime(ev.start)
+    const end = formatAssTime(ev.end)
+    const text = `{\\fad(200,200)}${ev.text}`
+    ass += `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}\n`
+  }
+
+  console.log(`[SUBTITLE] Synced ${adjustedEvents.length} subtitle segments to cut timeline. Offset adjustments applied.`)
   return ass
 }
 
 // Generate animated ASS subtitles (word-by-word karaoke/pop/typewriter/glow/bounce/slide)
 function buildAnimatedASS(subtitles: any[], style: string, cuts: any[]): string {
+  const F = HEBREW_FONT_NAME // Short alias for font name
   let ass = `[Script Info]
 Title: Animated Subtitles
 ScriptType: v4.00+
@@ -5281,54 +5328,54 @@ WrapStyle: 0
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 `
   // --- 5 professional animated subtitle presets ---
-  // All use Alignment=2 (bottom center), MarginV=35-40
+  // All use Alignment=2 (bottom center), MarginV=35-40, Hebrew font (Heebo)
   switch (style) {
     case 'bold_pop':
       // Large bold text, word-by-word reveal with scale pop, key word highlighted in yellow
-      ass += `Style: Default,Arial Black,24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
-      ass += `Style: Highlight,Arial Black,26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Default,${F},24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Highlight,${F},26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       break
     case 'neon_glow':
       // White text with colored glow outline, slide up
-      ass += `Style: Default,Arial,22,&H00FFFFFF,&H00FF88FF,&H00FF00FF,&H60000000,-1,0,0,0,100,100,0,0,1,4,2,2,10,10,35,177\n`
-      ass += `Style: Highlight,Arial,24,&H00FFFFFF,&H00FF88FF,&H0000AAFF,&H60000000,-1,0,0,0,100,100,0,0,1,5,2,2,10,10,35,177\n`
+      ass += `Style: Default,${F},22,&H00FFFFFF,&H00FF88FF,&H00FF00FF,&H60000000,-1,0,0,0,100,100,0,0,1,4,2,2,10,10,35,177\n`
+      ass += `Style: Highlight,${F},24,&H00FFFFFF,&H00FF88FF,&H0000AAFF,&H60000000,-1,0,0,0,100,100,0,0,1,5,2,2,10,10,35,177\n`
       break
     case 'boxing':
       // Each word in a colored box, appears one by one
-      ass += `Style: Default,Arial Black,20,&H00FFFFFF,&H00FFFFFF,&H00AA00AA,&H00AA00AA,-1,0,0,0,100,100,0,0,3,0,6,2,15,15,35,177\n`
-      ass += `Style: Highlight,Arial Black,22,&H00FFFFFF,&H00FFFFFF,&H000055FF,&H000055FF,-1,0,0,0,100,100,0,0,3,0,8,2,15,15,35,177\n`
+      ass += `Style: Default,${F},20,&H00FFFFFF,&H00FFFFFF,&H00AA00AA,&H00AA00AA,-1,0,0,0,100,100,0,0,3,0,6,2,15,15,35,177\n`
+      ass += `Style: Highlight,${F},22,&H00FFFFFF,&H00FFFFFF,&H000055FF,&H000055FF,-1,0,0,0,100,100,0,0,3,0,8,2,15,15,35,177\n`
       break
     case 'minimal':
       // Clean thin font, fade in/out, no fancy animation
-      ass += `Style: Default,Arial,18,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,40,177\n`
-      ass += `Style: Highlight,Arial,18,&H0000DDFF,&H0000DDFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,40,177\n`
+      ass += `Style: Default,${F},18,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,40,177\n`
+      ass += `Style: Highlight,${F},18,&H0000DDFF,&H0000DDFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,40,177\n`
       break
     case 'karaoke':
       // Text appears all at once (gray), each word highlights (white) as spoken
-      ass += `Style: Default,Arial Black,22,&H00888888,&H00888888,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,35,177\n`
-      ass += `Style: Spoken,Arial Black,22,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,35,177\n`
+      ass += `Style: Default,${F},22,&H00888888,&H00888888,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,35,177\n`
+      ass += `Style: Spoken,${F},22,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,35,177\n`
       break
     // Legacy styles mapped to new presets
     case 'pop':
-      ass += `Style: Default,Arial Black,24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
-      ass += `Style: Highlight,Arial Black,26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Default,${F},24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Highlight,${F},26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       break
     case 'typewriter':
-      ass += `Style: Default,Arial,20,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,35,177\n`
+      ass += `Style: Default,${F},20,&H0000FF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,35,177\n`
       break
     case 'glow':
-      ass += `Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,10,10,35,177\n`
+      ass += `Style: Default,${F},22,&H00FFFFFF,&H000000FF,&H004B0082,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,10,10,35,177\n`
       break
     case 'bounce':
-      ass += `Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Default,${F},22,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       break
     case 'slide':
-      ass += `Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Default,${F},22,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
       break
     default:
       // Default to bold_pop
-      ass += `Style: Default,Arial Black,24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
-      ass += `Style: Highlight,Arial Black,26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Default,${F},24,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
+      ass += `Style: Highlight,${F},26,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,35,177\n`
   }
   ass += `\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`
 
@@ -5357,6 +5404,13 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
     }
     currentOffset += cutDuration
   }
+
+  // Fix overlaps: sort by start time, trim overlapping events, add 50ms gaps
+  deoverlapSubtitleEvents(adjustedSubs)
+
+  // Log first 3 subtitle entries for debugging
+  logFirstSubtitles('buildAnimatedASS', adjustedSubs)
+
   console.log(`[SUBTITLE] Synced ${adjustedSubs.length} animated subtitle segments to cut timeline. Offset adjustments applied.`)
 
   for (const sub of adjustedSubs) {
@@ -5530,25 +5584,28 @@ async function generateAnimatedSubtitles(
   fs.writeFileSync(assPath, '\ufeff' + assContent, 'utf-8')
   filesToCleanup.push(assPath)
 
+  // Ensure Hebrew font is available in the output directory for FFmpeg fontsdir
+  ensureFontInDir(outputDir)
+
   // Use basenames to avoid path escaping issues with colons/quotes/spaces
   const assBaseName = path.basename(assPath)
   const inputBaseName = path.basename(inputFile)
   const outputBaseName = path.basename(outputFile)
 
-  // Try subtitles filter first (needs libass)
+  // Try subtitles filter first (needs libass) — with fontsdir for Hebrew font
   try {
     execSync(
-      `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "subtitles=${assBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
+      `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "subtitles=${assBaseName}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
       { timeout: 180000, maxBuffer: 10 * 1024 * 1024, cwd: outputDir }
     )
     console.log(`[PROCESS] Animated subtitles applied via subtitles filter (${style})`)
     return outputFile
   } catch (e: any) {
     console.warn('[PROCESS] ASS subtitles filter failed:', e.stderr?.toString().substring(0, 300))
-    // Try ass filter as alternative
+    // Try ass filter as alternative — with fontsdir for Hebrew font
     try {
       execSync(
-        `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "ass=${assBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
+        `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "ass=${assBaseName}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
         { timeout: 180000, maxBuffer: 10 * 1024 * 1024, cwd: outputDir }
       )
       console.log(`[PROCESS] Animated subtitles applied via ass filter (${style})`)
@@ -7614,6 +7671,9 @@ app.post('/api/auto-editor/process', async (req, res) => {
       mainPresenter: mainPresenter || 'none',
     })
 
+    // Ensure Hebrew font is available in uploads dir for all subtitle paths
+    ensureFontInDir(uploadsDir)
+
     if (!includeSubtitles) {
       console.log('[PROCESS] Step 5: Skipping subtitles (disabled by user)')
     } else if (segments.length > 0 && animatedSubtitles) {
@@ -7638,7 +7698,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           filesToCleanup.push(subFile)
           const assBase = path.basename(assFilePath)
           execSync(
-            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${assBase}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(subFile)}" -y`,
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${assBase}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(subFile)}" -y`,
             { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           currentFile = subFile
@@ -7666,7 +7726,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
       try {
         execSync(
-          `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${assBase}" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+          `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${assBase}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
           { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
         )
         currentFile = subFile
@@ -7678,7 +7738,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
         let assWorked = false
         try {
           execSync(
-            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "ass=${assBase}" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "ass=${assBase}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
             { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           currentFile = subFile
@@ -7715,7 +7775,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
               fs.writeFileSync(srtFile, '\ufeff' + srtContent, 'utf-8')
               const srtBase = path.basename(srtFile)
               execSync(
-                `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${srtBase}:force_style='FontName=Arial,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30,Encoding=177'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+                `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${srtBase}:fontsdir=.:force_style='FontName=${HEBREW_FONT_NAME},FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30,Encoding=177'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
                 { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
               )
               currentFile = subFile
@@ -8407,8 +8467,11 @@ app.post('/api/export/burn-subtitles', async (req, res) => {
 
     const assContent = buildAnimatedASS(subs, animationStyle, fakeCuts)
     const assPath = path.join(uploadsDir, `export_subs_${timestamp}.ass`)
-    fs.writeFileSync(assPath, assContent, 'utf-8')
+    fs.writeFileSync(assPath, '\ufeff' + assContent, 'utf-8')
     filesToCleanup.push(assPath)
+
+    // Ensure Hebrew font is available in uploads dir
+    ensureFontInDir(uploadsDir)
 
     const scaleMap: Record<string, string> = {
       'mp4-720': 'scale=-2:720',
@@ -8421,8 +8484,9 @@ app.post('/api/export/burn-subtitles', async (req, res) => {
     filesToCleanup.push(outputPath)
 
     const escapedAss = assPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
+    const fontsDirEscaped = uploadsDir.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
     execSync(
-      `"${ffmpegPath}" -i "${inputPath}" -vf "subtitles='${escapedAss}',${scale}" -c:v libx264 -preset fast -crf 23 -c:a aac "${outputPath}" -y`,
+      `"${ffmpegPath}" -i "${inputPath}" -vf "subtitles='${escapedAss}':fontsdir='${fontsDirEscaped}',${scale}" -c:v libx264 -preset fast -crf 23 -c:a aac "${outputPath}" -y`,
       { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
     )
 
