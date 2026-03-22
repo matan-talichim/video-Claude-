@@ -11306,8 +11306,145 @@ function startTelegramBotListener() {
                 `  📈 סטטוס - סטטוס מהיר\n` +
                 `  🖥️ שרת - סטטוס שרת\n` +
                 `  🚀 צא ללמוד - למידה מיידית ($1)\n` +
-                `  🧠 אופטימיזציה - אופטימיזציית פרומפט`
+                `  🧠 אופטימיזציה - אופטימיזציית פרומפט\n` +
+                `  📜 פרומפט - פרומפט מלא + תובנות`
               )
+            } else if (text === 'פרומפט' || text === 'prompt') {
+              console.log('[TELEGRAM BOT] Full prompt report requested')
+
+              try {
+                const brain = loadEditorBrain()
+                const state = loadLearningState()
+
+                // Part 1: Brain stats
+                let msg = `🧠 מוח העורך - דוח מלא\n`
+                msg += '═'.repeat(25) + '\n\n'
+                msg += `📌 גרסה: v${brain.version || 0}\n`
+                msg += `📝 מילים: ${brain.stats?.masterPromptWords || 0}\n`
+                msg += `📅 עדכון אחרון: ${brain.lastUpdatedIsrael || 'לא ידוע'}\n`
+
+                if (brain.lastOptimizedIsrael) {
+                  msg += `🔧 אופטימיזציה אחרונה: ${brain.lastOptimizedIsrael}\n`
+                }
+
+                msg += `\n📊 סטטיסטיקות:\n`
+                msg += `  🎬 כללי עריכה: ${brain.stats?.editingRules || 0}\n`
+                msg += `  📱 תובנות סושיאל: ${brain.stats?.socialInsights || 0}\n`
+                msg += `  📣 תובנות שיווק: ${brain.stats?.marketingInsights || 0}\n`
+                msg += `  💰 תובנות פרסום: ${brain.stats?.paidAdsInsights || 0}\n`
+                msg += `  🔥 טרנדים פעילים: ${brain.stats?.activeTrends || 0}\n`
+                msg += `  💡 רעיונות מערכת: ${brain.stats?.systemIdeas || 0}\n`
+
+                // Send brain stats first
+                await sendTelegram(msg)
+
+                // Part 2: Master Prompt (split into chunks because Telegram has 4096 char limit)
+                const masterPrompt = brain.masterPrompt || 'אין פרומפט'
+                const promptChunks: string[] = []
+                const CHUNK_SIZE = 3500
+
+                for (let i = 0; i < masterPrompt.length; i += CHUNK_SIZE) {
+                  promptChunks.push(masterPrompt.substring(i, i + CHUNK_SIZE))
+                }
+
+                await sendTelegram(`📜 Master Prompt (${promptChunks.length} חלקים):\n` + '─'.repeat(20))
+
+                for (let i = 0; i < promptChunks.length; i++) {
+                  await sendTelegram(`📜 חלק ${i + 1}/${promptChunks.length}:\n\n${promptChunks[i]}`)
+                  // Small delay to avoid Telegram rate limiting
+                  await new Promise(r => setTimeout(r, 500))
+                }
+
+                // Part 3: All learned insights by category
+                let insightsMsg = `\n💡 תובנות לפי קטגוריה:\n`
+                insightsMsg += '═'.repeat(25) + '\n\n'
+
+                let totalInsights = 0
+
+                // Learned patterns
+                const patterns = state.learnedPatterns || {}
+                for (const [category, data] of Object.entries(patterns)) {
+                  const rules = (data as any)?.editing_rules || []
+                  if (rules.length === 0) continue
+
+                  totalInsights += rules.length
+                  insightsMsg += `📂 ${category} (${rules.length}):\n`
+
+                  for (const rule of rules) {
+                    const ruleText = typeof rule === 'string' ? rule : JSON.stringify(rule)
+                    insightsMsg += `  • ${ruleText.substring(0, 120)}${ruleText.length > 120 ? '...' : ''}\n`
+                  }
+                  insightsMsg += '\n'
+
+                  // Send in chunks if getting long
+                  if (insightsMsg.length > 3500) {
+                    await sendTelegram(insightsMsg)
+                    insightsMsg = ''
+                    await new Promise(r => setTimeout(r, 500))
+                  }
+                }
+
+                // Expertise insights
+                const expertise = state.expertise || {}
+                for (const [domain, data] of Object.entries(expertise)) {
+                  const insights = (data as any)?.insights || []
+                  if (insights.length === 0) continue
+
+                  totalInsights += insights.length
+                  insightsMsg += `🎓 ${domain} (${insights.length}):\n`
+
+                  for (const insight of insights) {
+                    const insightText = typeof insight === 'string' ? insight : JSON.stringify(insight)
+                    insightsMsg += `  • ${insightText.substring(0, 120)}${insightText.length > 120 ? '...' : ''}\n`
+                  }
+                  insightsMsg += '\n'
+
+                  if (insightsMsg.length > 3500) {
+                    await sendTelegram(insightsMsg)
+                    insightsMsg = ''
+                    await new Promise(r => setTimeout(r, 500))
+                  }
+                }
+
+                // Send remaining insights
+                if (insightsMsg.length > 0) {
+                  await sendTelegram(insightsMsg)
+                }
+
+                // Part 4: Active trends
+                const trends = state.trendInsights?.activeTrends || []
+                if (trends.length > 0) {
+                  let trendsMsg = `🔥 טרנדים פעילים (${trends.length}):\n`
+                  trendsMsg += '─'.repeat(20) + '\n\n'
+
+                  for (const trend of trends) {
+                    if (typeof trend === 'object') {
+                      trendsMsg += `  🔥 ${(trend as any).name || '?'} (${(trend as any).lifecycle || '?'})\n`
+                      if ((trend as any).description) {
+                        trendsMsg += `     ${(trend as any).description.substring(0, 100)}${(trend as any).description.length > 100 ? '...' : ''}\n`
+                      }
+                    } else {
+                      trendsMsg += `  🔥 ${String(trend).substring(0, 120)}\n`
+                    }
+                  }
+
+                  await sendTelegram(trendsMsg)
+                }
+
+                // Part 5: Summary
+                await sendTelegram(
+                  `\n✅ סיכום:\n` +
+                  `  📝 פרומפט: ${brain.stats?.masterPromptWords || 0} מילים\n` +
+                  `  💡 תובנות: ${totalInsights}\n` +
+                  `  🔥 טרנדים: ${trends.length}\n` +
+                  `  📅 סשנים: ${state.learningMetrics?.totalSessions || 0}\n` +
+                  `  💰 עלות כוללת: $${(state.totalCost || 0).toFixed(3)}`
+                )
+
+              } catch (e: any) {
+                console.error('[TELEGRAM BOT] Prompt report error:', e.message)
+                await sendTelegram(`❌ שגיאה בהכנת דוח פרומפט: ${e.message?.substring(0, 200)}`)
+              }
             }
           } catch (cmdError: any) {
             console.error('[TELEGRAM BOT] Command error:', cmdError.message)
@@ -11326,7 +11463,7 @@ function startTelegramBotListener() {
     setTimeout(pollUpdates, 3000)
   }
 
-  console.log('[TELEGRAM BOT] Listening for commands (דוח / סטטוס / שרת / צא ללמוד / אופטימיזציה)')
+  console.log('[TELEGRAM BOT] Listening for commands (דוח / סטטוס / שרת / צא ללמוד / אופטימיזציה / פרומפט)')
   pollUpdates()
 }
 
