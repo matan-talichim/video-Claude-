@@ -74,10 +74,10 @@ const DURATION_OPTIONS = [
 const BROLL_MODEL_OPTIONS = [
   { id: 'wan', label: 'WAN 2.5', cost: 0.10, quality: '720p', speed: '30-60 שניות', icon: '💰', badge: 'הכי זול' },
   { id: 'kling', label: 'Kling v2.5 Turbo', cost: 0.15, quality: '720p', speed: '1 דקה', icon: '🎯', badge: 'מומלץ' },
+  { id: 'veo-3.1-fast', label: 'Veo 3.1 Fast (4s)', cost: 0.20, quality: '720p', speed: '1-2 דקות', icon: '⚡', badge: '' },
+  { id: 'sora-2', label: 'Sora 2 (5s)', cost: 0.25, quality: '720p', speed: '2-3 דקות', icon: '🌀', badge: '' },
   { id: 'seedance', label: 'Seedance 1.5 Pro', cost: 0.36, quality: '720p', speed: '1-2 דקות', icon: '🌱', badge: '' },
-  { id: 'veo-3.1-fast', label: 'Veo 3.1 Fast', cost: 0.40, quality: '720p', speed: '1-2 דקות', icon: '⚡', badge: '' },
-  { id: 'sora-2', label: 'Sora 2', cost: 0.50, quality: '720p', speed: '2-3 דקות', icon: '🌀', badge: '' },
-  { id: 'veo-3.1-quality', label: 'Veo 3.1 Quality', cost: 2.00, quality: '1080p', speed: '3-5 דקות', icon: '🎬', badge: 'הכי איכותי' },
+  { id: 'veo-3.1-quality', label: 'Veo 3.1 Quality (4s)', cost: 1.00, quality: '1080p', speed: '3-5 דקות', icon: '🎬', badge: 'הכי איכותי' },
 ]
 
 const FORMAT_OPTIONS = [
