@@ -167,6 +167,17 @@ async function getCreativeBrief(
   if (brief._promptImprovements?.length > 0) {
     usePromptEvolutionStore.getState().recordEvolution('creative_brief', brief._promptImprovements)
     log(`[למידה] תכנון קריאטיבי למד ${brief._promptImprovements.length} תובנות חדשות`)
+    // Send reflections to server (fire and forget)
+    fetch(`${API_BASE}/auto-editor/reflections`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId: `job_${Date.now()}`,
+        stage: 'creative_brief',
+        improvements: brief._promptImprovements,
+        timestamp: new Date().toISOString(),
+      }),
+    }).catch(() => {})
   }
 
   log(`במאי: "${brief.creative_brief?.main_message || 'מנתח...'}"`)
@@ -238,6 +249,17 @@ async function getTechnicalPlan(
   if (result._promptImprovements?.length > 0) {
     usePromptEvolutionStore.getState().recordEvolution('technical_plan', result._promptImprovements)
     log(`[למידה] תכנון טכני למד ${result._promptImprovements.length} תובנות חדשות`)
+    // Send reflections to server (fire and forget)
+    fetch(`${API_BASE}/auto-editor/reflections`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId: `job_${Date.now()}`,
+        stage: 'technical_plan',
+        improvements: result._promptImprovements,
+        timestamp: new Date().toISOString(),
+      }),
+    }).catch(() => {})
   }
 
   return result

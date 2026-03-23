@@ -9431,6 +9431,7 @@ const DATA_DIR = (() => {
 const learningStatePath = path.join(DATA_DIR, 'learning-state.json');
 const editorBrainPath = path.join(DATA_DIR, 'editor-brain.json');
 const editHistoryPath = path.join(DATA_DIR, 'edit-history.json');
+const reflectionsHistoryPath = path.join(DATA_DIR, 'reflections-history.json');
 
 // Budget constants
 const DAILY_GPT_COST_LIMIT = 2.0   // $2 per day
@@ -12563,6 +12564,176 @@ app.post('/api/auto-editor/rate', (req, res) => {
   }
 })
 
+// ==================== REFLECTIONS HISTORY (CLIENT SELF-REFLECTION) ====================
+
+function loadReflectionsHistory(): any {
+  try {
+    if (fs.existsSync(reflectionsHistoryPath)) {
+      return JSON.parse(fs.readFileSync(reflectionsHistoryPath, 'utf-8'))
+    }
+  } catch (e: any) {
+    console.error('[REFLECT] Failed to load reflections history:', e.message?.substring(0, 100))
+  }
+  return { reflections: [] }
+}
+
+function saveReflectionsHistory(data: any) {
+  fs.writeFileSync(reflectionsHistoryPath, JSON.stringify(data, null, 2))
+}
+
+function cleanupOldReflections(data: any): number {
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+  const before = data.reflections.length
+  data.reflections = data.reflections.filter((r: any) => {
+    const ts = new Date(r.timestamp).getTime()
+    return !isNaN(ts) && ts > thirtyDaysAgo
+  })
+  return before - data.reflections.length
+}
+
+app.post('/api/auto-editor/reflections', (req, res) => {
+  try {
+    const { jobId, stage, improvements, timestamp } = req.body
+    if (!jobId || !stage || !improvements || !Array.isArray(improvements) || improvements.length === 0) {
+      return res.status(400).json({ error: 'jobId, stage, and improvements[] required' })
+    }
+
+    const history = loadReflectionsHistory()
+
+    // Cleanup old reflections (30-day retention)
+    const removed = cleanupOldReflections(history)
+    if (removed > 0) {
+      console.log(`[REFLECT] Cleaned up ${removed} reflections older than 30 days`)
+    }
+
+    history.reflections.push({
+      jobId,
+      stage,
+      improvements: improvements.slice(0, 10), // cap at 10 per submission
+      timestamp: timestamp || new Date().toISOString(),
+      applied: false,
+    })
+
+    saveReflectionsHistory(history)
+
+    const unapplied = history.reflections.filter((r: any) => !r.applied).length
+    console.log(`[REFLECT] Received ${improvements.length} improvements for ${stage} (${jobId})`)
+    console.log(`[REFLECT] Stored ${improvements.length} reflections (total unapplied: ${unapplied})`)
+
+    res.json({ success: true, stored: improvements.length, totalUnapplied: unapplied })
+  } catch (e: any) {
+    console.error('[REFLECT] Error storing reflections:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Process unapplied reflections during nightly optimization
+async function processReflections(ai: any, brain: any): Promise<{ totalAccepted: number; totalRejected: number }> {
+  const history = loadReflectionsHistory()
+
+  // Get unapplied reflections
+  let unapplied = history.reflections.filter((r: any) => !r.applied)
+  if (unapplied.length === 0) {
+    console.log('[NIGHTLY] No unapplied reflections to process')
+    return { totalAccepted: 0, totalRejected: 0 }
+  }
+
+  // Max 50 unapplied reflections per run (skip oldest if more)
+  if (unapplied.length > 50) {
+    console.log(`[NIGHTLY] ${unapplied.length} unapplied reflections, processing newest 50`)
+    unapplied = unapplied.slice(-50)
+  }
+
+  // Group by stage
+  const byStage: Record<string, string[]> = {}
+  for (const r of unapplied) {
+    if (!byStage[r.stage]) byStage[r.stage] = []
+    byStage[r.stage].push(...r.improvements)
+  }
+
+  const stages = Object.keys(byStage)
+  console.log(`[NIGHTLY] === Processing reflections ===`)
+  console.log(`[NIGHTLY] Found ${unapplied.length} unapplied reflections across ${stages.length} stages`)
+
+  let totalAccepted = 0
+  let totalRejected = 0
+
+  for (const stage of stages) {
+    const improvements = byStage[stage]
+    const currentPrompt = brain.stagePrompts?.[stage] || ''
+
+    if (!currentPrompt) {
+      console.log(`[NIGHTLY] ${stage}: no current prompt, skipping`)
+      continue
+    }
+
+    try {
+      const response = await ai.chat.completions.create({
+        model: 'gpt-5.4',
+        max_completion_tokens: 4000,
+        messages: [{
+          role: 'user',
+          content: `You are optimizing a stage-specific editing prompt.
+
+Current prompt for ${stage}:
+${currentPrompt}
+
+The auto-editor has suggested these improvements based on real editing jobs:
+${improvements.map((imp: string, i: number) => `${i + 1}. ${imp}`).join('\n')}
+
+Review each improvement:
+- If it's valid and useful → incorporate it into the prompt
+- If it contradicts a high-confidence rule → ignore it
+- If it's too specific to one job → generalize it first
+- If it duplicates something already in the prompt → skip it
+
+Return the updated prompt (same format, same word limit). Also return which improvements were accepted and which rejected with reasons.
+
+Return as JSON:
+{
+  "updated_prompt": "...",
+  "accepted": [{"improvement": "...", "how_applied": "..."}],
+  "rejected": [{"improvement": "...", "reason": "..."}]
+}`,
+        }],
+        response_format: { type: 'json_object' },
+      })
+
+      const content = response.choices[0].message.content?.trim() || '{}'
+      let result: any
+      try {
+        result = JSON.parse(content)
+      } catch {
+        console.error(`[NIGHTLY] ${stage}: failed to parse GPT response`)
+        continue
+      }
+
+      const accepted = result.accepted?.length || 0
+      const rejected = result.rejected?.length || 0
+      totalAccepted += accepted
+      totalRejected += rejected
+
+      console.log(`[NIGHTLY] ${stage}: ${improvements.length} reflections → ${accepted} accepted, ${rejected} rejected`)
+
+      // Update stage prompt if we got a valid result
+      if (result.updated_prompt && result.updated_prompt.length > 50) {
+        brain.stagePrompts[stage] = result.updated_prompt
+      }
+    } catch (e: any) {
+      console.error(`[NIGHTLY] ${stage}: reflection processing failed:`, e.message?.substring(0, 150))
+    }
+  }
+
+  // Mark all processed reflections as applied
+  for (const r of unapplied) {
+    r.applied = true
+  }
+  saveReflectionsHistory(history)
+
+  console.log(`[NIGHTLY] Total: ${totalAccepted} accepted, ${totalRejected} rejected`)
+  return { totalAccepted, totalRejected }
+}
+
 // ==================== DAILY PROMPT OPTIMIZATION ====================
 
 async function runSelfEvaluation(): Promise<any[]> {
@@ -12841,6 +13012,16 @@ async function optimizeMasterPrompt() {
     if (!ai) {
       console.error('[BRAIN] OpenAI not configured, skipping optimization')
       return
+    }
+
+    // Process client-side reflections before rebuilding stage prompts
+    try {
+      const { totalAccepted, totalRejected } = await processReflections(ai, brain)
+      if (totalAccepted > 0 || totalRejected > 0) {
+        console.log(`[BRAIN] Reflections processed: ${totalAccepted} accepted, ${totalRejected} rejected`)
+      }
+    } catch (e: any) {
+      console.error('[REFLECT] Reflection processing failed:', e.message?.substring(0, 150))
     }
 
     const response = await ai.chat.completions.create({
