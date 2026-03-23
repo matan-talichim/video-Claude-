@@ -3384,11 +3384,25 @@ RETAKE DETECTION:
    this is a retake/prompt scenario. REMOVE the presenter's FIRST attempt and KEEP only the LAST/BEST version.
 9. If the presenter says the same idea multiple times in a row, keep only the last version.
 
+BEST TAKE SELECTION:
+10. When you see the presenter saying the same content multiple times (different takes), keep ONLY the cleanest, most complete, and most fluent version. Score each take by:
+    - Completeness: does the sentence start and end properly? (no mid-word cuts)
+    - Fluency: are there stutters, "אממ", "אה", repeated false starts?
+    - Length: longer complete takes are usually better than short fragments
+    - Position: later takes are usually better (presenter improved after practice)
+11. Remove takes with:
+    - Stutters or false starts
+    - Incomplete sentences that trail off
+    - Words said incorrectly and then corrected
+    - Filler words like אממ, אה, רגע, חכה
+12. Always prefer the take where the presenter sounds most confident and natural.
+13. For each group of takes of the same line, add to the reason: "take X of Y kept (cleanest)" so we can log it.
+
 KEEP these:
 1. Complete, clean sentences
 2. Natural short pauses between ideas (< 1 second)
 3. Emotional moments and emphasis
-4. The best version of repeated ideas
+4. The best version of repeated ideas (the cleanest take)
 
 For each segment, return:
 {
@@ -3428,6 +3442,16 @@ IMPORTANT:
 
     const retakeCount = (result.segments || []).filter((s: any) => s.action === 'remove' && s.reason?.toLowerCase().includes('retake')).length
     console.log(`[CLEAN] Detected ${retakeCount} retakes (presenter repeated after crew prompt)`)
+
+    // Log best-take selection decisions
+    const takeDecisions = (result.segments || []).filter((s: any) => s.reason && /take \d+ of \d+/i.test(s.reason))
+    for (const td of takeDecisions) {
+      const segText = presenterSegments[td.index]?.text?.substring(0, 40) || ''
+      console.log(`[CLEAN] Line "${segText}...": ${td.reason} → ${td.action}`)
+    }
+    if (takeDecisions.length > 0) {
+      console.log(`[CLEAN] Best-take selection: ${takeDecisions.filter((d: any) => d.action === 'keep').length} kept, ${takeDecisions.filter((d: any) => d.action === 'remove').length} discarded`)
+    }
 
     // Apply cleaning decisions to segments
     const cleanedSegments = presenterSegments
@@ -5354,6 +5378,10 @@ DETECTION RULES:
 4. DELIVERY STYLE: The presenter speaks in complete, polished sentences directed at an audience. The assistant speaks in casual, directive tone to the presenter.
 5. VOLUME DATA: Lower volume (more negative dB) suggests the person is further from the mic (likely assistant), but this is not always reliable.
 6. CONTEXT: Consider the flow — if the presenter was speaking, then a quiet/short segment appears, then the presenter continues the same topic — that middle segment is likely the assistant giving feedback.
+IMPORTANT: A presenter often repeats similar phrases across different takes. This is NOT the same as dictation. Dictation means someone ELSE says it first and the presenter repeats. Internal repetition within a single speaker's segments is normal presenter behavior (multiple takes of the same line).
+
+Only mark as 'not presenter' if you are confident this is a DIFFERENT PERSON speaking (production assistant), not just the presenter doing another take.
+
 Be VERY careful: the assistant and presenter often say THE SAME WORDS. The difference is in the PATTERN (who said it first) and CONTEXT.`
 
     const userPrompt = `Here are all transcript segments with timing and volume data:
@@ -5513,20 +5541,29 @@ function applyVotingLogic(segments: any[]): void {
     let verdict: 'presenter' | 'production_assistant' = 'presenter'
     let confidenceLevel: 'high' | 'medium' | 'low' = 'low'
 
-    // Rule 1: Repetition pattern wins
-    if (v.repetitionRole === 'dictator') {
-      verdict = 'production_assistant'
-      confidenceLevel = 'high'
-    } else if (v.repetitionRole === 'repeater') {
+    // Rule 1: Repeater is always presenter (repeater = person who repeats = presenter)
+    if (v.repetitionRole === 'repeater') {
       verdict = 'presenter'
       confidenceLevel = 'high'
     }
-    // Rule 2: GPT high confidence + short segment
+    // Rule 2: Dictator + GPT agreement/override
+    else if (v.repetitionRole === 'dictator') {
+      if (v.gptClassification?.isPresenter && v.gptClassification?.confidence === 'high') {
+        // GPT high confidence says presenter — GPT wins over repetition pattern
+        verdict = 'presenter'
+        confidenceLevel = 'medium'
+      } else {
+        // GPT agrees (not_presenter) OR GPT medium/low confidence — repetition wins
+        verdict = 'production_assistant'
+        confidenceLevel = 'high'
+      }
+    }
+    // Rule 3: GPT high confidence + short segment
     else if (v.gptClassification?.confidence === 'high' && !v.gptClassification.isPresenter && wordCount < 5) {
       verdict = 'production_assistant'
       confidenceLevel = 'high'
     }
-    // Rule 3: Multiple signals agree
+    // Rule 4: Multiple signals agree
     else {
       let notPresenterSignals = 0
       if (v.gptClassification && !v.gptClassification.isPresenter) notPresenterSignals++
@@ -5537,17 +5574,17 @@ function applyVotingLogic(segments: any[]): void {
         verdict = 'production_assistant'
         confidenceLevel = 'medium'
       }
-      // Rule 4: GPT medium + volume quiet
+      // Rule 5: GPT medium + volume quiet
       else if (v.gptClassification?.confidence === 'medium' && !v.gptClassification.isPresenter && v.volumeFlag === 'quiet') {
         verdict = 'production_assistant'
         confidenceLevel = 'medium'
       }
-      // Rule 5: Visual tiebreaker
+      // Rule 6: Visual tiebreaker
       else if (v.visualCheck === 'listening') {
         verdict = 'production_assistant'
         confidenceLevel = 'low'
       }
-      // Rule 6: Default — keep as presenter
+      // Rule 7: Default — keep as presenter
       else {
         if (v.gptClassification) {
           verdict = v.gptClassification.isPresenter ? 'presenter' : 'production_assistant'
@@ -5647,6 +5684,34 @@ app.post('/api/auto-editor/verify-speakers', async (req, res) => {
   const presenterLabel = Object.entries(presenterVotes)
     .sort((a, b) => (b[1] as number) - (a[1] as number))[0]?.[0] || segments[0]?.speaker || 'דובר 1'
 
+  // --- Minimum presenter threshold check (30%) ---
+  // If too few segments are classified as presenter, something is wrong — fall back to Deepgram labels
+  const totalSpeechDuration = workingSegments.reduce((acc: number, s: any) => acc + (s.end - s.start), 0)
+  const prelimPresenterDuration = workingSegments
+    .filter((s: any) => s._verification.finalVerdict === 'presenter')
+    .reduce((acc: number, s: any) => acc + (s.end - s.start), 0)
+  const presenterPct = totalSpeechDuration > 0 ? (prelimPresenterDuration / totalSpeechDuration) * 100 : 0
+
+  let fallbackTriggered = false
+  if (presenterPct < 30 && totalSpeechDuration > 10) {
+    console.warn(`[SPEAKER VERIFY] WARNING: Only ${presenterPct.toFixed(0)}% presenter time, falling back to Deepgram labels`)
+    fallbackTriggered = true
+    // Find speaker with most total duration from Deepgram's original labels
+    const speakerDurations: Record<string, number> = {}
+    for (const seg of workingSegments) {
+      const dur = seg.end - seg.start
+      speakerDurations[seg.speaker] = (speakerDurations[seg.speaker] || 0) + dur
+    }
+    const deepgramPresenter = Object.entries(speakerDurations)
+      .sort((a, b) => (b[1] as number) - (a[1] as number))[0]?.[0] || segments[0]?.speaker || 'דובר 1'
+    console.log(`[SPEAKER VERIFY] Fallback: using Deepgram speaker "${deepgramPresenter}" as presenter`)
+    // Override voting results — use Deepgram's labels directly
+    for (const seg of workingSegments) {
+      seg._verification.finalVerdict = seg.speaker === deepgramPresenter ? 'presenter' : 'production_assistant'
+      seg._verification.confidenceLevel = 'medium'
+    }
+  }
+
   // --- Per-segment logging & relabeling ---
   let presenterSegCount = 0
   let presenterDuration = 0
@@ -5736,6 +5801,8 @@ app.post('/api/auto-editor/verify-speakers', async (req, res) => {
     lowConfidence: lowConf,
     presenterLabel,
     elapsed: parseFloat(elapsed),
+    fallbackTriggered,
+    presenterPercentage: parseFloat(presenterPct.toFixed(1)),
   }
 
   res.json({
@@ -5976,10 +6043,14 @@ function detectKeyWordLocal(words: string[]): string | null {
 
 // Generate styled ASS subtitles
 function generateStyledSubtitles(segments: any[], cuts: any[], style: string = 'modern'): string {
+  const RLE = '\u202B' // Right-to-Left Embedding
+  const PDF = '\u202C' // Pop Directional Formatting
+  console.log(`[SUBTITLE] RTL method: unicode_markers (styled)`)
+
   let ass = `[Script Info]
 Title: Auto Generated Subtitles
 ScriptType: v4.00+
-WrapStyle: 0
+WrapStyle: 2
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
 PlayResX: 1920
@@ -6025,7 +6096,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   for (const ev of adjustedEvents) {
     const start = formatAssTime(ev.start)
     const end = formatAssTime(ev.end)
-    const text = `{\\fad(200,200)}${ev.text}`
+    const text = `{\\fad(200,200)}${RLE}${ev.text}${PDF}`
     ass += `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}\n`
   }
 
@@ -6037,12 +6108,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 // Supports: bold_pop, karaoke, word_flash, neon_glow + legacy styles
 function buildAnimatedASS(subtitles: any[], style: string, cuts: any[]): string {
   const F = HEBREW_FONT_NAME // Short alias for font name
+  // RTL marker characters for Hebrew BiDi support
+  const RLE = '\u202B' // Right-to-Left Embedding
+  const PDF = '\u202C' // Pop Directional Formatting
+  const RTL_METHOD = 'unicode_markers' // Log which RTL approach is used
+  console.log(`[SUBTITLE] RTL method: ${RTL_METHOD}`)
+
   let ass = `[Script Info]
 Title: Animated Subtitles
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
-WrapStyle: 0
+WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -6149,7 +6226,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             phraseAss += `{\\c&HFFFFFF&\\bord4\\t(${relWordStart},${relWordStart + 50},\\c&H00FFFF&\\fscx110\\fscy110)\\t(${relWordEnd},${relWordEnd + 50},\\c&HFFFFFF&\\fscx100\\fscy100)}${w.word}`
           }
 
-          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\fad(100,0)}${phraseAss}\n`
+          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\fad(100,0)}${RLE}${phraseAss}${PDF}\n`
         }
         break
       }
@@ -6172,8 +6249,8 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
           }
 
           // Layer 0: base text (dimmed), Layer 1: karaoke fill
-          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\c&H888888&\\fad(150,100)}${phrase.text}\n`
-          ass += `Dialogue: 1,${pStart},${pEnd},Default,,0,0,0,,${karaokeText}\n`
+          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\c&H888888&\\fad(150,100)}${RLE}${phrase.text}${PDF}\n`
+          ass += `Dialogue: 1,${pStart},${pEnd},Default,,0,0,0,,${RLE}${karaokeText}${PDF}\n`
         }
         break
       }
@@ -6187,7 +6264,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
           const wEnd = formatAssTime(w.end)
           const styleName = (i % 2 === 0) ? 'Default' : 'Alt'
           // Pop in with scale overshoot then ease back
-          ass += `Dialogue: 0,${wStart},${wEnd},${styleName},,0,0,0,,{\\fscx130\\fscy130\\t(0,150,\\fscx100\\fscy100)}${w.word}\n`
+          ass += `Dialogue: 0,${wStart},${wEnd},${styleName},,0,0,0,,{\\fscx130\\fscy130\\t(0,150,\\fscx100\\fscy100)}${RLE}${w.word}${PDF}\n`
         }
         break
       }
@@ -6209,7 +6286,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             phraseAss += `{\\c&HFFFFFF&\\bord1\\blur0\\shad0\\t(${relWordStart},${relWordStart + 50},\\c&HFF8800&\\bord3\\blur2\\shad2)\\t(${relWordEnd},${relWordEnd + 50},\\c&HFFFFFF&\\bord1\\blur0\\shad0)}${w.word}`
           }
 
-          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\fad(100,0)}${phraseAss}\n`
+          ass += `Dialogue: 0,${pStart},${pEnd},Default,,0,0,0,,{\\fad(100,0)}${RLE}${phraseAss}${PDF}\n`
         }
         break
       }
@@ -6255,14 +6332,14 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             const we = formatAssTime(wEnd)
             const isKey = keyWord && word.includes(keyWord)
             const styleName = isKey ? 'Highlight' : 'Default'
-            ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(150,100)\\t(0,100,\\fscx105\\fscy105)\\t(100,200,\\fscx100\\fscy100)}${word} \n`
+            ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(150,100)\\t(0,100,\\fscx105\\fscy105)\\t(100,200,\\fscx100\\fscy100)}${RLE}${word}${PDF} \n`
           })
           break
         }
         case 'minimal': {
           const startTime = formatAssTime(sub.start)
           const endTime = formatAssTime(sub.end)
-          ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(300,200)}${text}\n`
+          ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(300,200)}${RLE}${text}${PDF}\n`
           break
         }
         case 'pop': {
@@ -6273,7 +6350,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             const we = formatAssTime(wordEnd)
             const isKey = keyWord && word.includes(keyWord)
             const styleName = isKey ? 'Highlight' : 'Default'
-            ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${word} \n`
+            ass += `Dialogue: 0,${ws},${we},${styleName},,0,0,0,,{\\fad(100,0)\\t(0,150,\\fscx100\\fscy100)\\fscx50\\fscy50}${RLE}${word}${PDF} \n`
           })
           break
         }
@@ -6287,7 +6364,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             const cs = formatAssTime(charStart)
             const we = formatAssTime(sub.end)
             const visibleText = text.substring(0, ci + 1)
-            ass += `Dialogue: 0,${cs},${we},Default,,0,0,0,,${visibleText}\n`
+            ass += `Dialogue: 0,${cs},${we},Default,,0,0,0,,${RLE}${visibleText}${PDF}\n`
             charIdx++
           }
           break
@@ -6301,7 +6378,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             const beforeWords = words.slice(0, wi).join(' ')
             const afterWords = words.slice(wi + 1).join(' ')
             const glowLine = `${beforeWords ? beforeWords + ' ' : ''}{\\c&HFF00FF&\\bord5\\blur3\\b1}${word}{\\r}${afterWords ? ' ' + afterWords : ''}`
-            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,${glowLine}\n`
+            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,${RLE}${glowLine}${PDF}\n`
           })
           break
         }
@@ -6311,7 +6388,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             const wordEnd = sub.end
             const ws = formatAssTime(wordStart)
             const we = formatAssTime(wordEnd)
-            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\fad(100,0)\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)}${word} \n`
+            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\fad(100,0)\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)}${RLE}${word}${PDF} \n`
           })
           break
         }
@@ -6322,7 +6399,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             const ws = formatAssTime(wordStart)
             const we = formatAssTime(wordEnd)
             const finalX = 960 - ((words.length - 1) * 35) + (wi * 70)
-            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(2000,950,${finalX},950,0,250)\\fad(0,150)}${word}\n`
+            ass += `Dialogue: 0,${ws},${we},Default,,0,0,0,,{\\an5\\move(2000,950,${finalX},950,0,250)\\fad(0,150)}${RLE}${word}${PDF}\n`
           })
           break
         }
@@ -6330,7 +6407,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
           // Fallback: simple fade per segment
           const startTime = formatAssTime(sub.start)
           const endTime = formatAssTime(sub.end)
-          ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(200,200)}${text}\n`
+          ass += `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,{\\fad(200,200)}${RLE}${text}${PDF}\n`
         }
       }
     }
