@@ -198,7 +198,19 @@ export default function ExportScreen({ onReset }: ExportScreenProps) {
     videos = Object.values(grouped)
   }
 
-  if (videos.length === 0) return null
+  if (videos.length === 0) {
+    // Show loading state instead of returning null to keep the full-screen overlay visible
+    return (
+      <div className="fixed inset-0 z-[9999] bg-[#0A0A0F]/95 backdrop-blur-sm flex items-center justify-center">
+        <div className="text-center space-y-4" dir="rtl">
+          <div className="w-12 h-12 mx-auto border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+          <p className="text-text-muted text-sm">טוען תוצאות...</p>
+        </div>
+      </div>
+    )
+  }
+
+  console.log('Auto-editor: showing results')
 
   const totalFiles = videos.reduce((sum, v) => sum + v.files.length, 0)
   const isAiDuration = input?.targetDuration === -1

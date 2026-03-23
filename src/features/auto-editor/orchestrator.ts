@@ -1421,7 +1421,7 @@ export async function continueAfterEnrichment(
     console.log(`[PIPELINE] ✅ Total pipeline: ${totalTime} minutes`)
     addLog(`Pipeline הושלם: ${totalTime} דקות סה"כ`)
 
-    setStep('done')
+    // Set results data BEFORE transitioning to 'done' so ExportScreen has data on first render
     setProcessedVideos(processedA)
 
     const legacyResults = processedA.flatMap(v =>
@@ -1435,6 +1435,8 @@ export async function continueAfterEnrichment(
       }))
     )
     setResults(legacyResults)
+
+    setStep('done')
     addLog('העיבוד הושלם בהצלחה!')
   } catch (err: any) {
     setError(err.message || 'שגיאה לא צפויה')

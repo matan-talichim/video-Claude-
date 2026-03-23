@@ -290,11 +290,11 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const handleClose = () => {
     if (isUploading) return // Don't close while uploading
 
-    // Don't close while auto-editor is processing
+    // Don't close while auto-editor is active (processing OR showing results)
     const autoEditorStep = useAutoEditorStore.getState().step
-    const isAutoEditorProcessing = autoEditorStep !== 'idle' && autoEditorStep !== 'done' && autoEditorStep !== 'error'
-    if (isAutoEditorProcessing) {
-      console.warn('[UPLOAD-MODAL] Blocked close during auto-editor processing, step:', autoEditorStep)
+    const isAutoEditorActive = showMarketingEditor && autoEditorStep !== 'idle' && autoEditorStep !== 'error'
+    if (isAutoEditorActive) {
+      console.warn('[UPLOAD-MODAL] Blocked close during auto-editor, step:', autoEditorStep)
       return
     }
 
@@ -581,9 +581,9 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
             files={files}
             onBack={() => {
               const step = useAutoEditorStore.getState().step
-              const isProcessing = step !== 'idle' && step !== 'done' && step !== 'error'
-              if (isProcessing) {
-                console.warn('[UPLOAD-MODAL] Blocked onBack during auto-editor processing, step:', step)
+              const isActive = step !== 'idle' && step !== 'error'
+              if (isActive) {
+                console.warn('[UPLOAD-MODAL] Blocked onBack during auto-editor, step:', step)
                 return
               }
               setShowMarketingEditor(false)
