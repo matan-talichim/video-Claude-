@@ -5779,15 +5779,8 @@ const colorGrades: Record<string, string> = {
 const HEBREW_FONT_PATH = path.resolve(__dirname, 'assets', 'fonts', 'Heebo-Bold.ttf')
 const HEBREW_FONT_DIR = path.resolve(__dirname, 'assets', 'fonts')
 const HEBREW_FONT_NAME = 'Heebo'
-
-// Ensure the font file is available next to the ASS file for FFmpeg fontsdir
-function ensureFontInDir(targetDir: string): string {
-  const targetFont = path.join(targetDir, 'Heebo-Bold.ttf')
-  if (!fs.existsSync(targetFont) && fs.existsSync(HEBREW_FONT_PATH)) {
-    fs.copyFileSync(HEBREW_FONT_PATH, targetFont)
-  }
-  return targetFont
-}
+// Escaped absolute path for use in FFmpeg filter strings (colons must be escaped)
+const HEBREW_FONT_DIR_ESCAPED = HEBREW_FONT_DIR.replace(/\\/g, '/').replace(/:/g, '\\:')
 
 // Remove overlapping subtitle events: sort by start time, trim overlaps, add 50ms gaps
 function deoverlapSubtitleEvents(events: Array<{ start: number; end: number; text: string }>): Array<{ start: number; end: number; text: string }> {
@@ -6365,28 +6358,27 @@ async function generateAnimatedSubtitles(
   fs.writeFileSync(assPath, '\ufeff' + assContent, 'utf-8')
   filesToCleanup.push(assPath)
 
-  // Ensure Hebrew font is available in the output directory for FFmpeg fontsdir
-  ensureFontInDir(outputDir)
-
   // Use basenames to avoid path escaping issues with colons/quotes/spaces
   const assBaseName = path.basename(assPath)
   const inputBaseName = path.basename(inputFile)
   const outputBaseName = path.basename(outputFile)
 
-  // Try subtitles filter first (needs libass) — with fontsdir for Hebrew font
+  console.log(`[SUBTITLE] Using font: ${HEBREW_FONT_NAME}, fontsdir: ${HEBREW_FONT_DIR}`)
+
+  // Try subtitles filter first (needs libass) — with absolute fontsdir for Hebrew font
   try {
     execSync(
-      `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "subtitles=${assBaseName}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
+      `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "subtitles=${assBaseName}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
       { timeout: 180000, maxBuffer: 10 * 1024 * 1024, cwd: outputDir }
     )
     console.log(`[PROCESS] Animated subtitles applied via subtitles filter (${style})`)
     return outputFile
   } catch (e: any) {
     console.warn('[PROCESS] ASS subtitles filter failed:', e.stderr?.toString().substring(0, 300))
-    // Try ass filter as alternative — with fontsdir for Hebrew font
+    // Try ass filter as alternative — with absolute fontsdir for Hebrew font
     try {
       execSync(
-        `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "ass=${assBaseName}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
+        `cd "${outputDir}" && "${ffmpegPath}" -i "${inputBaseName}" -vf "ass=${assBaseName}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${outputBaseName}" -y`,
         { timeout: 180000, maxBuffer: 10 * 1024 * 1024, cwd: outputDir }
       )
       console.log(`[PROCESS] Animated subtitles applied via ass filter (${style})`)
@@ -8462,8 +8454,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       mainPresenter: mainPresenter || 'none',
     })
 
-    // Ensure Hebrew font is available in uploads dir for all subtitle paths
-    ensureFontInDir(uploadsDir)
+    console.log(`[SUBTITLE] Using font: ${HEBREW_FONT_NAME}, fontsdir: ${HEBREW_FONT_DIR}`)
 
     if (!includeSubtitles) {
       console.log('[PROCESS] Step 5: Skipping subtitles (disabled by user)')
@@ -8489,7 +8480,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
           filesToCleanup.push(subFile)
           const assBase = path.basename(assFilePath)
           execSync(
-            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${assBase}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(subFile)}" -y`,
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${assBase}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(subFile)}" -y`,
             { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           currentFile = subFile
@@ -8517,7 +8508,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
       try {
         execSync(
-          `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${assBase}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+          `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${assBase}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
           { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
         )
         currentFile = subFile
@@ -8529,7 +8520,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
         let assWorked = false
         try {
           execSync(
-            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "ass=${assBase}:fontsdir=." -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "ass=${assBase}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
             { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           currentFile = subFile
@@ -8566,7 +8557,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
               fs.writeFileSync(srtFile, '\ufeff' + srtContent, 'utf-8')
               const srtBase = path.basename(srtFile)
               execSync(
-                `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${srtBase}:fontsdir=.:force_style='FontName=${HEBREW_FONT_NAME},FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30,Encoding=177'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
+                `cd "${uploadsDir}" && "${ffmpegPath}" -i "${curBase}" -vf "subtitles=${srtBase}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}:force_style='FontName=${HEBREW_FONT_NAME},FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=30,Encoding=177'" -c:v libx264 -preset fast -crf 23 -c:a copy "${subBase}" -y`,
                 { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
               )
               currentFile = subFile
@@ -8704,7 +8695,7 @@ ${dialogueLines.join('\n')}
         try {
           const ltBaseName = path.basename(ltAssPath)
           execSync(
-            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${ltBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(lowerFile)}" -y`,
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${ltBaseName}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(lowerFile)}" -y`,
             { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           ltApplied = true
@@ -8713,7 +8704,7 @@ ${dialogueLines.join('\n')}
           try {
             const ltBaseName = path.basename(ltAssPath)
             execSync(
-              `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "ass=${ltBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(lowerFile)}" -y`,
+              `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "ass=${ltBaseName}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(lowerFile)}" -y`,
               { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
             )
             ltApplied = true
@@ -8805,7 +8796,7 @@ ${gfxDialogueLines.join('\n')}
         try {
           const gfxBaseName = path.basename(gfxAssPath)
           execSync(
-            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${gfxBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(gfxFile)}" -y`,
+            `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "subtitles=${gfxBaseName}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(gfxFile)}" -y`,
             { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
           )
           gfxApplied = true
@@ -8814,7 +8805,7 @@ ${gfxDialogueLines.join('\n')}
           try {
             const gfxBaseName = path.basename(gfxAssPath)
             execSync(
-              `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "ass=${gfxBaseName}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(gfxFile)}" -y`,
+              `cd "${uploadsDir}" && "${ffmpegPath}" -i "${path.basename(currentFile)}" -vf "ass=${gfxBaseName}:fontsdir=${HEBREW_FONT_DIR_ESCAPED}" -c:v libx264 -preset fast -crf 23 -c:a copy "${path.basename(gfxFile)}" -y`,
               { timeout: 300000, maxBuffer: 10 * 1024 * 1024, cwd: uploadsDir }
             )
             gfxApplied = true
@@ -9339,8 +9330,7 @@ app.post('/api/export/burn-subtitles', async (req, res) => {
     fs.writeFileSync(assPath, '\ufeff' + assContent, 'utf-8')
     filesToCleanup.push(assPath)
 
-    // Ensure Hebrew font is available in uploads dir
-    ensureFontInDir(uploadsDir)
+    console.log(`[SUBTITLE] Using font: ${HEBREW_FONT_NAME}, fontsdir: ${HEBREW_FONT_DIR}`)
 
     const scaleMap: Record<string, string> = {
       'mp4-720': 'scale=-2:720',
@@ -9353,9 +9343,8 @@ app.post('/api/export/burn-subtitles', async (req, res) => {
     filesToCleanup.push(outputPath)
 
     const escapedAss = assPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
-    const fontsDirEscaped = uploadsDir.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''")
     execSync(
-      `"${ffmpegPath}" -i "${inputPath}" -vf "subtitles='${escapedAss}':fontsdir='${fontsDirEscaped}',${scale}" -c:v libx264 -preset fast -crf 23 -c:a aac "${outputPath}" -y`,
+      `"${ffmpegPath}" -i "${inputPath}" -vf "subtitles='${escapedAss}':fontsdir='${HEBREW_FONT_DIR_ESCAPED}',${scale}" -c:v libx264 -preset fast -crf 23 -c:a aac "${outputPath}" -y`,
       { timeout: 600000, stdio: ['pipe', 'pipe', 'pipe'] }
     )
 
@@ -14214,6 +14203,12 @@ app.listen(PORT, () => {
   } else {
     console.log('[API] Warning: AUTO_EDITOR_API_KEY not set. External API is disabled.')
   }
+
+  // Test font availability for Hebrew subtitles
+  const fontExists = fs.existsSync(path.join(HEBREW_FONT_DIR, 'Heebo-Bold.ttf'))
+  console.log(`[SUBTITLE] Font directory: ${HEBREW_FONT_DIR}`)
+  console.log(`[SUBTITLE] Heebo-Bold.ttf: ${fontExists ? '✅' : '❌ NOT FOUND'}`)
+  console.log(`[SUBTITLE] Using font: ${HEBREW_FONT_NAME}`)
 
   // Check FFmpeg availability and auto-editor dependencies
   console.log('Checking FFmpeg...')
