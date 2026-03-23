@@ -11234,6 +11234,198 @@ async function sendLearningReport(state: any, results: any) {
   await sendTelegram(message)
 }
 
+// --- Audio analysis helper for learning agent ---
+function analyzeAudioWithFFmpeg(videoPath: string, tmpDir: string, ffmpegPath: string): any | null {
+  try {
+    const audioStatsFile = path.join(tmpDir, 'audio_stats.txt')
+
+    // Check video duration first - skip if too short
+    let duration = 0
+    try {
+      const durationOut = execSync(
+        `"${ffmpegPath}" -i "${videoPath}" 2>&1 | grep "Duration" || true`,
+        { timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
+      ).toString()
+      const durMatch = durationOut.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/)
+      if (durMatch) {
+        duration = parseInt(durMatch[1]) * 3600 + parseInt(durMatch[2]) * 60 + parseInt(durMatch[3])
+      }
+    } catch {}
+    if (duration > 0 && duration < 5) {
+      console.log('[LEARN] Audio extraction skipped: video too short (<5s)')
+      return null
+    }
+
+    // 1. Get overall volume stats
+    let meanVolume = -99, maxVolume = -99
+    try {
+      const volOut = execSync(
+        `"${ffmpegPath}" -i "${videoPath}" -af "volumedetect" -f null /dev/null 2>&1`,
+        { timeout: 15000 }
+      ).toString()
+      const meanMatch = volOut.match(/mean_volume:\s*([-\d.]+)\s*dB/)
+      const maxMatch = volOut.match(/max_volume:\s*([-\d.]+)\s*dB/)
+      if (meanMatch) meanVolume = parseFloat(meanMatch[1])
+      if (maxMatch) maxVolume = parseFloat(maxMatch[1])
+    } catch (e: any) {
+      console.warn(`[LEARN] Volume detection failed: ${e.message?.substring(0, 80)}`)
+      return null
+    }
+
+    if (meanVolume <= -90) {
+      console.log('[LEARN] Audio extraction skipped: no meaningful audio detected')
+      return null
+    }
+
+    // 2. Get per-second volume stats for speech/music/silence detection
+    const rmsLevels: number[] = []
+    try {
+      execSync(
+        `"${ffmpegPath}" -i "${videoPath}" -af "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=${audioStatsFile}" -f null /dev/null 2>&1`,
+        { timeout: 15000 }
+      )
+      if (fs.existsSync(audioStatsFile)) {
+        const statsContent = fs.readFileSync(audioStatsFile, 'utf-8')
+        const rmsMatches = statsContent.match(/lavfi\.astats\.Overall\.RMS_level=([-\d.]+)/g)
+        if (rmsMatches) {
+          for (const m of rmsMatches) {
+            const val = parseFloat(m.split('=')[1])
+            if (!isNaN(val) && val > -100) rmsLevels.push(val)
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[LEARN] Per-second stats failed: ${e.message?.substring(0, 80)}`)
+    }
+
+    // 3. Analyze speech vs music vs silence from per-second data
+    let speechPercentage = 0, musicPercentage = 0, silencePercentage = 0
+    let hasBackgroundMusic = false
+    let volumeDipsOnSpeech = false
+    let musicVolumeEstimate = 'unknown'
+
+    if (rmsLevels.length >= 3) {
+      const silenceThreshold = -40
+      const silentFrames = rmsLevels.filter(v => v < silenceThreshold).length
+      silencePercentage = Math.round((silentFrames / rmsLevels.length) * 100)
+
+      // Speech: high variance segments; Music: low variance segments
+      const nonSilent = rmsLevels.filter(v => v >= silenceThreshold)
+      if (nonSilent.length >= 2) {
+        // Calculate rolling variance (window of 3)
+        const variances: number[] = []
+        for (let i = 0; i < nonSilent.length - 2; i++) {
+          const window = nonSilent.slice(i, i + 3)
+          const avg = window.reduce((a, b) => a + b, 0) / window.length
+          const variance = window.reduce((a, b) => a + (b - avg) ** 2, 0) / window.length
+          variances.push(variance)
+        }
+        const highVarianceThreshold = 15
+        const speechFrames = variances.filter(v => v > highVarianceThreshold).length
+        const musicFrames = variances.filter(v => v <= highVarianceThreshold).length
+        const totalClassified = speechFrames + musicFrames
+        if (totalClassified > 0) {
+          speechPercentage = Math.round((speechFrames / totalClassified) * (100 - silencePercentage))
+          musicPercentage = Math.round((musicFrames / totalClassified) * (100 - silencePercentage))
+        }
+
+        // Background music detection: if minimum volume during loud segments > -35dB
+        const loudSegments = nonSilent.filter(v => v > -25)
+        const quietNonSilent = nonSilent.filter(v => v >= silenceThreshold && v < -25)
+        if (loudSegments.length > 0 && quietNonSilent.length > 0) {
+          const minDuringSpeech = Math.min(...quietNonSilent)
+          hasBackgroundMusic = minDuringSpeech > -35
+          if (hasBackgroundMusic) {
+            const speechAvg = loudSegments.reduce((a, b) => a + b, 0) / loudSegments.length
+            const musicLevel = quietNonSilent.reduce((a, b) => a + b, 0) / quietNonSilent.length
+            const diffDb = speechAvg - musicLevel
+            const musicPercent = Math.round(Math.pow(10, -diffDb / 20) * 100)
+            musicVolumeEstimate = `${Math.max(5, musicPercent - 3)}-${musicPercent + 3}% of speech`
+          }
+        }
+
+        // Volume dips on speech: check if there's a pattern of volume drops
+        if (rmsLevels.length >= 6) {
+          let dips = 0
+          for (let i = 1; i < rmsLevels.length - 1; i++) {
+            if (rmsLevels[i] < rmsLevels[i - 1] - 3 && rmsLevels[i] < rmsLevels[i + 1] - 3) {
+              dips++
+            }
+          }
+          volumeDipsOnSpeech = dips >= 2
+        }
+      }
+    }
+
+    // 4. Energy curve - split into 4 quarters
+    let energyCurve = 'constant'
+    if (rmsLevels.length >= 4) {
+      const quarterSize = Math.floor(rmsLevels.length / 4)
+      const quarters = [0, 1, 2, 3].map(q => {
+        const slice = rmsLevels.slice(q * quarterSize, (q + 1) * quarterSize)
+        return slice.reduce((a, b) => a + b, 0) / slice.length
+      })
+      const trend = quarters[3] - quarters[0]
+      const midPeak = Math.max(quarters[1], quarters[2]) - Math.max(quarters[0], quarters[3])
+      if (trend > 3) energyCurve = 'builds_up'
+      else if (trend < -3) energyCurve = 'fades_out'
+      else if (midPeak > 3) energyCurve = 'peaks_middle'
+      else energyCurve = 'constant'
+    }
+
+    // 5. Beat/tempo estimation from volume peaks
+    let estimatedTempo = 'unknown'
+    if (rmsLevels.length >= 5) {
+      let peaks = 0
+      const avgLevel = rmsLevels.reduce((a, b) => a + b, 0) / rmsLevels.length
+      for (let i = 1; i < rmsLevels.length - 1; i++) {
+        if (rmsLevels[i] > avgLevel + 2 && rmsLevels[i] > rmsLevels[i - 1] && rmsLevels[i] > rmsLevels[i + 1]) {
+          peaks++
+        }
+      }
+      const peaksPerSecond = peaks / rmsLevels.length
+      const bpmEstimate = Math.round(peaksPerSecond * 60 * 2) // rough estimate
+      if (bpmEstimate < 90) estimatedTempo = `low (${Math.max(60, bpmEstimate)}-90 BPM)`
+      else if (bpmEstimate < 120) estimatedTempo = `medium (90-120 BPM)`
+      else estimatedTempo = `high (120-${Math.min(180, bpmEstimate)} BPM)`
+    }
+
+    // Count audio transitions (significant volume changes)
+    let audioTransitions = 0
+    if (rmsLevels.length >= 2) {
+      for (let i = 1; i < rmsLevels.length; i++) {
+        if (Math.abs(rmsLevels[i] - rmsLevels[i - 1]) > 6) audioTransitions++
+      }
+    }
+
+    const dynamicRange = maxVolume - meanVolume
+
+    // Cleanup stats file
+    try { if (fs.existsSync(audioStatsFile)) fs.unlinkSync(audioStatsFile) } catch {}
+
+    const result = {
+      mean_volume_db: Math.round(meanVolume * 10) / 10,
+      max_volume_db: Math.round(maxVolume * 10) / 10,
+      dynamic_range_db: Math.round(dynamicRange * 10) / 10,
+      has_background_music: hasBackgroundMusic,
+      music_volume_estimate: musicVolumeEstimate,
+      speech_percentage: speechPercentage,
+      music_percentage: musicPercentage,
+      silence_percentage: silencePercentage,
+      energy_curve: energyCurve,
+      estimated_tempo: estimatedTempo,
+      audio_transitions_detected: audioTransitions,
+      volume_dips_on_speech: volumeDipsOnSpeech,
+    }
+
+    console.log(`[LEARN] Audio analysis: mean=${result.mean_volume_db}dB, music=${result.has_background_music ? 'yes' : 'no'} (${result.music_volume_estimate}), tempo=${result.estimated_tempo}, curve=${result.energy_curve}`)
+    return result
+  } catch (err: any) {
+    console.warn(`[LEARN] Audio analysis failed: ${err.message?.substring(0, 100)}`)
+    return null
+  }
+}
+
 async function runServerLearning(options?: { budget?: number, force?: boolean }) {
   if (autoEditorBusy) {
     console.log('[LEARN] Skipping: auto-editor is active')
@@ -11462,6 +11654,10 @@ For each aspect below, give CONCRETE observations:
 6. SOUND DESIGN:
    - Background music: genre, energy level
    - Sound effects: whooshes, clicks, transitions?
+   - IMPORTANT: If AUDIO ANALYSIS DATA is provided below, use those real measurements
+     for sound design answers. Do NOT guess — use the actual dB values, percentages,
+     and tempo data provided. If audio data says has_background_music=true with a specific
+     volume estimate, report that exact data.
 
 7. STORYTELLING STRUCTURE:
    - Narrative arc? (problem→solution, story→lesson, question→answer)
@@ -11496,7 +11692,8 @@ Action type schemas:
 - camera_angle: { action:"camera_angle", crop_intensity:"0.75-0.85", switch_frequency:"every_3-5s"|"on_sentence_change", positions:["center","left_offset","right_offset","close_up"] }
 - broll: { action:"broll", placement:"on_topic_change"|"on_abstract_concept"|"every_15-20s", duration:"2-4s", transition:"cut"|"fade"|"crossfade", timing:"before_claim"|"during_claim"|"after_claim" }
 - subtitle: { action:"subtitle", style:"bold_pop"|"karaoke"|"word_flash"|"neon_glow"|"minimal", words_per_group:"3-5", position:"bottom_center"|"center"|"top", highlight_color:"#FFFF00"|"#00FF00"|"#FF0000", platform_match:"tiktok"|"reels"|"youtube"|"linkedin" }
-- music: { action:"music", genre:"corporate"|"upbeat"|"minimal"|"dramatic"|"chill", volume:"10-15%", fade_in:"1-2s", fade_out:"2-3s", dip_on_speech:true|false }
+- music: { action:"music", genre:"corporate"|"upbeat"|"minimal"|"dramatic"|"chill", volume:"10-15%", fade_in:"1-2s", fade_out:"2-3s", dip_on_speech:true|false, estimated_bpm:"110" }
+For MUSIC and SOUND rules: if real audio analysis data is provided, base your parameters on those actual measurements, not visual guesses. Use the real volume percentages, BPM, and energy curve data.
 - pacing: { action:"pacing", hook_duration:"0.5-2.0s", avg_segment:"2-4s", energy_curve:"build_release"|"constant_high"|"slow_build"|"wave", visual_reset_frequency:"every_1-3s"|"every_2-5s" }
 
 Return JSON:
@@ -11651,6 +11848,7 @@ Return JSON:
           fs.mkdirSync(framesDir, { recursive: true })
 
           let gotFrames = false
+          let audioAnalysis: any = null
 
           // Try yt-dlp download with proper error handling
           try {
@@ -11665,6 +11863,9 @@ Return JSON:
               execSync(`"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/5,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`, { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] })
               gotFrames = true
               analysisMethod = 'video_frames'
+
+              // Extract and analyze audio from downloaded video
+              audioAnalysis = analyzeAudioWithFFmpeg(videoPath, tmpDir, ffmpegPath)
             }
           } catch (dlErr: any) {
             console.warn(`[LEARN] yt-dlp failed for ${video.id}: ${dlErr.message?.substring(0, 100)}`)
@@ -11672,6 +11873,7 @@ Return JSON:
 
           // If yt-dlp failed, fallback to thumbnail analysis for this individual video
           if (!gotFrames) {
+            console.log(`[LEARN] Audio extraction skipped: thumbnail-only mode`)
             console.log(`[LEARN] Using thumbnail fallback for video ${video.id}`)
             analysisMethod = 'thumbnail'
             const thumbnailUrls = [
@@ -11708,7 +11910,10 @@ Return JSON:
 
           // Deep GPT Vision analysis with retry
           let analysisSucceeded = false
-          const metadataText = `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}`
+          const audioDataText = audioAnalysis
+            ? `\n\nAUDIO ANALYSIS DATA (real measurements from FFmpeg — use these, do NOT guess):\n${JSON.stringify(audioAnalysis, null, 2)}\n\nUse this real audio data to answer SOUND DESIGN questions accurately. If has_background_music=true, report the exact music_volume_estimate. If volume_dips_on_speech=true, the music ducks when someone talks. Use energy_curve and estimated_tempo for music style rules.`
+            : '\n\nAudio data: not available (analysis could not be performed for this video — note this limitation in sound design observations)'
+          const metadataText = `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}${audioDataText}`
           try {
             const analysisRes = await callOpenAIWithRetry(ai, {
               model: 'gpt-5.4',
