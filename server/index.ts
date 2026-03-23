@@ -11662,7 +11662,7 @@ Return JSON:
 
             if (fs.existsSync(videoPath) && fs.statSync(videoPath).size > 10000) {
               console.log(`[LEARN] Downloaded video: ${(fs.statSync(videoPath).size / 1024 / 1024).toFixed(1)}MB`)
-              execSync(`"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/5,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`, { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] })
+              execSync(`"${ffmpegPath}" -i "${videoPath}" -vf "fps=1/2,scale=320:-1" -q:v 8 "${framesDir}/frame_%04d.jpg" -y`, { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] })
               gotFrames = true
               analysisMethod = 'video_frames'
             }
@@ -11701,14 +11701,165 @@ Return JSON:
             continue
           }
 
-          const frameFiles = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort().slice(0, 10)
-          const frameImages = frameFiles.map((file: string) => ({
+          const allFrameFiles = fs.readdirSync(framesDir).filter((f: string) => f.endsWith('.jpg')).sort()
+
+          // --- Part 2: Cut detection by comparing consecutive frames ---
+          let frameAnalysis: any = null
+          if (analysisMethod === 'video_frames' && allFrameFiles.length >= 2) {
+            try {
+              const changeScores: number[] = []
+              for (let i = 0; i < allFrameFiles.length - 1; i++) {
+                const frameA = path.join(framesDir, allFrameFiles[i])
+                const frameB = path.join(framesDir, allFrameFiles[i + 1])
+                const diffPath = path.join(framesDir, `diff_${i}.raw`)
+                try {
+                  // Use FFmpeg to compute pixel difference between consecutive frames
+                  execSync(
+                    `"${ffmpegPath}" -i "${frameA}" -i "${frameB}" -filter_complex "blend=all_mode=difference,blackframe=amount=0:threshold=32" -f null /dev/null 2>&1 | tail -5`,
+                    { timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
+                  )
+                  // Fallback: compare file sizes as a proxy for visual difference
+                  const sizeA = fs.statSync(frameA).size
+                  const sizeB = fs.statSync(frameB).size
+                  const sizeDiff = Math.abs(sizeA - sizeB) / Math.max(sizeA, sizeB)
+                  // Also check raw pixel diff via FFmpeg PSNR
+                  let psnrScore = 0
+                  try {
+                    const psnrOutput = execSync(
+                      `"${ffmpegPath}" -i "${frameA}" -i "${frameB}" -filter_complex "psnr" -f null /dev/null 2>&1`,
+                      { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+                    )
+                    // Lower PSNR = more different frames. PSNR > 40 = nearly identical, < 20 = very different
+                    const psnrMatch = psnrOutput.toString().match(/average:([\d.]+)/)
+                    if (psnrMatch) {
+                      const psnr = parseFloat(psnrMatch[1])
+                      // Convert PSNR to 0-1 change score: PSNR 40+ → 0, PSNR 15 → 1
+                      psnrScore = Math.max(0, Math.min(1, (40 - psnr) / 25))
+                    }
+                  } catch {
+                    // PSNR filter may not be available, use size diff only
+                    psnrScore = Math.min(1, sizeDiff * 3)
+                  }
+                  // Combine: weight PSNR more if available, size diff as supplement
+                  const score = psnrScore > 0 ? psnrScore * 0.8 + sizeDiff * 0.2 : sizeDiff * 3
+                  changeScores.push(Math.min(1, Math.max(0, score)))
+                } catch {
+                  changeScores.push(0)
+                }
+                // Clean up diff file if created
+                try { fs.unlinkSync(diffPath) } catch {}
+              }
+
+              // Analyze cuts: score > 0.5 = cut, 0.2-0.5 = zoom/pan, < 0.2 = no change
+              const detectedCuts = changeScores.filter(s => s > 0.5).length
+              const zoomTransitions = changeScores.filter(s => s >= 0.2 && s <= 0.5).length
+              const staticSegments = changeScores.filter(s => s < 0.2).length
+
+              // Calculate timing (each frame is 2 seconds apart)
+              const FRAME_INTERVAL = 2
+              const cutTimings: number[] = []
+              changeScores.forEach((s, i) => {
+                if (s > 0.5) cutTimings.push((i + 1) * FRAME_INTERVAL)
+              })
+
+              // Calculate cut durations (time between consecutive cuts)
+              const cutDurations: number[] = []
+              if (cutTimings.length > 0) {
+                cutDurations.push(cutTimings[0]) // time from start to first cut
+                for (let i = 1; i < cutTimings.length; i++) {
+                  cutDurations.push(cutTimings[i] - cutTimings[i - 1])
+                }
+              }
+
+              const totalDuration = allFrameFiles.length * FRAME_INTERVAL
+              const avgCutDuration = cutDurations.length > 0
+                ? cutDurations.reduce((a, b) => a + b, 0) / cutDurations.length
+                : totalDuration
+              const shortestCut = cutDurations.length > 0 ? Math.min(...cutDurations) : totalDuration
+              const longestCut = cutDurations.length > 0 ? Math.max(...cutDurations) : totalDuration
+              const cutsPer10s = totalDuration > 0 ? (detectedCuts / totalDuration) * 10 : 0
+
+              // Pacing classification
+              let pacing = 'slow'
+              if (cutsPer10s > 4) pacing = 'very_fast'
+              else if (cutsPer10s >= 2.5) pacing = 'fast'
+              else if (cutsPer10s >= 1.5) pacing = 'medium'
+
+              frameAnalysis = {
+                total_frames: allFrameFiles.length,
+                detected_cuts: detectedCuts,
+                avg_cut_duration: `${avgCutDuration.toFixed(1)}s`,
+                shortest_cut: `${shortestCut.toFixed(1)}s`,
+                longest_cut: `${longestCut.toFixed(1)}s`,
+                zoom_transitions: zoomTransitions,
+                static_segments: staticSegments,
+                cuts_per_10s: parseFloat(cutsPer10s.toFixed(1)),
+                pacing,
+                change_scores: changeScores,
+              }
+
+              console.log(`[LEARN] Frame analysis: ${allFrameFiles.length} frames, ${detectedCuts} cuts detected, avg=${avgCutDuration.toFixed(1)}s, pacing=${pacing}`)
+            } catch (frameErr: any) {
+              console.warn(`[LEARN] Frame analysis failed: ${frameErr.message?.substring(0, 100)}`)
+            }
+          }
+
+          // --- Part 4: Smart frame selection (max 16 frames, post-cut priority) ---
+          let selectedFrameFiles: string[]
+          const MAX_GPT_FRAMES = 16
+          if (frameAnalysis && allFrameFiles.length > MAX_GPT_FRAMES) {
+            const changeScores: number[] = frameAnalysis.change_scores || []
+            // Always include first and last frame
+            const selectedIndices = new Set<number>([0, allFrameFiles.length - 1])
+
+            // Add frames RIGHT AFTER the biggest cuts (these show new shots)
+            const scoredIndices = changeScores
+              .map((score: number, idx: number) => ({ score, idx: idx + 1 })) // idx+1 = frame after the cut
+              .filter(({ idx }: { idx: number }) => idx < allFrameFiles.length)
+              .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
+
+            // Add top 3 biggest cuts first
+            for (const { idx } of scoredIndices.slice(0, 3)) {
+              selectedIndices.add(idx)
+            }
+
+            // Fill remaining slots with post-cut frames (score > 0.3), then evenly spaced
+            for (const { idx, score } of scoredIndices) {
+              if (selectedIndices.size >= MAX_GPT_FRAMES) break
+              if (score > 0.3) selectedIndices.add(idx)
+            }
+
+            // Fill any remaining slots with evenly spaced frames
+            if (selectedIndices.size < MAX_GPT_FRAMES) {
+              const remaining = MAX_GPT_FRAMES - selectedIndices.size
+              const step = allFrameFiles.length / (remaining + 1)
+              for (let i = 1; i <= remaining; i++) {
+                const idx = Math.min(Math.round(step * i), allFrameFiles.length - 1)
+                selectedIndices.add(idx)
+                if (selectedIndices.size >= MAX_GPT_FRAMES) break
+              }
+            }
+
+            selectedFrameFiles = Array.from(selectedIndices).sort((a, b) => a - b).slice(0, MAX_GPT_FRAMES).map(i => allFrameFiles[i])
+            console.log(`[LEARN] Smart frame selection: ${selectedFrameFiles.length}/${allFrameFiles.length} frames chosen (post-cut priority)`)
+          } else {
+            selectedFrameFiles = allFrameFiles.slice(0, MAX_GPT_FRAMES)
+            if (allFrameFiles.length > MAX_GPT_FRAMES) {
+              console.log(`[LEARN] Smart frame selection: ${selectedFrameFiles.length}/${allFrameFiles.length} frames chosen (post-cut priority)`)
+            }
+          }
+
+          const frameImages = selectedFrameFiles.map((file: string) => ({
             base64: fs.readFileSync(path.join(framesDir, file)).toString('base64'),
           }))
 
+          // --- Part 3: Include frame_analysis in GPT prompt ---
           // Deep GPT Vision analysis with retry
           let analysisSucceeded = false
-          const metadataText = `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}`
+          const frameAnalysisText = frameAnalysis
+            ? `\n\nEDITING RHYTHM DATA (measured from actual frame analysis):\n${JSON.stringify(frameAnalysis, (key, val) => key === 'change_scores' ? undefined : val, 2)}\nUse this real data to answer PACING and EDITING RHYTHM questions accurately. The cuts_per_10s and avg_cut_duration are measured from actual visual changes between frames, not estimates. Base your pacing rules on these real numbers.`
+            : ''
+          const metadataText = `"${video.title}" | ${category} | Goal: ${sessionGoal} | Analysis method: ${analysisMethod} | ${frameImages.length} ${analysisMethod === 'thumbnail' ? 'thumbnail' : 'frames'}:\nViews: ${video.views} | Likes: ${video.likes} | Tags: ${video.tags?.join(', ')}${frameAnalysisText}`
           try {
             const analysisRes = await callOpenAIWithRetry(ai, {
               model: 'gpt-5.4',
