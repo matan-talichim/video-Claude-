@@ -10352,9 +10352,67 @@ async function generateStagePrompts(
   allRules: string[],
   allSocialInsights: string[],
   allMarketingInsights: string[],
-  allPaidAdsInsights: string[]
+  allPaidAdsInsights: string[],
+  allRuleObjects?: any[]
 ): Promise<{ visual_analysis: string; enrich: string; creative_brief: string; technical_plan: string }> {
   console.log('[BRAIN] Generating 4 stage-specific prompts...')
+
+  // Separate rules with ffmpeg_params (technical) from rules without (strategic)
+  const rulesWithParams = (allRuleObjects || []).filter((r: any) => r.ffmpeg_params)
+  const rulesWithoutParams = (allRuleObjects || []).filter((r: any) => !r.ffmpeg_params)
+
+  console.log(`[BRAIN] Rules routing: ${rulesWithParams.length} with FFmpeg params → technical_plan, ${rulesWithoutParams.length} without → enrich/creative_brief`)
+
+  // Format rules with ffmpeg_params as compact parameter lines grouped by action type
+  const paramsByAction: Record<string, string[]> = {}
+  rulesWithParams.forEach((r: any) => {
+    const p = r.ffmpeg_params
+    const action = p.action || 'unknown'
+    if (!paramsByAction[action]) paramsByAction[action] = []
+    let line = ''
+    switch (action) {
+      case 'zoom':
+        line = `* ${p.trigger || 'general'}: ${p.intensity || '1.10-1.20x'}, ${p.duration || '0.3-0.8s'}, ${p.easing || 'ease-in-out'}`
+        break
+      case 'cut':
+        line = `* ${p.trigger || 'general'}: avg ${p.avg_length || '2.0s'} (${p.min_length || '0.8s'}-${p.max_length || '4.0s'} range)`
+        break
+      case 'color_grade':
+        line = `* ${p.content_match || 'general'}: ${p.preset || 'cinematic'}`
+        break
+      case 'camera_angle':
+        line = `* crop ${p.crop_intensity || '0.80'}, switch ${p.switch_frequency || 'every_3-5s'}, positions: ${(p.positions || ['center']).join(', ')}`
+        break
+      case 'broll':
+        line = `* ${p.placement || 'on_topic_change'}: ${p.duration || '2-4s'}, ${p.transition || 'cut'}, ${p.timing || 'during_claim'}`
+        break
+      case 'subtitle':
+        line = `* ${p.platform_match || 'general'}: ${p.style || 'bold_pop'}, ${p.words_per_group || '3-5'} words, ${p.position || 'bottom_center'}, highlight=${p.highlight_color || '#FFFF00'}`
+        break
+      case 'music':
+        line = `* ${p.genre || 'general'}: vol ${p.volume || '10-15%'}, fade_in=${p.fade_in || '1-2s'}, fade_out=${p.fade_out || '2-3s'}, dip=${p.dip_on_speech ?? true}`
+        break
+      case 'pacing':
+        line = `* hook=${p.hook_duration || '0.5-2.0s'}, avg_segment=${p.avg_segment || '2-4s'}, curve=${p.energy_curve || 'build_release'}, reset=${p.visual_reset_frequency || 'every_1-3s'}`
+        break
+      default:
+        line = `* ${r.rule?.substring(0, 80) || JSON.stringify(p).substring(0, 80)}`
+    }
+    paramsByAction[action].push(line)
+  })
+
+  // Build pre-formatted technical parameter block
+  const actionLabels: Record<string, string> = {
+    zoom: 'ZOOM RULES', cut: 'CUT TIMING', color_grade: 'COLOR GRADE',
+    camera_angle: 'CAMERA ANGLES', broll: 'B-ROLL', subtitle: 'SUBTITLES',
+    music: 'MUSIC', pacing: 'PACING',
+  }
+  const technicalParamBlock = Object.entries(paramsByAction)
+    .map(([action, lines]) => `${actionLabels[action] || action.toUpperCase()}:\n${lines.join('\n')}`)
+    .join('\n\n')
+
+  // Strategic rules (no params) formatted as text for enrich/creative_brief
+  const strategicRulesText = rulesWithoutParams.map((r: any) => r.rule || r).join('\n')
 
   const allInsights = [
     ...allRules,
@@ -10382,6 +10440,12 @@ ${masterPrompt}
 RAW INSIGHTS:
 ${allInsights}
 
+RULES WITH FFmpeg PARAMETERS (use these PRIMARILY for technical_plan):
+${technicalParamBlock || '(none yet)'}
+
+STRATEGIC RULES WITHOUT FFmpeg PARAMETERS (use these for enrich and creative_brief):
+${strategicRulesText || '(none)'}
+
 Create 4 prompt sections. Each section is a standalone instruction prompt for ONE stage of the video editing pipeline:
 
 1. VISUAL_ANALYSIS (max 300 words): Rules about what to LOOK FOR in video frames only.
@@ -10397,6 +10461,7 @@ Create 4 prompt sections. Each section is a standalone instruction prompt for ON
 - Target audience matching (marketing vs tutorial vs testimonial)
 - Content type detection and matching editing approach
 - B-Roll CONCEPTS (not technical parameters — just "what to show")
+- PRIORITIZE strategic rules WITHOUT ffmpeg_params here
 - DO NOT include: FFmpeg parameters, zoom values, color hex codes, subtitle animation details
 
 3. CREATIVE_BRIEF (max 400 words): Rules about MOOD and STYLE decisions only.
@@ -10405,9 +10470,12 @@ Create 4 prompt sections. Each section is a standalone instruction prompt for ON
 - Music genre matching by content type
 - Subtitle style recommendations by platform
 - Energy curve (how to build and release tension)
+- PRIORITIZE strategic rules WITHOUT ffmpeg_params here
 - DO NOT include: exact FFmpeg filter strings, pixel coordinates, specific zoom percentages
 
 4. TECHNICAL_PLAN (max 500 words): Rules that translate DIRECTLY to FFmpeg actions.
+- PRIORITIZE rules WITH ffmpeg_params — format them as compact parameter lines
+- Include the pre-formatted parameter block below as-is, then add any additional technical rules
 - Zoom: when to trigger, intensity range (1.05-1.2x), duration (0.3-0.8s), easing
 - Cut timing: average cut length by content type (1.5-3s talking head, 0.5-1.5s B-Roll)
 - Color grade: which preset for which content type
@@ -10418,6 +10486,10 @@ Create 4 prompt sections. Each section is a standalone instruction prompt for ON
 - ALL rules must be expressed as PARAMETERS with numbers, not philosophy
 - Example good rule: "zoom_on_keywords: intensity=1.15x, duration=0.5s, easing=ease-in-out, trigger=emphasis_words"
 - Example BAD rule: "Use punch-ins to create visual emphasis" (too vague, no parameters)
+- Do NOT put strategic/philosophical rules in technical_plan — those belong in enrich or creative_brief
+
+PRE-FORMATTED TECHNICAL PARAMETERS (include in technical_plan):
+${technicalParamBlock || '(none yet — generate parameter lines from raw insights)'}
 
 Return as JSON: { "visual_analysis": "...", "enrich": "...", "creative_brief": "...", "technical_plan": "..." }
 Each value is a single string containing all rules for that stage.`,
@@ -10471,11 +10543,17 @@ async function updateEditorBrain(state: any) {
   ;(state.expertise?.marketing?.insights || []).forEach((r: any) => { if (r.rule) allMarketingInsights.push(r.rule) })
   ;(state.expertise?.paid_ads?.insights || []).forEach((r: any) => { if (r.rule) allPaidAdsInsights.push(r.rule) })
 
+  // Collect full rule objects with ffmpeg_params for stage prompt routing
+  const allRuleObjects: any[] = []
+
   // From learnedPatterns (older format)
   Object.values(state.learnedPatterns || {}).forEach((data: any) => {
     ;(data.editing_rules || []).forEach((r: any) => {
       const ruleText = r.rule || r
-      if (ruleText && !allRules.includes(ruleText)) allRules.push(ruleText)
+      if (ruleText && !allRules.includes(ruleText)) {
+        allRules.push(ruleText)
+        allRuleObjects.push(typeof r === 'string' ? { rule: r } : r)
+      }
     })
   })
 
@@ -10558,7 +10636,7 @@ Start directly with: "HOOK RULES:" and continue section by section.`
     try {
       const ai = await getOpenAI()
       if (ai) {
-        stagePrompts = await generateStagePrompts(ai, masterPrompt, allRules, allSocialInsights, allMarketingInsights, allPaidAdsInsights)
+        stagePrompts = await generateStagePrompts(ai, masterPrompt, allRules, allSocialInsights, allMarketingInsights, allPaidAdsInsights, allRuleObjects)
       }
     } catch (e: any) {
       console.error('[BRAIN] Stage prompts generation failed, will use masterPrompt fallback:', e.message?.substring(0, 150))
@@ -10780,41 +10858,73 @@ function addRulesToCategory(state: any, category: string, newRules: any[]): numb
   const existingTexts = new Set(existing.map((r: any) => r.rule.trim().toLowerCase()))
 
   let addedCount = 0
+  let withParamsCount = 0
 
   newRules.forEach((rule: any) => {
     const ruleText = (rule.rule || rule).trim().toLowerCase()
+    const ruleAction = rule.ffmpeg_params?.action || ''
 
-    // Skip exact duplicates
+    // Skip exact duplicates (but allow same text with different action type)
     if (existingTexts.has(ruleText)) {
-      console.log(`[LEARN] Skipping duplicate rule: ${ruleText.substring(0, 50)}...`)
-      return
+      // Check if same text but different action type — keep both
+      const existingWithSameText = existing.filter((r: any) => r.rule.trim().toLowerCase() === ruleText)
+      const hasSameAction = existingWithSameText.some((r: any) => (r.ffmpeg_params?.action || '') === ruleAction)
+      if (hasSameAction) {
+        console.log(`[LEARN] Skipping duplicate rule: ${ruleText.substring(0, 50)}...`)
+        return
+      }
     }
 
-    // Skip very similar rules (>80% word overlap)
+    // Skip very similar rules (>80% word overlap) — but only if same action type
     const ruleWords = new Set(ruleText.split(/\s+/))
     let isDuplicate = false
 
-    for (const existingRule of existingTexts) {
-      const existingWords = new Set(existingRule.split(/\s+/))
+    for (const existingRuleObj of existing) {
+      const existingText = (existingRuleObj.rule || '').trim().toLowerCase()
+      const existingAction = existingRuleObj.ffmpeg_params?.action || ''
+      const existingWords = new Set(existingText.split(/\s+/))
       const overlap = [...ruleWords].filter(w => existingWords.has(w)).length
       const similarity = overlap / Math.max(ruleWords.size, existingWords.size)
 
-      if (similarity > 0.8) {
-        console.log(`[LEARN] Skipping similar rule (${Math.round(similarity * 100)}% overlap): ${ruleText.substring(0, 50)}...`)
+      if (similarity > 0.8 && ruleAction === existingAction) {
+        console.log(`[LEARN] Skipping similar rule (${Math.round(similarity * 100)}% overlap, same action=${ruleAction}): ${ruleText.substring(0, 50)}...`)
         isDuplicate = true
         break
       }
     }
 
     if (!isDuplicate) {
-      existing.push(typeof rule === 'string' ? { rule, confidence: 0.8, applies_to: 'all' } : rule)
+      const ruleObj = typeof rule === 'string' ? { rule, confidence: 0.8, applies_to: 'all' } : rule
+      existing.push(ruleObj)
       existingTexts.add(ruleText)
       addedCount++
+
+      // Log individual rule extraction with ffmpeg_params info
+      if (ruleObj.ffmpeg_params) {
+        withParamsCount++
+        const p = ruleObj.ffmpeg_params
+        const paramSummary = p.action === 'zoom' ? `${p.intensity}, ${p.duration}`
+          : p.action === 'cut' ? `avg ${p.avg_length}`
+          : p.action === 'color_grade' ? p.preset
+          : p.action === 'subtitle' ? p.style
+          : p.action === 'pacing' ? `avg ${p.avg_segment}`
+          : p.action === 'music' ? `${p.genre}, ${p.volume}`
+          : p.action === 'camera_angle' ? `crop ${p.crop_intensity}`
+          : p.action === 'broll' ? `${p.placement}, ${p.duration}`
+          : JSON.stringify(p).substring(0, 40)
+        console.log(`[LEARN] Rule extracted: ${p.action} (${paramSummary}) — '${(ruleObj.rule || '').substring(0, 60)}'`)
+      } else {
+        console.log(`[LEARN] Rule extracted (no ffmpeg_params): '${(ruleObj.rule || '').substring(0, 60)}'`)
+      }
     }
   })
 
   state.learnedPatterns[category].editing_rules = existing
-  console.log(`[LEARN] Category ${category}: added ${addedCount} new rules, ${existing.length} total`)
+
+  // Log ffmpeg_params stats
+  const totalWithParams = existing.filter((r: any) => r.ffmpeg_params).length
+  console.log(`[LEARN] Category ${category}: added ${addedCount} new rules (${withParamsCount} with FFmpeg params), ${existing.length} total`)
+  console.log(`[LEARN] Rules with FFmpeg params: ${totalWithParams}/${existing.length} (${existing.length > 0 ? Math.round(totalWithParams / existing.length * 100) : 0}%)`)
 
   return addedCount
 }
@@ -11213,6 +11323,25 @@ For each aspect below, give CONCRETE observations:
    - What elements are "trendy" vs "timeless"?
    - How long will this trend likely last?
 
+CRITICAL: For every editing rule you extract, you MUST include an "ffmpeg_params" field with concrete, machine-readable parameters.
+The auto-editor uses FFmpeg for all processing. Rules without specific parameters are USELESS.
+Instead of: "Use zoom for emphasis"
+Write: "Zoom 1.15x for 0.5s with ease-in-out on emphasis words"
+And include ffmpeg_params with action type and numeric values.
+
+Every rule must have an action type: zoom, cut, color_grade, camera_angle, broll, subtitle, music, or pacing.
+If you observe a technique but cannot determine specific parameters, estimate reasonable ranges based on what you see in the frames and your knowledge of professional video editing.
+
+Action type schemas:
+- zoom: { action:"zoom", intensity:"1.10-1.20x", duration:"0.3-0.8s", easing:"ease-in-out"|"linear"|"ease-in", trigger:"emphasis_word"|"number_mention"|"question"|"punchline"|"every_N_seconds" }
+- cut: { action:"cut", avg_length:"1.5-2.5s", min_length:"0.8s", max_length:"4.0s", trigger:"sentence_end"|"topic_change"|"speaker_pause"|"beat_sync" }
+- color_grade: { action:"color_grade", preset:"cinematic"|"warm"|"cold"|"vintage"|"vibrant"|"moody"|"clean"|"film", content_match:"marketing"|"tutorial"|"testimonial"|"lifestyle" }
+- camera_angle: { action:"camera_angle", crop_intensity:"0.75-0.85", switch_frequency:"every_3-5s"|"on_sentence_change", positions:["center","left_offset","right_offset","close_up"] }
+- broll: { action:"broll", placement:"on_topic_change"|"on_abstract_concept"|"every_15-20s", duration:"2-4s", transition:"cut"|"fade"|"crossfade", timing:"before_claim"|"during_claim"|"after_claim" }
+- subtitle: { action:"subtitle", style:"bold_pop"|"karaoke"|"word_flash"|"neon_glow"|"minimal", words_per_group:"3-5", position:"bottom_center"|"center"|"top", highlight_color:"#FFFF00"|"#00FF00"|"#FF0000", platform_match:"tiktok"|"reels"|"youtube"|"linkedin" }
+- music: { action:"music", genre:"corporate"|"upbeat"|"minimal"|"dramatic"|"chill", volume:"10-15%", fade_in:"1-2s", fade_out:"2-3s", dip_on_speech:true|false }
+- pacing: { action:"pacing", hook_duration:"0.5-2.0s", avg_segment:"2-4s", energy_curve:"build_release"|"constant_high"|"slow_build"|"wave", visual_reset_frequency:"every_1-3s"|"every_2-5s" }
+
 Return JSON:
 {
   "hook_seconds": 1.5,
@@ -11229,11 +11358,18 @@ Return JSON:
   "special": ["zoom","emoji"],
   "editing_rules": [
     {
-      "rule": "Specific implementable rule with exact parameters",
-      "when_to_use": "Exact situation where this applies",
-      "when_NOT_to_use": "Situations where this would hurt",
-      "parameters": {"timing":"0.5s","intensity":"1.2x","frequency":"every 5s"},
-      "confidence": 0.85
+      "rule": "Zoom 1.15x for 0.5s with ease-in-out on emphasis words",
+      "when_to_use": "When speaker makes a bold statement, reveals a number, or says a keyword",
+      "when_NOT_to_use": "During casual transitions or B-Roll segments",
+      "parameters": {"timing":"0.5s","intensity":"1.15x","frequency":"on emphasis words"},
+      "confidence": 0.85,
+      "ffmpeg_params": {
+        "action": "zoom",
+        "intensity": "1.12-1.18x",
+        "duration": "0.4-0.6s",
+        "easing": "ease-in-out",
+        "trigger": "emphasis_word"
+      }
     }
   ],
   "trend_techniques": [
@@ -11296,7 +11432,7 @@ Return JSON:
           const synthRes = await callOpenAIWithRetry(ai, {
             model: 'gpt-5.4',
             messages: [
-              { role: 'system', content: `You are a world-class video editor analyzing videos. Goal: ${sessionGoal}. Analyze based on ${thumbnailImages.length > 0 ? 'thumbnails and metadata' : 'metadata only'}. Return JSON: {"editing_rules":[{"rule":"Specific actionable rule with parameters","when_to_use":"when to apply","when_NOT_to_use":"when not to apply","applies_to":"all/social/marketing","confidence":0.7}],"trend_techniques":[{"technique":"specific technique","trend_name":"trend name","lifecycle":"rising/peak/declining","shelf_life_weeks":4,"adaptation_for_business":"business use"}],"evergreen_techniques":[{"technique":"technique","why_evergreen":"reason"}],"system_optimization":[{"idea":"improvement idea","why":"connection to learned insight","impact":"high/medium/low","category":"new_feature/improve_existing/automation/ai_quality","implementation_hint":"brief approach"}],"sop_update":"Updated SOP","patterns":{"hook":{"avg_seconds":2,"rule":"rule"},"pacing":{"avg_cuts":12,"rule":"rule"},"subtitles":{"style":"classic","rule":"rule","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":80,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"subtitle rule"}}}}` },
+              { role: 'system', content: `You are a world-class video editor analyzing videos. Goal: ${sessionGoal}. Analyze based on ${thumbnailImages.length > 0 ? 'thumbnails and metadata' : 'metadata only'}. CRITICAL: Every editing rule MUST include "ffmpeg_params" with concrete machine-readable parameters. Action types: zoom, cut, color_grade, camera_angle, broll, subtitle, music, pacing. Rules without ffmpeg_params are USELESS. Return JSON: {"editing_rules":[{"rule":"Zoom 1.15x for 0.5s on emphasis words","when_to_use":"when to apply","when_NOT_to_use":"when not to apply","applies_to":"all/social/marketing","confidence":0.7,"ffmpeg_params":{"action":"zoom","intensity":"1.12-1.18x","duration":"0.4-0.6s","easing":"ease-in-out","trigger":"emphasis_word"}}],"trend_techniques":[{"technique":"specific technique","trend_name":"trend name","lifecycle":"rising/peak/declining","shelf_life_weeks":4,"adaptation_for_business":"business use"}],"evergreen_techniques":[{"technique":"technique","why_evergreen":"reason"}],"system_optimization":[{"idea":"improvement idea","why":"connection to learned insight","impact":"high/medium/low","category":"new_feature/improve_existing/automation/ai_quality","implementation_hint":"brief approach"}],"sop_update":"Updated SOP","patterns":{"hook":{"avg_seconds":2,"rule":"rule"},"pacing":{"avg_cuts":12,"rule":"rule"},"subtitles":{"style":"classic","rule":"rule","animation_insights":{"most_popular_animation":"karaoke","most_popular_highlight_color":"yellow","word_by_word_percentage":80,"avg_words_per_frame":3,"best_font_size":"large","background_style":"black_box","position":"center","rule":"subtitle rule"}}}}` },
               { role: 'user', content: userContent }
             ],
             response_format: { type: 'json_object' },
@@ -11569,17 +11705,28 @@ Find DEEP PATTERNS across these videos.
    - Which techniques are TREND-dependent (will expire)?
    - Which are EVERGREEN (will always work)?
 
+CRITICAL: Every editing rule MUST include an "ffmpeg_params" field with concrete, machine-readable parameters.
+Action types: zoom, cut, color_grade, camera_angle, broll, subtitle, music, pacing.
+Rules without ffmpeg_params are USELESS — the auto-editor needs FFmpeg-actionable numbers, not philosophy.
+
 Return JSON:
 {
   "editing_rules": [
     {
-      "rule": "Specific implementable instruction with exact parameters",
+      "rule": "Zoom 1.15x for 0.5s on emphasis words across all analyzed videos",
       "when_to_use": "Exact situation/context",
       "when_NOT_to_use": "Situations where this hurts",
       "parameters": {"timing":"exact seconds","intensity":"specific values","frequency":"how often"},
       "evidence": "Which videos showed this",
       "confidence": 0.85,
-      "applies_to": "all/social/marketing/corporate"
+      "applies_to": "all/social/marketing/corporate",
+      "ffmpeg_params": {
+        "action": "zoom",
+        "intensity": "1.12-1.18x",
+        "duration": "0.4-0.6s",
+        "easing": "ease-in-out",
+        "trigger": "emphasis_word"
+      }
     }
   ],
   "trend_techniques": [
@@ -11811,10 +11958,19 @@ Return JSON: {"missing_features":[{"name":"Feature name","description":"What it 
 
   const totalCost = results.totalCost
 
+  // Count rules with ffmpeg_params across all categories
+  let totalWithFfmpegParams = 0
+  Object.values(stateAfter.learnedPatterns || {}).forEach((data: any) => {
+    ;(data.editing_rules || []).forEach((r: any) => {
+      if (r.ffmpeg_params) totalWithFfmpegParams++
+    })
+  })
+
   console.log('[LEARN] === SESSION END ===')
   console.log(`[LEARN] Videos analyzed: ${videosThisSession}`)
   console.log(`[LEARN] New rules: ${newRules.length}`)
   console.log(`[LEARN] Total rules: ${totalRulesAfter}`)
+  console.log(`[LEARN] Rules with FFmpeg params: ${totalWithFfmpegParams}/${totalRulesAfter} (${totalRulesAfter > 0 ? Math.round(totalWithFfmpegParams / totalRulesAfter * 100) : 0}%)`)
   console.log(`[LEARN] Cost: $${totalCost.toFixed(3)}`)
 
   // --- Track ALL costs accurately across sessions ---
