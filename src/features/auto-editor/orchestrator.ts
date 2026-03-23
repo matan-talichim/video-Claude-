@@ -872,6 +872,17 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
         if (visualAnalysis._promptImprovements?.length > 0) {
           usePromptEvolutionStore.getState().recordEvolution('visual_analysis', visualAnalysis._promptImprovements)
           addLog(`[למידה] ניתוח ויזואלי למד ${visualAnalysis._promptImprovements.length} תובנות חדשות`)
+          // Send reflections to server (fire and forget)
+          fetch(`${API_BASE}/auto-editor/reflections`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jobId: job.id,
+              stage: 'visual_analysis',
+              improvements: visualAnalysis._promptImprovements,
+              timestamp: new Date().toISOString(),
+            }),
+          }).catch(() => {})
         }
 
         // Store in EditJob
@@ -1027,6 +1038,17 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     if (enrichment._promptImprovements?.length > 0) {
       usePromptEvolutionStore.getState().recordEvolution('enrichment', enrichment._promptImprovements)
       addLog(`[למידה] שיפור פרומפט למד ${enrichment._promptImprovements.length} תובנות חדשות`)
+      // Send reflections to server (fire and forget)
+      fetch(`${API_BASE}/auto-editor/reflections`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: job.id,
+          stage: 'enrichment',
+          improvements: enrichment._promptImprovements,
+          timestamp: new Date().toISOString(),
+        }),
+      }).catch(() => {})
     }
 
     console.log('[AUTO-EDIT] Enhanced prompt:', enrichment.enhanced_prompt?.substring(0, 100))
