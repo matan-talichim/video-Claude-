@@ -119,11 +119,12 @@ function findMatchingBrandImage(
   return null
 }
 
-// Generate a single B-Roll clip via unified KIE.ai API
+// Generate a single B-Roll clip via unified KIE.ai API (or Gemini for Veo)
 async function generateBRollClip(
   prompt: string,
   model: string,
   brandImages: BrandImage[],
+  aspectRatio: string = '9:16',
 ): Promise<string> {
   const matchingImage = findMatchingBrandImage(prompt, brandImages)
 
@@ -133,6 +134,9 @@ async function generateBRollClip(
     body: JSON.stringify({
       prompt,
       model,
+      aspectRatio,
+      resolution: '720p',
+      duration: '5',
       imageUrl: matchingImage?.serverUrl || undefined,
     }),
   })
@@ -145,7 +149,8 @@ async function generateAllBroll(
   prompts: Array<{ prompt: string; videoIndex: number; momentIndex: number }>,
   model: string,
   apis: { gemini: boolean; seedance: boolean },
-  brandImages: BrandImage[] = []
+  brandImages: BrandImage[] = [],
+  aspectRatio: string = '9:16',
 ): Promise<string[]> {
   const addLog = useAutoEditorStore.getState().addLog
 
@@ -174,7 +179,7 @@ async function generateAllBroll(
     const batchResults = await Promise.all(
       batch.map((item, batchIdx) => {
         const globalIdx = i + batchIdx
-        return generateBRollClip(item.prompt, model, brandImages)
+        return generateBRollClip(item.prompt, model, brandImages, aspectRatio)
           .then(url => {
             addLog(`B-Roll ${globalIdx + 1}/${prompts.length} הושלם ✓`)
             return url
@@ -1325,7 +1330,10 @@ export async function continueAfterEnrichment(
         // 🎬 B-Roll generation (3 at a time in parallel!)
         (async () => {
           try {
-            const clips = await generateAllBroll(editingPlanA.prompts.broll, finalInput.brollModel, apis, uploadedBrandImages)
+            // Determine aspect ratio from primary platform (default 9:16 for vertical)
+            const primaryPlatform = finalInput.platforms?.[0] || 'tiktok'
+            const brollAspectRatio = getPlatformRatio(primaryPlatform)
+            const clips = await generateAllBroll(editingPlanA.prompts.broll, finalInput.brollModel, apis, uploadedBrandImages, brollAspectRatio)
             return clips
           } catch (e: any) {
             console.warn(`[PIPELINE] B-Roll generation failed: ${e.message?.substring(0, 150)}`)

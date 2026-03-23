@@ -4363,67 +4363,78 @@ Style requirements:
   }
 })
 
-// B-Roll models available through KIE.ai
+// B-Roll models available through KIE.ai (model names per docs.kie.ai)
+// Veo models use Gemini API directly and are NOT in this list
 const BROLL_MODELS: Record<string, {
   kieModel: string;
   label: string;
   costPerClip: number;
   duration: string;
   quality: string;
-  input?: (prompt: string) => any;
+  buildInput: (prompt: string, aspectRatio: string) => any;
 }> = {
   'seedance': {
-    kieModel: 'bytedance/seedance-1.5-pro',
+    kieModel: 'bytedance/seedance-1-5-pro',
     label: 'Seedance 1.5 Pro',
     costPerClip: 0.36,
-    duration: '5s',
+    duration: '5',
     quality: '720p',
-    input: (prompt: string) => ({ prompt }),
+    buildInput: (prompt: string, aspectRatio: string) => ({
+      prompt,
+      duration: '5',
+      aspect_ratio: aspectRatio,
+      resolution: '720p',
+      negative_prompt: 'blurry, flicker, low quality',
+    }),
   },
   'kling': {
     kieModel: 'kling/v2-5-turbo-text-to-video-pro',
     label: 'Kling v2.5 Turbo',
     costPerClip: 0.15,
-    duration: '5s',
+    duration: '5',
     quality: '720p',
-    input: (prompt: string) => ({ prompt }),
+    buildInput: (prompt: string, aspectRatio: string) => ({
+      prompt,
+      duration: '5',
+      aspect_ratio: aspectRatio,
+      resolution: '720p',
+      negative_prompt: 'blurry, flicker, low quality',
+    }),
   },
   'wan': {
     kieModel: 'wan/2-5-text-to-video',
     label: 'WAN 2.5',
     costPerClip: 0.10,
-    duration: '5s',
+    duration: '5',
     quality: '720p',
-    input: (prompt: string) => ({ prompt }),
-  },
-  'veo-3.1-fast': {
-    kieModel: 'google/veo-3.1-generate-preview',
-    label: 'Veo 3.1 Fast',
-    costPerClip: 0.20,
-    duration: '4s',
-    quality: '720p',
-    input: (prompt: string) => ({ prompt, durationSeconds: 4 }),
-  },
-  'veo-3.1-quality': {
-    kieModel: 'google/veo-3.1-generate-preview',
-    label: 'Veo 3.1 Quality',
-    costPerClip: 1.00,
-    duration: '4s',
-    quality: '1080p',
-    input: (prompt: string) => ({ prompt, durationSeconds: 4 }),
+    buildInput: (prompt: string, aspectRatio: string) => ({
+      prompt,
+      duration: '5',
+      aspect_ratio: aspectRatio,
+      resolution: '720p',
+      negative_prompt: 'blurry, flicker, low quality',
+      enable_prompt_expansion: true,
+      nsfw_checker: false,
+    }),
   },
   'sora-2': {
-    kieModel: 'openai/sora-2-text-to-video-stable',
+    kieModel: 'sora2/sora-2-text-to-video',
     label: 'Sora 2',
     costPerClip: 0.25,
-    duration: '5s',
+    duration: '5',
     quality: '720p',
-    input: (prompt: string) => ({ prompt, durationSeconds: 5 }),
+    buildInput: (prompt: string, aspectRatio: string) => ({
+      prompt,
+      duration: '5',
+      aspect_ratio: aspectRatio,
+      resolution: '720p',
+      negative_prompt: 'blurry, flicker, low quality',
+    }),
   },
 }
 
 // Unified B-Roll generation through KIE.ai API
-async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: string): Promise<string | null> {
+async function generateBRollViaKIE(prompt: string, modelId: string, aspectRatio: string = '9:16', imageUrl?: string): Promise<string | null> {
   const kieApiKey = (process.env.KIE_API_KEY || '').trim()
   if (!kieApiKey) {
     console.warn('[B-ROLL] KIE_API_KEY not set')
@@ -4433,8 +4444,8 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
   const modelConfig = BROLL_MODELS[modelId] || BROLL_MODELS['seedance']
 
   try {
-    // Build request input using model-specific input function
-    const input: any = modelConfig.input ? modelConfig.input(prompt) : { prompt }
+    // Build request input using model-specific buildInput function
+    const input: any = modelConfig.buildInput(prompt, aspectRatio)
 
     // Image-to-video: attach base64 image
     if (imageUrl) {
@@ -4462,7 +4473,8 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
     console.log(`[B-ROLL] Creating job with KIE.ai:`)
     console.log(`[B-ROLL]   Model: ${modelConfig.kieModel}`)
     console.log(`[B-ROLL]   Prompt: "${prompt.substring(0, 80)}..."`)
-    console.log(`[B-ROLL]   Body: ${JSON.stringify(requestBody).substring(0, 300)}`)
+    console.log(`[B-ROLL]   Aspect Ratio: ${aspectRatio}`)
+    console.log(`[B-ROLL]   Full Body: ${JSON.stringify(requestBody).substring(0, 500)}`)
 
     // Create job
     const createRes = await fetch(kieCreateUrl, {
@@ -4475,7 +4487,7 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
     })
 
     const createText = await createRes.text()
-    console.log(`[B-ROLL] KIE response (${createRes.status}): ${createText.substring(0, 300)}`)
+    console.log(`[B-ROLL] KIE response: ${createRes.status} ${createText.substring(0, 500)}`)
 
     if (!createRes.ok) {
       console.error(`[B-ROLL] KIE create failed ${createRes.status}: ${createText.substring(0, 200)}`)
@@ -4569,16 +4581,74 @@ async function generateBRollViaKIE(prompt: string, modelId: string, imageUrl?: s
   }
 }
 
-// POST /api/generate-broll — B-Roll video generation via KIE.ai (all models)
+// POST /api/generate-broll — B-Roll video generation via KIE.ai or Gemini (Veo)
 app.post('/api/generate-broll', async (req, res) => {
-  const { prompt, model, imageUrl } = req.body
+  const { prompt, model, provider, imageUrl, aspectRatio = '9:16', resolution = '720p', duration = '5' } = req.body
   if (!prompt) return res.status(400).json({ message: 'חסר prompt' })
 
-  const modelId = model || 'seedance'
+  // Support both "model" and "provider" fields from frontend
+  const modelId = model || provider || 'seedance'
+
+  // Route Veo models to Gemini API directly (not KIE)
+  if (modelId.startsWith('veo')) {
+    console.log(`[B-ROLL] Routing ${modelId} to Gemini API (not KIE)`)
+    try {
+      const ai = getGemini()
+      if (!ai) return res.status(400).json({ message: 'GEMINI_API_KEY לא מוגדר' })
+
+      const veoModel = 'veo-3.1-generate-preview'
+      console.log(`[B-ROLL] Gemini VEO model: ${veoModel}, prompt: "${prompt.substring(0, 80)}..."`)
+
+      const operation = await ai.models.generateVideos({
+        model: veoModel,
+        prompt,
+        config: {
+          aspectRatio,
+          resolution,
+        },
+      })
+
+      let result = operation
+      let attempts = 0
+      const maxAttempts = 60
+
+      while (!result.done && attempts < maxAttempts) {
+        await new Promise(r => setTimeout(r, 5000))
+        result = await ai.operations.getVideosOperation(result)
+        attempts++
+        if (attempts % 6 === 0) {
+          console.log(`[B-ROLL] VEO polling... attempt ${attempts}`)
+        }
+      }
+
+      if (!result.done) {
+        return res.status(408).json({ message: 'VEO timeout after 5 minutes' })
+      }
+
+      const video = result.response?.generatedVideos?.[0]
+      if (!video?.video) {
+        return res.status(500).json({ message: 'VEO: לא נוצר סרטון' })
+      }
+
+      const localPath = path.join(uploadsDir, `broll_veo_${Date.now()}.mp4`)
+      const videoData = await ai.files.download(video.video)
+      fs.writeFileSync(localPath, Buffer.from(videoData))
+
+      const serverUrl = `http://localhost:${PORT}/uploads/${path.basename(localPath)}`
+      console.log(`[B-ROLL] ✅ VEO: ${serverUrl}`)
+      return res.json({ url: serverUrl, model: modelId })
+
+    } catch (e: any) {
+      console.error(`[B-ROLL] VEO error:`, e.message?.substring(0, 200))
+      return res.status(500).json({ message: `VEO error: ${e.message}` })
+    }
+  }
+
+  // All other models go through KIE.ai
   const modelLabel = BROLL_MODELS[modelId]?.label || modelId
   console.log(`[B-ROLL] Starting: "${prompt.substring(0, 50)}..." (model: ${modelLabel})`)
 
-  const result = await generateBRollViaKIE(prompt, modelId, imageUrl)
+  const result = await generateBRollViaKIE(prompt, modelId, aspectRatio, imageUrl)
 
   if (result) {
     return res.json({ url: result, model: modelId })
