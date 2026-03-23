@@ -12517,6 +12517,474 @@ async function sendFullReport() {
   }
 }
 
+// ==================== EXTERNAL API v1 ====================
+
+// Job tracking for external API
+interface ApiJobStatus {
+  jobId: string
+  status: 'processing' | 'done' | 'error'
+  step: string
+  progress: number
+  videoUrl?: string
+  duration?: number
+  format?: string
+  error?: string
+  createdAt: number
+}
+
+const apiJobs = new Map<string, ApiJobStatus>()
+
+// Helper: update job status and log
+function updateJobStatus(jobId: string, updates: Partial<ApiJobStatus>) {
+  const job = apiJobs.get(jobId)
+  if (job) {
+    Object.assign(job, updates)
+    if (updates.step || updates.progress !== undefined) {
+      console.log(`[API] Job ${jobId}: step=${job.step} (${job.progress}%)`)
+    }
+  }
+}
+
+// Helper: internal API call to existing pipeline endpoints
+async function callPipeline(endpoint: string, body: any): Promise<any> {
+  const res = await fetch(`http://localhost:${PORT}/api/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ message: res.statusText }))
+    throw new Error(errBody.message || errBody.error || `Pipeline ${endpoint} failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+// Helper: download video from URL to local uploads folder
+async function downloadVideoForApi(videoUrl: string, jobId: string): Promise<string> {
+  const ext = path.extname(new URL(videoUrl).pathname) || '.mp4'
+  const localFilename = `api-${jobId}-source${ext}`
+  const localPath = path.join(uploadsDir, localFilename)
+
+  const response = await fetch(videoUrl)
+  if (!response.ok) throw new Error(`Failed to download video: ${response.status} ${response.statusText}`)
+
+  const buffer = Buffer.from(await response.arrayBuffer())
+  fs.writeFileSync(localPath, buffer)
+  console.log(`[API] Downloaded ${(buffer.length / 1024 / 1024).toFixed(1)}MB to ${localFilename}`)
+  return localPath
+}
+
+// Run the full auto-editor pipeline server-side
+async function runEditPipeline(jobId: string, localFilePath: string, options: {
+  prompt?: string
+  subtitleStyle?: string
+  colorGrade?: string
+  format?: string
+  duration?: number | 'auto'
+  brollModel?: string
+  music?: boolean
+  logo?: string
+}): Promise<{ videoUrl: string; duration: number; format: string }> {
+  const fileUrl = `http://localhost:${PORT}/uploads/${path.basename(localFilePath)}`
+  const targetFormat = options.format || 'reels'
+
+  // Step 1: Transcribe
+  updateJobStatus(jobId, { step: 'transcribing', progress: 5 })
+  const transcription = await callPipeline('auto-editor/transcribe', {
+    fileUrl,
+    language: 'he',
+  })
+
+  // Step 2: Verify speakers
+  updateJobStatus(jobId, { step: 'verifying_speakers', progress: 15 })
+  let verifiedSegments = transcription.segments
+  try {
+    const verification = await callPipeline('auto-editor/verify-speakers', {
+      segments: transcription.segments,
+      videoUrl: fileUrl,
+    })
+    verifiedSegments = verification.segments || transcription.segments
+  } catch (e: any) {
+    console.warn(`[API] Job ${jobId}: Speaker verification failed (non-critical): ${e.message}`)
+  }
+
+  // Step 3: Visual analysis
+  updateJobStatus(jobId, { step: 'analyzing', progress: 25 })
+  let visualAnalysis: any = {}
+  try {
+    visualAnalysis = await callPipeline('auto-editor/analyze-visuals', {
+      videoUrl: fileUrl,
+    })
+  } catch (e: any) {
+    console.warn(`[API] Job ${jobId}: Visual analysis failed (non-critical): ${e.message}`)
+  }
+
+  // Step 4: Identify presenter
+  updateJobStatus(jobId, { step: 'analyzing', progress: 30 })
+  let mainPresenter = transcription.mainSpeaker || 'דובר 1'
+  try {
+    const presenterResult = await callPipeline('auto-editor/identify-presenter', {
+      transcript: { segments: verifiedSegments },
+      visualAnalysis,
+      speakerTimes: transcription.speakerTimes || {},
+      framesDir: visualAnalysis.framesDir || '',
+    })
+    mainPresenter = presenterResult.mainPresenter || mainPresenter
+  } catch (e: any) {
+    console.warn(`[API] Job ${jobId}: Presenter identification failed (non-critical): ${e.message}`)
+  }
+
+  // Step 5: Enrich prompt
+  updateJobStatus(jobId, { step: 'planning', progress: 35 })
+  let enrichedPrompt = options.prompt || 'ערוך את הסרטון באופן מקצועי'
+  try {
+    const enrichResult = await callPipeline('auto-editor/enrich-prompt', {
+      prompt: enrichedPrompt,
+      transcript: { segments: verifiedSegments, mainSpeaker: mainPresenter },
+      visualAnalysis,
+    })
+    enrichedPrompt = enrichResult.enrichedPrompt || enrichResult.prompt || enrichedPrompt
+  } catch (e: any) {
+    console.warn(`[API] Job ${jobId}: Prompt enrichment failed (non-critical): ${e.message}`)
+  }
+
+  // Step 6: Creative brief
+  updateJobStatus(jobId, { step: 'planning', progress: 42 })
+  const targetDuration = options.duration === 'auto' || !options.duration ? -1 : options.duration
+  const creativeBrief = await callPipeline('auto-editor/creative-brief', {
+    transcript: { segments: verifiedSegments, mainSpeaker: mainPresenter, totalDuration: transcription.totalDuration },
+    prompt: enrichedPrompt,
+    targetDuration,
+    contentType: 'general',
+    visualAnalysis,
+    numberOfVideos: 1,
+  })
+
+  // Step 7: Technical plan
+  updateJobStatus(jobId, { step: 'planning', progress: 50 })
+  const technicalPlan = await callPipeline('auto-editor/technical-plan', {
+    creativeBrief: creativeBrief.brief || creativeBrief,
+    transcript: { segments: verifiedSegments, mainSpeaker: mainPresenter, totalDuration: transcription.totalDuration },
+    targetDuration: targetDuration === -1 ? (creativeBrief.brief?.videos?.[0]?.duration || 60) : targetDuration,
+    platforms: [targetFormat],
+  })
+
+  // Step 8: Generate B-Roll
+  updateJobStatus(jobId, { step: 'generating_broll', progress: 55 })
+  const brollPrompts = (technicalPlan.plan?.videos?.[0]?.brollMoments || technicalPlan.plan?.videos?.[0]?.broll || [])
+  const brollClips: string[] = []
+  const brollModel = options.brollModel || 'kling'
+
+  for (const brollItem of brollPrompts.slice(0, 5)) {
+    try {
+      const brollResult = await callPipeline('generate-broll', {
+        prompt: brollItem.prompt || brollItem.description || '',
+        model: brollModel,
+      })
+      if (brollResult.url) brollClips.push(brollResult.url)
+    } catch (e: any) {
+      console.warn(`[API] Job ${jobId}: B-Roll generation failed for one clip: ${e.message}`)
+    }
+  }
+
+  // Step 9: Find music
+  let musicUrl = ''
+  if (options.music !== false) {
+    try {
+      const musicResult = await callPipeline('find-music', {
+        query: creativeBrief.brief?.musicSuggestion || creativeBrief.brief?.music_suggestion || 'upbeat background',
+      })
+      musicUrl = musicResult.url || musicResult.downloadUrl || ''
+    } catch (e: any) {
+      console.warn(`[API] Job ${jobId}: Music search failed (non-critical): ${e.message}`)
+    }
+  }
+
+  // Step 10: Process video (FFmpeg pipeline)
+  updateJobStatus(jobId, { step: 'processing', progress: 65 })
+  const plan = technicalPlan.plan || technicalPlan
+  const videoPlan = plan.videos?.[0] || plan
+
+  // Build platform specs
+  const platformSpecs: Record<string, { w: number; h: number; ratio: string }> = {
+    reels: { w: 1080, h: 1920, ratio: '9:16' },
+    tiktok: { w: 1080, h: 1920, ratio: '9:16' },
+    shorts: { w: 1080, h: 1920, ratio: '9:16' },
+    story: { w: 1080, h: 1920, ratio: '9:16' },
+    youtube: { w: 1920, h: 1080, ratio: '16:9' },
+  }
+
+  const processResult = await callPipeline('auto-editor/process', {
+    videoUrl: fileUrl,
+    videoPlan: {
+      cuts: (videoPlan.cuts || []).map((c: any) => ({
+        keepStart: c.keepStart ?? c.keep_start ?? c.sourceStart ?? 0,
+        keepEnd: c.keepEnd ?? c.keep_end ?? c.sourceEnd ?? 0,
+      })),
+      zooms: videoPlan.zooms || videoPlan.zoom_effects || [],
+      camera_angles: videoPlan.cameraAngles || videoPlan.camera_angles || [],
+      color_grade: options.colorGrade || videoPlan.colorGrade || videoPlan.color_grade || 'cinematic',
+      transitions: videoPlan.transitions || ['fade'],
+      speakers: videoPlan.speakers || videoPlan.lower_thirds || [],
+      graphics: videoPlan.graphics || videoPlan.overlays || [],
+      brollPlacements: (videoPlan.brollMoments || videoPlan.broll || []).map((b: any, i: number) => ({
+        outputTimestamp: b.time || b.insert_at || b.atTime || (i * 15),
+        duration: b.duration || 4,
+        assetIndex: i,
+      })),
+    },
+    targetDuration: targetDuration === -1 ? (videoPlan.duration || 60) : targetDuration,
+    platforms: [targetFormat],
+    musicUrl,
+    backgroundImage: null,
+    includeSubtitles: true,
+    animatedSubtitles: true,
+    animationStyle: options.subtitleStyle || 'karaoke',
+    transcript: { segments: verifiedSegments, mainSpeaker: mainPresenter, totalDuration: transcription.totalDuration },
+    brollAssets: brollClips.map((url, i) => ({
+      url,
+      insertAt: brollPrompts[i]?.time || brollPrompts[i]?.insert_at || (i * 15),
+      duration: brollPrompts[i]?.duration || 4,
+      keepAudio: true,
+    })),
+    skipPlatformExport: false,
+    logo: options.logo ? { serverUrl: options.logo } : undefined,
+  })
+
+  // Step 11: Export
+  updateJobStatus(jobId, { step: 'exporting', progress: 90 })
+
+  // Find the main output file
+  const outputFile = processResult.files?.[0]
+  if (!outputFile?.url) {
+    throw new Error('Processing completed but no output file was generated')
+  }
+
+  const outputUrl = outputFile.url
+  const outputDuration = processResult.files?.[0]?.duration || targetDuration || 0
+
+  return {
+    videoUrl: outputUrl,
+    duration: typeof outputDuration === 'number' ? outputDuration : parseFloat(String(outputDuration)) || 0,
+    format: targetFormat,
+  }
+}
+
+// Cleanup temporary files for an API job
+function cleanupApiJobFiles(jobId: string) {
+  try {
+    const files = fs.readdirSync(uploadsDir).filter(f => f.includes(`api-${jobId}`))
+    for (const f of files) {
+      try { fs.unlinkSync(path.join(uploadsDir, f)) } catch {}
+    }
+    if (files.length > 0) console.log(`[API] Cleaned up ${files.length} temp files for job ${jobId}`)
+  } catch {}
+}
+
+// Validate API key
+function validateApiKey(req: any): boolean {
+  const envKey = process.env.AUTO_EDITOR_API_KEY
+  if (!envKey) return false
+
+  // Check body.apiKey
+  if (req.body?.apiKey === envKey) return true
+
+  // Check Authorization header (Bearer token)
+  const authHeader = req.headers?.authorization || ''
+  if (authHeader.startsWith('Bearer ') && authHeader.slice(7).trim() === envKey) return true
+
+  return false
+}
+
+// POST /api/v1/edit — External API endpoint for auto-editing
+app.post('/api/v1/edit', async (req, res) => {
+  // Check if API is enabled
+  if (!process.env.AUTO_EDITOR_API_KEY) {
+    return res.status(503).json({ error: 'External API is disabled. Set AUTO_EDITOR_API_KEY to enable.' })
+  }
+
+  // Authenticate
+  if (!validateApiKey(req)) {
+    return res.status(401).json({ error: 'Invalid API key' })
+  }
+
+  // Validate required fields
+  const { videoUrl, prompt, settings = {}, callbackUrl } = req.body
+  if (!videoUrl) {
+    return res.status(400).json({ error: 'videoUrl is required' })
+  }
+
+  // Generate job ID
+  const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+  // Initialize job status
+  apiJobs.set(jobId, {
+    jobId,
+    status: 'processing',
+    step: 'downloading',
+    progress: 0,
+    format: settings.format || 'reels',
+    createdAt: Date.now(),
+  })
+
+  console.log(`[API] Received edit request: jobId=${jobId}, videoUrl=${videoUrl}, format=${settings.format || 'reels'}`)
+
+  // Pipeline execution function
+  const executePipeline = async () => {
+    try {
+      // Download video
+      updateJobStatus(jobId, { step: 'downloading', progress: 2 })
+      const localFilePath = await downloadVideoForApi(videoUrl, jobId)
+
+      // Run full pipeline
+      const result = await runEditPipeline(jobId, localFilePath, {
+        prompt,
+        subtitleStyle: settings.subtitleStyle || 'bold_pop',
+        colorGrade: settings.colorGrade || 'cinematic',
+        format: settings.format || 'reels',
+        duration: settings.duration || 'auto',
+        brollModel: settings.brollModel || 'kling',
+        music: settings.music !== false,
+        logo: settings.logo,
+      })
+
+      // Update job as done
+      updateJobStatus(jobId, {
+        status: 'done',
+        step: 'done',
+        progress: 100,
+        videoUrl: result.videoUrl,
+        duration: result.duration,
+        format: result.format,
+      })
+
+      // Cleanup temp source files
+      cleanupApiJobFiles(jobId)
+
+      // If callback URL, POST result
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jobId,
+              status: 'done',
+              videoUrl: result.videoUrl,
+              duration: result.duration,
+              format: result.format,
+            }),
+          })
+          console.log(`[API] Job ${jobId}: Callback sent to ${callbackUrl}`)
+        } catch (cbErr: any) {
+          console.error(`[API] Job ${jobId}: Callback failed: ${cbErr.message}`)
+        }
+      }
+
+      return result
+    } catch (error: any) {
+      console.error(`[API] Job ${jobId}: Pipeline error: ${error.message}`)
+      updateJobStatus(jobId, {
+        status: 'error',
+        error: error.message,
+      })
+
+      cleanupApiJobFiles(jobId)
+
+      // If callback URL, POST error
+      if (callbackUrl) {
+        try {
+          await fetch(callbackUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jobId,
+              status: 'error',
+              error: error.message,
+            }),
+          })
+        } catch {}
+      }
+
+      throw error
+    }
+  }
+
+  // Async mode (with callback)
+  if (callbackUrl) {
+    // Start pipeline in background, return immediately
+    executePipeline().catch(() => {}) // errors handled inside
+    return res.json({ status: 'processing', jobId })
+  }
+
+  // Sync mode (no callback) — wait for result with 10 minute timeout
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Processing timeout (10 minutes)')), 10 * 60 * 1000)
+    )
+    const result = await Promise.race([executePipeline(), timeoutPromise])
+    return res.json({
+      status: 'done',
+      jobId,
+      videoUrl: result.videoUrl,
+      duration: result.duration,
+      format: result.format,
+    })
+  } catch (error: any) {
+    const job = apiJobs.get(jobId)
+    if (job?.status === 'error') {
+      return res.status(500).json({ status: 'error', jobId, error: job.error })
+    }
+    return res.status(500).json({ status: 'error', jobId, error: error.message })
+  }
+})
+
+// GET /api/v1/edit/status/:jobId — Check job status
+app.get('/api/v1/edit/status/:jobId', (req, res) => {
+  // Check if API is enabled
+  if (!process.env.AUTO_EDITOR_API_KEY) {
+    return res.status(503).json({ error: 'External API is disabled' })
+  }
+
+  // Authenticate (via query param or header)
+  const apiKey = (req.query.apiKey as string) || ''
+  const authHeader = req.headers.authorization || ''
+  const envKey = process.env.AUTO_EDITOR_API_KEY
+
+  if (apiKey !== envKey && (!authHeader.startsWith('Bearer ') || authHeader.slice(7).trim() !== envKey)) {
+    return res.status(401).json({ error: 'Invalid API key' })
+  }
+
+  const { jobId } = req.params
+  const job = apiJobs.get(jobId)
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' })
+  }
+
+  if (job.status === 'done') {
+    return res.json({
+      status: 'done',
+      videoUrl: job.videoUrl,
+      duration: job.duration,
+      format: job.format,
+    })
+  }
+
+  if (job.status === 'error') {
+    return res.json({
+      status: 'error',
+      error: job.error,
+    })
+  }
+
+  return res.json({
+    status: 'processing',
+    step: job.step,
+    progress: job.progress,
+  })
+})
+
 // ==================== START SERVER ====================
 
 app.listen(PORT, () => {
@@ -12538,6 +13006,13 @@ app.listen(PORT, () => {
   console.log(`   Pixabay:     ${process.env.PIXABAY_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   YouTube API: ${process.env.YOUTUBE_API_KEY ? '✅ Connected' : '❌ Not configured'}`)
   console.log(`   Telegram:    ${process.env.TELEGRAM_BOT_TOKEN ? '✅ Connected' : '❌ Not configured'}`)
+
+  // External API check
+  if (process.env.AUTO_EDITOR_API_KEY) {
+    console.log('   External API: ✅ Enabled (POST /api/v1/edit)')
+  } else {
+    console.log('[API] Warning: AUTO_EDITOR_API_KEY not set. External API is disabled.')
+  }
 
   // Check FFmpeg availability and auto-editor dependencies
   console.log('Checking FFmpeg...')
