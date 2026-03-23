@@ -10364,7 +10364,7 @@ async function generateStagePrompts(
   ].join('\n')
 
   const stageResponse = await ai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'gpt-5.4',
     max_completion_tokens: 6000,
     response_format: { type: 'json_object' },
     messages: [
@@ -10425,7 +10425,7 @@ Each value is a single string containing all rules for that stage.`,
     ],
   })
 
-  // Log cost — gpt-4o-mini pricing: $0.15/1M input, $0.60/1M output
+  // Log cost — gpt-5.4 pricing
   const usage = stageResponse.usage
   if (usage) {
     const inputCost = (usage.prompt_tokens || 0) * 0.00000015
