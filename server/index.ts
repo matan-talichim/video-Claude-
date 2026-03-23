@@ -2498,7 +2498,7 @@ app.post('/api/auto-editor/analyze-visuals', async (req, res) => {
 13. B-ROLL OPPORTUNITIES: רגעים שבהם הדובר מסתכל הצידה או עוצר (מושלם להכנסת B-Roll)
 14. LIGHTING CHANGES: שינויי בהירות משמעותיים בין פריימים`
 
-    const brainContextVisual = getEditorBrainPrompt()
+    const brainContextVisual = getEditorBrainPrompt('visual_analysis')
     console.log(`[AUTO-EDITOR] Visual analysis: brain injected = ${brainContextVisual.length > 0 ? 'YES' : 'NO'} (${brainContextVisual.length} chars)`)
     const visualSystemPrompt = (promptEvolution || baseVisualSystemPrompt) + brainContextVisual
 
@@ -3102,7 +3102,7 @@ ${(visualAnalysis.scene_analysis || []).map((s: any) =>
     // Sync brain from Railway before editing starts
     await syncBrainFromRailway()
 
-    const enrichBrainContext = getEditorBrainPrompt('marketing')
+    const enrichBrainContext = getEditorBrainPrompt('enrich', 'marketing')
     console.log(`[AUTO-EDITOR] Enrich prompt: brain injected = ${enrichBrainContext.length > 0 ? 'YES' : 'NO'} (${enrichBrainContext.length} chars)`)
 
     const response = await ai.chat.completions.create({
@@ -3512,7 +3512,7 @@ app.post('/api/auto-editor/creative-brief', async (req, res) => {
 "duration_reasoning": "<הסבר קצר למה בחרת את האורך הזה>"
 ` : `אורך יעד: ${targetDuration} שניות לכל סרטון.`
 
-    const creativeBrainContext = getEditorBrainPrompt(contentType)
+    const creativeBrainContext = getEditorBrainPrompt('creative_brief', contentType)
     console.log(`[AUTO-EDITOR] Creative brief: brain injected = ${creativeBrainContext.length > 0 ? 'YES' : 'NO'} (${creativeBrainContext.length} chars)`)
 
     const response = await ai.chat.completions.create({
@@ -3790,7 +3790,7 @@ app.post('/api/auto-editor/technical-plan', async (req, res) => {
         ).join('\n')}`
       : `אורך יעד לכל סרטון: ${targetDuration} שניות`
 
-    const techBrainContext = getEditorBrainPrompt()
+    const techBrainContext = getEditorBrainPrompt('technical_plan')
     console.log(`[AUTO-EDITOR] Technical plan: brain injected = ${techBrainContext.length > 0 ? 'YES' : 'NO'} (${techBrainContext.length} chars)`)
 
     const response = await ai.chat.completions.create({
@@ -10171,6 +10171,61 @@ You are an elite AI video editor. Every cut, transition, and effect must serve O
 73. Verify audio sync across entire timeline before export
 74. Final check: watch at 2x speed — if it feels slow at 2x, it IS slow at 1x
 75. Every video must pass the "3 second test" — would YOU stop scrolling?`,
+  stagePrompts: {
+    visual_analysis: `VISUAL ANALYSIS RULES — What to LOOK FOR in video frames:
+
+1. SCENE DETECTION: Flag frame when >40% pixel change between consecutive frames, or >25% brightness shift. Mark as hard_cut (instant change) or transition (gradual over 0.3-1s).
+2. COMPOSITION: Check rule-of-thirds grid — subject should be within 15% of power points. Flag centered compositions as "static" and off-center as "dynamic."
+3. FRAMING QUALITY: Head room 10-15% from top edge. Eyes at upper third line. Hands visible when gesturing. Flag if subject is cut off at joints (wrists, neck).
+4. B-ROLL OPPORTUNITIES: Flag moments where speaker looks away from camera, pauses >1s, or gestures toward off-screen space. Mark gaze direction (left/right/up/down).
+5. BACKGROUND ASSESSMENT: Detect blown-out areas (>95% white), cluttered backgrounds (high edge density behind subject), color cast issues. Flag distracting motion in background.
+6. LIGHTING: Measure face illumination ratio (key-to-fill). Flag if >3:1 ratio (harsh shadows) or <1.2:1 (flat lighting). Detect backlight causing silhouette.
+7. ENERGY SCORING: Rate each frame's energy 1-10 based on: facial expression intensity, gesture amplitude, body lean (forward=engaged). Mark peak energy frames.
+8. MOTION DETECTION: Track subject movement velocity. Flag static shots >5s (candidate for zoom/pan). Flag excessive motion (shaky/unstable).
+9. FOCUS: Detect soft focus on subject face. Flag frames where background is sharper than foreground.
+10. MULTI-PERSON: Identify active speaker by lip movement and gesture. Flag reaction shots of listeners.`,
+
+    enrich: `CONTENT ENRICHMENT RULES — Strategy and messaging:
+
+1. HOOK STRATEGY: First 1-3s must create pattern interrupt. For talking-head: start at most energetic/confident moment. For product: show end result first. For tutorial: show the "wow" outcome before the process.
+2. CONTENT TYPE DETECTION: Classify as one of: talking_head, product_demo, tutorial, testimonial, behind_scenes, event, interview, montage. Each type gets different editing approach.
+3. STORY STRUCTURE: Every video follows problem→solution→result. Identify the core problem (0-20% of video), solution demonstration (20-70%), and result/proof (70-90%). Last 10% = CTA.
+4. AUDIENCE MATCHING: Marketing content → emotional hooks, social proof, urgency. Tutorial → clear steps, zoom on details, numbered progression. Testimonial → authenticity, face close-ups, emotional peaks.
+5. B-ROLL CONCEPTS: When speaker mentions a product → show product. When abstract concept → show metaphor visual. When emotion → show reaction. When data → show graphic. Never random filler B-Roll.
+6. KEY MOMENT IDENTIFICATION: Mark moments of: emphasis (raised voice/gesture), humor (smile/laugh), surprise (eyebrow raise), conviction (forward lean + direct eye contact). These drive editing decisions.
+7. MESSAGE HIERARCHY: Identify the single core message. All editing should reinforce it. Secondary points support the core message. Remove or minimize tangents.
+8. PLATFORM INTENT: Reels/TikTok = entertainment-first, trend-aware. LinkedIn = value-first, professional tone. YouTube = depth, retention. Ads = conversion, CTA prominence.
+9. HOOK VARIANTS: Cold open (show result), question hook (pose problem), stat hook (surprising number), controversy hook (challenge assumption). Match to content type.
+10. RETENTION STRATEGY: New visual stimulus every 3-5 seconds. Text reinforcement of key spoken words. Pattern interrupts every 15-20s (camera change, B-Roll, graphic).`,
+
+    creative_brief: `CREATIVE BRIEF RULES — Mood, style, and pacing:
+
+1. PACING BY PLATFORM: TikTok/Reels: 1.5-2.5s average shot length, high energy throughout. LinkedIn: 3-5s shots, measured pacing, professional rhythm. YouTube: 2-4s shots, varied pacing with breathing room.
+2. ENERGY CURVE: Open at 8/10 energy → settle to 6/10 for content delivery → build to 9/10 for climax → 7/10 for CTA. Never let energy drop below 5/10 at any point.
+3. COLOR MOOD: Warm tones (orange shift +10-15%) for trust, lifestyle, personal brand. Cool tones (blue shift +10-15%) for tech, corporate, authority. High contrast + saturation for entertainment. Desaturated + grain for cinematic/premium.
+4. MUSIC GENRE MATCHING: Talking head → lo-fi beats or soft electronic. Product launch → upbeat pop/electronic. Tutorial → minimal ambient. Testimonial → emotional piano/acoustic. Ad → energetic, builds to climax.
+5. SUBTITLE STYLE BY PLATFORM: TikTok/Reels: bold, large (caption-style), word-by-word highlight, center-bottom. LinkedIn: clean, smaller, sentence-by-sentence, lower-third. YouTube: optional auto-captions or burnt-in with background bar.
+6. TRANSITION PHILOSOPHY: 80% hard cuts (clean, professional). 10% whip/swipe (energy, topic change). 5% dissolve (emotional moments, time passage). 5% zoom (reveals, emphasis).
+7. B-ROLL MOOD: Match B-Roll color temperature to main footage. B-Roll should feel like same "world." Bright B-Roll in bright videos, moody B-Roll in moody videos.
+8. TEXT STYLE: Headlines: bold, max 5 words, high contrast. Stats: large number + small label. Lists: one item at a time, animated in. CTA: contrasting color, clear action verb.
+9. AUDIO MOOD: Music volume follows energy curve — louder during visual-only moments, softer under speech. Sound effects: subtle whoosh on transitions, pop on text, riser before reveals.
+10. CONTENT LENGTH: 15-30s for ads/Reels. 30-60s for organic social. 60-180s for YouTube/LinkedIn. Match pacing intensity inversely to length.`,
+
+    technical_plan: `TECHNICAL PLAN RULES — Direct FFmpeg parameters:
+
+1. ZOOM: trigger=emphasis_words|key_moments, intensity=1.05-1.15x(subtle)|1.15-1.25x(dramatic), duration=0.3-0.8s, easing=ease-in-out, center=speaker_face. Reset zoom over 0.5s.
+2. CUT TIMING: talking_head=2-4s avg shot, broll=1.5-3s, product_closeup=2-3s, reaction=1-2s. Never hold static shot >5s without visual change.
+3. COLOR GRADE: warm_trust={temperature:+15,tint:+5,saturation:+10,contrast:+8}. cool_tech={temperature:-15,tint:-5,saturation:-5,contrast:+12}. cinematic={saturation:-15,contrast:+20,highlights:-10,shadows:+15,grain:0.03}.
+4. SUBTITLE PARAMS: tiktok_style={font:Heebo-Bold,size:48px,color:#FFFFFF,stroke:#000000,stroke_width:3px,position:center_bottom_20%,animation:word_highlight,highlight_color:#FFD700}. linkedin_style={font:Heebo-Regular,size:32px,color:#FFFFFF,bg:rgba(0,0,0,0.7),position:bottom_10%,animation:fade_in_0.2s}. max_words_per_line=7.
+5. B-ROLL PLACEMENT: duration=2-5s, insert_at=speaker_pause|topic_transition|abstract_mention. transition_in=dissolve_0.3s|cut, transition_out=dissolve_0.3s. scale=1.05x(slight_zoom_motion). opacity_blend=100%.
+6. CAMERA ANGLE SWITCH: crop_left={x:0,y:0,w:75%,h:100%,scale:1.33x}. crop_right={x:25%,y:0,w:75%,h:100%,scale:1.33x}. crop_center_tight={x:15%,y:10%,w:70%,h:80%,scale:1.43x}. trigger=every_8-15s|speaker_change|emphasis.
+7. AUDIO MIX: speech_target=-14LUFS, music_under_speech=-25dB_to_-20dB, music_no_speech=-12dB, sfx_whoosh=-18dB, sfx_pop=-15dB, fade_in=0.1s, fade_out=0.3s, music_crossfade=1.5s.
+8. SPEED RAMP: slow_segments=1.2x-1.5x(compress_time), fast_segments=0.7x(dramatic_moment), transition=0.3s_ease. Apply to non-critical dialogue segments only.
+9. TEXT OVERLAY: appear_animation=scale_up_0.2s|fade_in_0.15s, disappear=fade_out_0.2s, duration=2-4s, position_title=top_center_safe_15%, position_cta=center, position_stat=center_large.
+10. SAFE ZONES: vertical_9_16={top_clear:15%,bottom_clear:20%,side_clear:5%}. horizontal_16_9={top_clear:10%,bottom_clear:15%,side_clear:5%}. Subject_face must be within central 60% of frame.
+11. TRANSITION PARAMS: hard_cut=0ms, dissolve=300-500ms, whip_pan=200ms_ease_in_out, zoom_transition=400ms, flash_frame=83ms(2frames)_white_opacity_80%.
+12. HOOK EDIT: first_frame=most_energetic_moment, text_overlay_at=0.3s, zoom_in=1.1x_over_0.5s, audio_sfx=impact_hit_at_0s, music_start=0s_at_-20dB.`,
+  },
   stats: {
     editingRules: 35,
     socialInsights: 15,
@@ -10180,6 +10235,13 @@ You are an elite AI video editor. Every cut, transition, and effect must serve O
     systemIdeas: 0,
     masterPromptWords: 850,
     masterPromptChars: 5200,
+    stagePromptsGenerated: true,
+    stagePromptWords: {
+      visual_analysis: 280,
+      enrich: 380,
+      creative_brief: 370,
+      technical_plan: 470,
+    },
   },
   activeTrends: [],
   expertiseLevels: {
@@ -10209,8 +10271,9 @@ function loadEditorBrain(): any {
   try {
     if (fs.existsSync(brainPath)) {
       const brain = JSON.parse(fs.readFileSync(brainPath, 'utf-8'))
-      if (brain.masterPrompt && brain.masterPrompt.length > 100) {
-        console.log(`[BRAIN] Loaded editor brain from file (v${brain.version}, ${brain.stats?.masterPromptWords || 0} words)`)
+      if ((brain.masterPrompt && brain.masterPrompt.length > 100) || brain.stagePrompts) {
+        const hasStages = brain.stagePrompts ? 'yes' : 'no'
+        console.log(`[BRAIN] Loaded editor brain from file (v${brain.version}, ${brain.stats?.masterPromptWords || 0} words, stagePrompts=${hasStages})`)
         return brain
       }
     }
@@ -10281,6 +10344,116 @@ async function syncBrainFromRailway(): Promise<boolean> {
     console.warn('[BRAIN] Railway sync failed:', e.message?.substring(0, 100))
     return false
   }
+}
+
+async function generateStagePrompts(
+  ai: any,
+  masterPrompt: string,
+  allRules: string[],
+  allSocialInsights: string[],
+  allMarketingInsights: string[],
+  allPaidAdsInsights: string[]
+): Promise<{ visual_analysis: string; enrich: string; creative_brief: string; technical_plan: string }> {
+  console.log('[BRAIN] Generating 4 stage-specific prompts...')
+
+  const allInsights = [
+    ...allRules,
+    ...allSocialInsights,
+    ...allMarketingInsights,
+    ...allPaidAdsInsights,
+  ].join('\n')
+
+  const stageResponse = await ai.chat.completions.create({
+    model: 'gpt-5.4',
+    max_completion_tokens: 6000,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: `You are an expert video editor brain optimizer. You receive a list of editing rules and must organize them into 4 focused prompt sections, one for each editing pipeline stage. Each section must contain ONLY rules relevant to that stage. Remove all duplicates. Be concise — every word must earn its place. Express rules as actionable parameters with specific numbers where possible.`,
+      },
+      {
+        role: 'user',
+        content: `Here is the current master editing prompt and all raw insights:
+
+MASTER PROMPT:
+${masterPrompt}
+
+RAW INSIGHTS:
+${allInsights}
+
+Create 4 prompt sections. Each section is a standalone instruction prompt for ONE stage of the video editing pipeline:
+
+1. VISUAL_ANALYSIS (max 300 words): Rules about what to LOOK FOR in video frames only.
+- How to identify scene changes, composition, lighting quality
+- How to spot good B-Roll opportunities from visual context
+- How to assess framing quality (centered subject, safe zones)
+- How to detect background issues (blown out, cluttered, distracting)
+- DO NOT include: sound rules, CTA rules, subtitle styles, color grading parameters
+
+2. ENRICH (max 400 words): Rules about content STRATEGY and messaging only.
+- Hook strategy (what makes a good opening based on content type)
+- Story structure (problem → solution → result arc)
+- Target audience matching (marketing vs tutorial vs testimonial)
+- Content type detection and matching editing approach
+- B-Roll CONCEPTS (not technical parameters — just "what to show")
+- DO NOT include: FFmpeg parameters, zoom values, color hex codes, subtitle animation details
+
+3. CREATIVE_BRIEF (max 400 words): Rules about MOOD and STYLE decisions only.
+- Pacing guidelines (fast for TikTok, measured for LinkedIn)
+- Color mood matching (warm for trust, cold for tech, cinematic for premium)
+- Music genre matching by content type
+- Subtitle style recommendations by platform
+- Energy curve (how to build and release tension)
+- DO NOT include: exact FFmpeg filter strings, pixel coordinates, specific zoom percentages
+
+4. TECHNICAL_PLAN (max 500 words): Rules that translate DIRECTLY to FFmpeg actions.
+- Zoom: when to trigger, intensity range (1.05-1.2x), duration (0.3-0.8s), easing
+- Cut timing: average cut length by content type (1.5-3s talking head, 0.5-1.5s B-Roll)
+- Color grade: which preset for which content type
+- Subtitle: which style for which platform
+- B-Roll placement: duration (2-5s), transition type, timing relative to speech
+- Camera angles: crop percentages, when to switch
+- Audio: music volume relative to speech (10-15%), fade durations
+- ALL rules must be expressed as PARAMETERS with numbers, not philosophy
+- Example good rule: "zoom_on_keywords: intensity=1.15x, duration=0.5s, easing=ease-in-out, trigger=emphasis_words"
+- Example BAD rule: "Use punch-ins to create visual emphasis" (too vague, no parameters)
+
+Return as JSON: { "visual_analysis": "...", "enrich": "...", "creative_brief": "...", "technical_plan": "..." }
+Each value is a single string containing all rules for that stage.`,
+      },
+    ],
+  })
+
+  // Log cost — gpt-5.4 pricing
+  const usage = stageResponse.usage
+  if (usage) {
+    const inputCost = (usage.prompt_tokens || 0) * 0.00000015
+    const outputCost = (usage.completion_tokens || 0) * 0.0000006
+    const totalCost = inputCost + outputCost
+    console.log(`[BRAIN] Stage prompt synthesis cost: $${totalCost.toFixed(4)} (${usage.prompt_tokens} in / ${usage.completion_tokens} out tokens)`)
+  }
+
+  const rawContent = stageResponse.choices[0].message.content?.trim() || '{}'
+  const parsed = JSON.parse(rawContent)
+
+  const result = {
+    visual_analysis: (parsed.visual_analysis || '').trim(),
+    enrich: (parsed.enrich || '').trim(),
+    creative_brief: (parsed.creative_brief || '').trim(),
+    technical_plan: (parsed.technical_plan || '').trim(),
+  }
+
+  const wordCounts = {
+    visual_analysis: result.visual_analysis.split(/\s+/).length,
+    enrich: result.enrich.split(/\s+/).length,
+    creative_brief: result.creative_brief.split(/\s+/).length,
+    technical_plan: result.technical_plan.split(/\s+/).length,
+  }
+
+  console.log(`[BRAIN] Stage prompts generated: visual=${wordCounts.visual_analysis}w, enrich=${wordCounts.enrich}w, brief=${wordCounts.creative_brief}w, tech=${wordCounts.technical_plan}w`)
+
+  return result
 }
 
 async function updateEditorBrain(state: any) {
@@ -10378,12 +10551,27 @@ Start directly with: "HOOK RULES:" and continue section by section.`
     }
   }
 
+  // Generate 4 stage-specific prompts
+  let stagePrompts: { visual_analysis: string; enrich: string; creative_brief: string; technical_plan: string } | null = null
+
+  if (masterPrompt.length > 100) {
+    try {
+      const ai = await getOpenAI()
+      if (ai) {
+        stagePrompts = await generateStagePrompts(ai, masterPrompt, allRules, allSocialInsights, allMarketingInsights, allPaidAdsInsights)
+      }
+    } catch (e: any) {
+      console.error('[BRAIN] Stage prompts generation failed, will use masterPrompt fallback:', e.message?.substring(0, 150))
+    }
+  }
+
   // Save brain
   const brain: any = {
     lastUpdated: new Date().toISOString(),
     lastUpdatedIsrael: new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
     version: totalInsights,
     masterPrompt,
+    ...(stagePrompts ? { stagePrompts } : {}),
     stats: {
       editingRules: allRules.length,
       socialInsights: allSocialInsights.length,
@@ -10393,6 +10581,13 @@ Start directly with: "HOOK RULES:" and continue section by section.`
       systemIdeas: state.expertise?.systemOptimization?.ideas?.length || 0,
       masterPromptWords: masterPrompt.split(/\s+/).length,
       masterPromptChars: masterPrompt.length,
+      stagePromptsGenerated: !!stagePrompts,
+      stagePromptWords: stagePrompts ? {
+        visual_analysis: stagePrompts.visual_analysis.split(/\s+/).length,
+        enrich: stagePrompts.enrich.split(/\s+/).length,
+        creative_brief: stagePrompts.creative_brief.split(/\s+/).length,
+        technical_plan: stagePrompts.technical_plan.split(/\s+/).length,
+      } : null,
     },
     activeTrends: activeTrends.map((t: any) => ({
       name: t.trend_name,
@@ -10429,12 +10624,16 @@ Start directly with: "HOOK RULES:" and continue section by section.`
   const brainPath = editorBrainPath
   fs.writeFileSync(brainPath, JSON.stringify(brain, null, 2))
 
+  if (stagePrompts) {
+    const sw = brain.stats.stagePromptWords
+    console.log(`[BRAIN] Generated 4 stage prompts: visual=${sw.visual_analysis}w, enrich=${sw.enrich}w, brief=${sw.creative_brief}w, tech=${sw.technical_plan}w`)
+  }
   console.log(`[BRAIN] Editor brain v${brain.version} saved | Master prompt: ${brain.stats.masterPromptWords} words | Trends: ${activeTrends.length} | Cumulative: $${(state.totalCost || 0).toFixed(3)} total`)
 
   return brain
 }
 
-function getEditorBrainPrompt(contentType?: string): string {
+function getEditorBrainPrompt(stage?: 'visual_analysis' | 'enrich' | 'creative_brief' | 'technical_plan', contentType?: string): string {
   try {
     const brain = loadEditorBrain()
 
@@ -10443,7 +10642,44 @@ function getEditorBrainPrompt(contentType?: string): string {
       return ''
     }
 
-    console.log(`[BRAIN] ✅ Injecting editor brain v${brain.version} into ${contentType || 'general'} prompt (${brain.stats?.masterPromptWords || 0} words, ${brain.stats?.editingRules || 0} rules, ${brain.stats?.activeTrends || 0} trends)`)
+    // If stage-specific prompts exist and a stage was requested, use the focused prompt
+    if (stage && brain.stagePrompts && brain.stagePrompts[stage]) {
+      const stageContent = brain.stagePrompts[stage]
+      const wordCount = stageContent.split(/\s+/).length
+      const ruleCount = (stageContent.match(/\n/g) || []).length + 1
+
+      console.log(`[BRAIN] Injecting stage prompt '${stage}' (${wordCount} words, ${ruleCount} rules)`)
+
+      let prompt = `\n\n=== AI EDITOR KNOWLEDGE — ${stage.toUpperCase()} (v${brain.version}, ${wordCount} words, updated ${brain.lastUpdatedIsrael || 'unknown'}) ===\n\n`
+      prompt += stageContent
+
+      // Active trends (only for enrich and creative_brief stages)
+      if (['enrich', 'creative_brief'].includes(stage) && brain.activeTrends?.length > 0) {
+        prompt += `\n\nCURRENT ACTIVE TRENDS:\n`
+        brain.activeTrends.forEach((t: any) => {
+          prompt += `- ${t.name} (${t.lifecycle}): ${t.businessUse || t.techniques?.[0] || ''}\n`
+        })
+      }
+
+      // Content type hint (only for enrich and creative_brief stages)
+      if (contentType && ['enrich', 'creative_brief'].includes(stage)) {
+        if (['ad', 'paid_ads', 'ad_short'].includes(contentType)) {
+          prompt += `\nCONTENT TYPE: PAID AD - prioritize conversion, strong CTA, hook optimization.\n`
+        } else if (['social_reels', 'reels', 'tiktok'].includes(contentType)) {
+          prompt += `\nCONTENT TYPE: SOCIAL SHORT-FORM - prioritize retention, trend alignment, shareability.\n`
+        } else if (['linkedin', 'professional'].includes(contentType)) {
+          prompt += `\nCONTENT TYPE: PROFESSIONAL - prioritize credibility, clean editing, clear message.\n`
+        }
+      }
+
+      prompt += `\n=== END AI EDITOR KNOWLEDGE (${stage.toUpperCase()}) ===\n`
+      prompt += `IMPORTANT: Apply these ${stage.replace('_', ' ')} rules. Based on analysis of ${brain.version} real viral videos.\n`
+
+      return prompt
+    }
+
+    // Fallback: use masterPrompt (backward compatibility for old brain format or no stage specified)
+    console.log(`[BRAIN] Injecting editor brain v${brain.version} into ${contentType || stage || 'general'} prompt (${brain.stats?.masterPromptWords || 0} words, ${brain.stats?.editingRules || 0} rules, ${brain.stats?.activeTrends || 0} trends)${stage ? ' [FALLBACK: no stagePrompts]' : ''}`)
 
     let prompt = `\n\n=== AI EDITOR KNOWLEDGE (v${brain.version}, ${brain.stats?.masterPromptWords || 0} words, updated ${brain.lastUpdatedIsrael || 'unknown'}) ===\n\n`
 
@@ -11926,16 +12162,45 @@ Start directly with the content.`,
     brain.stats.masterPromptWords = newWords
     brain.stats.masterPromptChars = optimizedPrompt.length
 
+    // Also regenerate stage prompts from the optimized master prompt
+    try {
+      console.log('[BRAIN] Regenerating stage prompts from optimized master prompt...')
+      const state = loadLearningState()
+      const allRules: string[] = []
+      const allSocialInsights: string[] = []
+      const allMarketingInsights: string[] = []
+      const allPaidAdsInsights: string[] = []
+      ;(state.expertise?.editing?.insights || []).forEach((r: any) => { if (r.rule) allRules.push(r.rule) })
+      ;(state.expertise?.social?.insights || []).forEach((r: any) => { if (r.rule) allSocialInsights.push(r.rule) })
+      ;(state.expertise?.marketing?.insights || []).forEach((r: any) => { if (r.rule) allMarketingInsights.push(r.rule) })
+      ;(state.expertise?.paid_ads?.insights || []).forEach((r: any) => { if (r.rule) allPaidAdsInsights.push(r.rule) })
+
+      const stagePrompts = await generateStagePrompts(ai, optimizedPrompt, allRules, allSocialInsights, allMarketingInsights, allPaidAdsInsights)
+      brain.stagePrompts = stagePrompts
+      brain.stats.stagePromptsGenerated = true
+      brain.stats.stagePromptWords = {
+        visual_analysis: stagePrompts.visual_analysis.split(/\s+/).length,
+        enrich: stagePrompts.enrich.split(/\s+/).length,
+        creative_brief: stagePrompts.creative_brief.split(/\s+/).length,
+        technical_plan: stagePrompts.technical_plan.split(/\s+/).length,
+      }
+      const sw = brain.stats.stagePromptWords
+      console.log(`[BRAIN] Stage prompts regenerated: visual=${sw.visual_analysis}w, enrich=${sw.enrich}w, brief=${sw.creative_brief}w, tech=${sw.technical_plan}w`)
+    } catch (stageErr: any) {
+      console.error('[BRAIN] Stage prompt regeneration failed during optimization:', stageErr.message?.substring(0, 150))
+    }
+
     fs.writeFileSync(editorBrainPath, JSON.stringify(brain, null, 2))
 
-    console.log(`[BRAIN] ✅ Optimized: ${currentWords} → ${newWords} words (${reduction}% reduction)`)
+    console.log(`[BRAIN] Optimized: ${currentWords} → ${newWords} words (${reduction}% reduction)`)
 
     // Send Telegram notification
+    const stageInfo = brain.stagePrompts ? `\n📊 פרומפטים ממוקדים: 4 שלבים` : ''
     await sendTelegram(
       `🧠 אופטימיזציית פרומפט יומית\n` +
       `📝 לפני: ${currentWords} מילים\n` +
       `📝 אחרי: ${newWords} מילים\n` +
-      `📉 קיצור: ${reduction}%\n` +
+      `📉 קיצור: ${reduction}%${stageInfo}\n` +
       `✅ הפרומפט עודכן ומוכן לעריכות`
     )
 
