@@ -9008,6 +9008,44 @@ ${gfxDialogueLines.join('\n')}
 
       console.log(`[PROCESS] Done! Preview: ${fileUrl} (${fileSize.toFixed(1)}MB, quality: ${qualityScore})`)
 
+      // Save edit record for self-evaluation
+      try {
+        const outputFrames = extractOutputFrames(currentFile, job?.id || `job_${timestamp}`)
+        saveEditRecord({
+          jobId: job?.id || `job_${timestamp}`,
+          timestamp: new Date().toISOString(),
+          inputDuration: sourceDuration,
+          outputDuration: 0, // unknown in preview mode
+          format: (platforms || ['original'])[0] || 'original',
+          contentType: videoPlan?.content_type || videoPlan?.contentType || 'unknown',
+          settings: {
+            subtitleStyle: animationStyle || 'karaoke',
+            colorGrade: planColorGrade,
+            brollModel: 'wan',
+          },
+          results: {
+            qualityScore,
+            presenterSegments: filteredSubtitleSegments?.length || 0,
+            cutSegments: (videoPlan?.cuts || []).length,
+            brollClips: brollInserted,
+            musicApplied,
+            subtitlesApplied,
+            zoomsApplied,
+            cameraAngles: anglesApplied,
+            colorGradeApplied: !!colorGradeName,
+          },
+          rulesUsed: {
+            brainVersion: loadEditorBrain().version || 0,
+            stagePrompts: !!loadEditorBrain().stagePrompts,
+          },
+          outputFrames,
+          userRating: null,
+          reviewed: false,
+        })
+      } catch (e: any) {
+        console.warn('[SELF-EVAL] Failed to save edit record:', e.message?.substring(0, 100))
+      }
+
       autoEditorBusy = false
       console.log('[AUTO-EDITOR] Session complete, learning agent resumed')
 
@@ -9153,6 +9191,44 @@ ${gfxDialogueLines.join('\n')}
     })
 
     console.log('[PROCESS] Done! Created', outputFiles.length, 'files with professional effects')
+
+    // Save edit record for self-evaluation
+    try {
+      const outputFrames = extractOutputFrames(currentFile, job?.id || `job_${timestamp}`)
+      saveEditRecord({
+        jobId: job?.id || `job_${timestamp}`,
+        timestamp: new Date().toISOString(),
+        inputDuration: sourceDuration,
+        outputDuration: 0,
+        format: (platforms || ['tiktok'])[0] || 'tiktok',
+        contentType: videoPlan?.content_type || videoPlan?.contentType || 'unknown',
+        settings: {
+          subtitleStyle: animationStyle || 'karaoke',
+          colorGrade: planColorGrade,
+          brollModel: 'wan',
+        },
+        results: {
+          qualityScore,
+          presenterSegments: filteredSubtitleSegments?.length || 0,
+          cutSegments: (videoPlan?.cuts || []).length,
+          brollClips: brollInserted,
+          musicApplied,
+          subtitlesApplied,
+          zoomsApplied,
+          cameraAngles: anglesApplied,
+          colorGradeApplied: !!colorGradeName,
+        },
+        rulesUsed: {
+          brainVersion: loadEditorBrain().version || 0,
+          stagePrompts: !!loadEditorBrain().stagePrompts,
+        },
+        outputFrames,
+        userRating: null,
+        reviewed: false,
+      })
+    } catch (e: any) {
+      console.warn('[SELF-EVAL] Failed to save edit record:', e.message?.substring(0, 100))
+    }
 
     autoEditorBusy = false
     console.log('[AUTO-EDITOR] Session complete, learning agent resumed')
@@ -9354,6 +9430,7 @@ const DATA_DIR = (() => {
 })();
 const learningStatePath = path.join(DATA_DIR, 'learning-state.json');
 const editorBrainPath = path.join(DATA_DIR, 'editor-brain.json');
+const editHistoryPath = path.join(DATA_DIR, 'edit-history.json');
 
 // Budget constants
 const DAILY_GPT_COST_LIMIT = 2.0   // $2 per day
@@ -9501,6 +9578,73 @@ function saveLearningState(state: any) {
   } catch (e: any) {
     console.error('[LEARN] Failed to save state:', e.message)
   }
+}
+
+// ==================== EDIT HISTORY (Self-Evaluation) ====================
+
+function loadEditHistory(): any {
+  try {
+    if (fs.existsSync(editHistoryPath)) {
+      return JSON.parse(fs.readFileSync(editHistoryPath, 'utf-8'))
+    }
+  } catch {}
+  return { edits: [] }
+}
+
+function saveEditHistory(history: any) {
+  try {
+    // Keep last 30 days of records
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+    history.edits = (history.edits || []).filter((e: any) => new Date(e.timestamp).getTime() > thirtyDaysAgo)
+    fs.writeFileSync(editHistoryPath, JSON.stringify(history, null, 2))
+  } catch (e: any) {
+    console.error('[SELF-EVAL] Failed to save edit history:', e.message)
+  }
+}
+
+function extractOutputFrames(videoFile: string, jobId: string): string[] {
+  const framesDir = path.join(uploadsDir, `eval_frames_${jobId}`)
+  try {
+    if (!fs.existsSync(framesDir)) fs.mkdirSync(framesDir, { recursive: true })
+    const ffmpeg = getFFmpeg()
+    // Get video duration
+    const ffprobe = ffmpeg.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+    let duration = 0
+    try {
+      const probeOut = execSync(`"${ffprobe}" -v error -show_entries format=duration -of csv=p=0 "${videoFile}"`, { timeout: 15000 }).toString().trim()
+      duration = parseFloat(probeOut) || 0
+    } catch { duration = 30 }
+
+    if (duration < 1) return []
+
+    const frames: string[] = []
+    const interval = duration / 6 // 5 frames evenly spaced (skip edges)
+    for (let i = 1; i <= 5; i++) {
+      const timestamp = (interval * i).toFixed(2)
+      const framePath = path.join(framesDir, `frame_${i}.jpg`)
+      try {
+        execSync(
+          `"${ffmpeg}" -ss ${timestamp} -i "${videoFile}" -vframes 1 -q:v 8 -vf "scale=480:-1" "${framePath}" -y`,
+          { timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
+        if (fs.existsSync(framePath) && fs.statSync(framePath).size > 500) {
+          frames.push(framePath)
+        }
+      } catch {}
+    }
+    console.log(`[SELF-EVAL] Extracted ${frames.length}/5 frames from output video`)
+    return frames
+  } catch (e: any) {
+    console.error('[SELF-EVAL] Frame extraction failed:', e.message?.substring(0, 100))
+    return []
+  }
+}
+
+function saveEditRecord(record: any) {
+  const history = loadEditHistory()
+  history.edits.push(record)
+  saveEditHistory(history)
+  console.log(`[SELF-EVAL] Edit record saved for job ${record.jobId}`)
 }
 
 // ==================== LEARNING CATEGORIES (18+ diverse) ====================
@@ -10357,11 +10501,24 @@ async function generateStagePrompts(
 ): Promise<{ visual_analysis: string; enrich: string; creative_brief: string; technical_plan: string }> {
   console.log('[BRAIN] Generating 4 stage-specific prompts...')
 
-  // Separate rules with ffmpeg_params (technical) from rules without (strategic)
-  const rulesWithParams = (allRuleObjects || []).filter((r: any) => r.ffmpeg_params)
-  const rulesWithoutParams = (allRuleObjects || []).filter((r: any) => !r.ffmpeg_params)
+  // Exclude low-confidence rules (below 0.3)
+  const filteredRuleObjects = (allRuleObjects || []).filter((r: any) => {
+    if (r.confidence_score !== undefined && r.confidence_score < 0.3) {
+      console.log(`[BRAIN] Rule excluded from prompts: '${r.ffmpeg_params?.action || r.rule?.substring(0, 30)}' confidence=${r.confidence_score.toFixed(2)}`)
+      return false
+    }
+    return true
+  })
 
-  console.log(`[BRAIN] Rules routing: ${rulesWithParams.length} with FFmpeg params → technical_plan, ${rulesWithoutParams.length} without → enrich/creative_brief`)
+  // Separate rules with ffmpeg_params (technical) from rules without (strategic)
+  const rulesWithParams = filteredRuleObjects.filter((r: any) => r.ffmpeg_params)
+  const rulesWithoutParams = filteredRuleObjects.filter((r: any) => !r.ffmpeg_params)
+
+  // Sort by confidence (highest first)
+  rulesWithParams.sort((a: any, b: any) => (b.confidence_score ?? 0.7) - (a.confidence_score ?? 0.7))
+  rulesWithoutParams.sort((a: any, b: any) => (b.confidence_score ?? 0.7) - (a.confidence_score ?? 0.7))
+
+  console.log(`[BRAIN] Rules routing: ${rulesWithParams.length} with FFmpeg params → technical_plan, ${rulesWithoutParams.length} without → enrich/creative_brief (${(allRuleObjects || []).length - filteredRuleObjects.length} excluded for low confidence)`)
 
   // Format rules with ffmpeg_params as compact parameter lines grouped by action type
   const paramsByAction: Record<string, string[]> = {}
@@ -12229,10 +12386,294 @@ app.post('/api/learning/sync-from-railway', async (_req, res) => {
   }
 })
 
+// ==================== USER RATING FOR EDIT HISTORY ====================
+
+app.post('/api/auto-editor/rate', (req, res) => {
+  try {
+    const { jobId, rating, feedback } = req.body
+    if (!jobId || !rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'jobId and rating (1-5) required' })
+    }
+
+    const history = loadEditHistory()
+    const edit = history.edits.find((e: any) => e.jobId === jobId)
+    if (!edit) {
+      return res.status(404).json({ error: `Edit ${jobId} not found` })
+    }
+
+    edit.userRating = rating
+    if (feedback) edit.userFeedback = feedback
+    saveEditHistory(history)
+
+    console.log(`[SELF-EVAL] User rated job ${jobId}: ${rating}/5${feedback ? ` — "${feedback}"` : ''}`)
+    res.json({ success: true, jobId, rating, feedback: feedback || null })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ==================== DAILY PROMPT OPTIMIZATION ====================
+
+async function runSelfEvaluation(): Promise<any[]> {
+  console.log('[SELF-EVAL] === Nightly self-evaluation ===')
+
+  const history = loadEditHistory()
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+  const unreviewedEdits = (history.edits || []).filter(
+    (e: any) => !e.reviewed && new Date(e.timestamp).getTime() > sevenDaysAgo
+  )
+
+  if (unreviewedEdits.length === 0) {
+    console.log('[SELF-EVAL] No unreviewed edits from last 7 days')
+    return []
+  }
+
+  console.log(`[SELF-EVAL] Found ${unreviewedEdits.length} unreviewed edits from last 7 days`)
+
+  const ai = await getOpenAI()
+  if (!ai) {
+    console.error('[SELF-EVAL] OpenAI not configured, skipping self-evaluation')
+    return []
+  }
+
+  const allImprovements: any[] = []
+  const editsToReview = unreviewedEdits.slice(0, 5) // Max 5 per night
+
+  for (const edit of editsToReview) {
+    console.log(`[SELF-EVAL] Analyzing ${edit.jobId} (${edit.contentType}, ${edit.format}, score=${edit.results?.qualityScore})...`)
+
+    // Load output frames as base64
+    const frameContents: any[] = []
+    for (const framePath of (edit.outputFrames || [])) {
+      try {
+        if (fs.existsSync(framePath)) {
+          const data = fs.readFileSync(framePath)
+          frameContents.push({
+            type: 'image_url' as const,
+            image_url: { url: `data:image/jpeg;base64,${data.toString('base64')}` },
+          })
+        }
+      } catch {}
+    }
+
+    if (frameContents.length === 0) {
+      console.log(`[SELF-EVAL] No frames available for ${edit.jobId}, skipping`)
+      edit.reviewed = true
+      continue
+    }
+
+    try {
+      const response = await ai.chat.completions.create({
+        model: 'gpt-5.4',
+        max_completion_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'text' as const,
+              text: `You are a professional video editor reviewing the output of an AI auto-editor.
+Here are ${frameContents.length} frames from the edited video.
+Edit settings: ${edit.contentType}, ${edit.format}, subtitle style: ${edit.settings?.subtitleStyle}, color grade: ${edit.settings?.colorGrade}
+Quality score from system: ${edit.results?.qualityScore || 0}/100
+User rating: ${edit.userRating || 'not rated'}
+User feedback: ${edit.userFeedback || 'none'}
+
+Analyze the output and identify:
+1. What looks GOOD — professional quality elements
+2. What looks BAD — issues, artifacts, poor choices
+3. SPECIFIC improvements needed — express as editing parameters
+
+For each improvement, format as:
+{ "issue": "description of problem", "current_behavior": "what the editor did", "suggested_fix": "what it should do instead", "ffmpeg_params": { "action": "...", "intensity": "..." }, "confidence": "high/medium/low" }
+
+Return as JSON: { "good": ["..."], "bad": ["..."], "improvements": [...] }`,
+            },
+            ...frameContents,
+          ],
+        }],
+      })
+
+      const usage = response.usage
+      if (usage) {
+        const cost = (usage.prompt_tokens || 0) * 0.000005 + (usage.completion_tokens || 0) * 0.000015
+        console.log(`[SELF-EVAL] Vision call cost: $${cost.toFixed(4)}`)
+      }
+
+      const raw = response.choices[0].message.content?.trim() || '{}'
+      // Parse JSON (strip markdown fences if present)
+      const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+      const analysis = JSON.parse(cleaned)
+
+      // Log results
+      if (analysis.good?.length) {
+        console.log(`[SELF-EVAL] Good: ${analysis.good.join(', ')}`)
+      }
+      if (analysis.bad?.length) {
+        console.log(`[SELF-EVAL] Bad: ${analysis.bad.join(', ')}`)
+      }
+      if (analysis.improvements?.length) {
+        console.log(`[SELF-EVAL] Improvements: ${analysis.improvements.length} suggested (${analysis.improvements.map((i: any) => i.ffmpeg_params?.action || i.issue?.substring(0, 20)).join(', ')})`)
+        allImprovements.push(...analysis.improvements.map((imp: any) => ({
+          ...imp,
+          sourceJobId: edit.jobId,
+          sourceQualityScore: edit.results?.qualityScore || 0,
+          sourceUserRating: edit.userRating,
+        })))
+      }
+
+      edit.reviewed = true
+      edit.selfEvaluation = {
+        good: analysis.good || [],
+        bad: analysis.bad || [],
+        improvementCount: analysis.improvements?.length || 0,
+        reviewedAt: new Date().toISOString(),
+      }
+    } catch (e: any) {
+      console.error(`[SELF-EVAL] Analysis failed for ${edit.jobId}:`, e.message?.substring(0, 150))
+      edit.reviewed = true // Don't retry failed ones
+    }
+  }
+
+  // Save updated history
+  saveEditHistory(history)
+
+  // Cleanup reviewed frames (older than 7 days)
+  try {
+    const evalFrameDirs = fs.readdirSync(uploadsDir).filter(d => d.startsWith('eval_frames_'))
+    for (const dir of evalFrameDirs) {
+      const dirPath = path.join(uploadsDir, dir)
+      try {
+        const stat = fs.statSync(dirPath)
+        if (Date.now() - stat.mtimeMs > 7 * 24 * 60 * 60 * 1000) {
+          fs.readdirSync(dirPath).forEach(f => fs.unlinkSync(path.join(dirPath, f)))
+          fs.rmdirSync(dirPath)
+        }
+      } catch {}
+    }
+  } catch {}
+
+  console.log(`[SELF-EVAL] === Summary: ${editsToReview.length} edits reviewed, ${allImprovements.length} improvements found ===`)
+  return allImprovements
+}
+
+function applyImprovementsToRules(improvements: any[], state: any): { adjusted: number; added: number } {
+  let adjusted = 0
+  let added = 0
+
+  // Ensure learnedPatterns exists
+  if (!state.learnedPatterns) state.learnedPatterns = {}
+
+  // Get all existing rules with their objects for matching
+  const allExistingRules: any[] = []
+  for (const category of Object.keys(state.learnedPatterns)) {
+    const rules = state.learnedPatterns[category]?.editing_rules || []
+    rules.forEach((r: any) => allExistingRules.push({ ...r, _category: category }))
+  }
+
+  // Also collect rules from expertise
+  const expertiseRules: any[] = []
+  for (const domain of Object.keys(state.expertise || {})) {
+    const insights = state.expertise[domain]?.insights || []
+    insights.forEach((r: any) => expertiseRules.push({ ...r, _domain: domain }))
+  }
+
+  for (const improvement of improvements) {
+    const action = improvement.ffmpeg_params?.action
+    if (!action) continue
+
+    // Check if improvement contradicts an existing rule
+    const matchingRule = allExistingRules.find((r: any) =>
+      r.ffmpeg_params?.action === action
+    )
+
+    if (matchingRule) {
+      // Lower confidence of contradicted rule
+      const category = matchingRule._category
+      const rules = state.learnedPatterns[category]?.editing_rules || []
+      const ruleObj = rules.find((r: any) => r.ffmpeg_params?.action === action)
+      if (ruleObj) {
+        const oldConf = ruleObj.confidence_score ?? 0.7
+        ruleObj.confidence_score = Math.max(0.1, oldConf - 0.1)
+        console.log(`[SELF-EVAL] Rule adjusted: '${action}' confidence ${oldConf.toFixed(2)} → ${ruleObj.confidence_score.toFixed(2)}`)
+
+        // Update ffmpeg_params if improvement suggests new values
+        if (improvement.ffmpeg_params && Object.keys(improvement.ffmpeg_params).length > 1) {
+          Object.assign(ruleObj.ffmpeg_params, improvement.ffmpeg_params)
+        }
+        adjusted++
+      }
+    } else {
+      // Add as new rule
+      const category = 'editing_techniques' // Default category for self-eval rules
+      if (!state.learnedPatterns[category]) {
+        state.learnedPatterns[category] = { editing_rules: [] }
+      }
+      state.learnedPatterns[category].editing_rules.push({
+        rule: improvement.suggested_fix || improvement.issue,
+        ffmpeg_params: improvement.ffmpeg_params,
+        confidence_score: 0.5, // New self-eval rules start at 0.5
+        source: 'self_evaluation',
+        addedAt: new Date().toISOString(),
+      })
+      console.log(`[SELF-EVAL] New rule added: '${action}' from self-evaluation`)
+      added++
+    }
+  }
+
+  // Adjust confidence for rules that led to GOOD results
+  // (edits with score > 75 or user rating >= 4)
+  const goodJobIds = improvements
+    .filter((i: any) => i.sourceQualityScore > 75 || (i.sourceUserRating && i.sourceUserRating >= 4))
+    .map((i: any) => i.sourceJobId)
+
+  if (goodJobIds.length > 0) {
+    for (const category of Object.keys(state.learnedPatterns)) {
+      const rules = state.learnedPatterns[category]?.editing_rules || []
+      for (const rule of rules) {
+        if (rule.confidence_score !== undefined && rule.confidence_score < 1.0) {
+          const oldConf = rule.confidence_score
+          rule.confidence_score = Math.min(1.0, oldConf + 0.05)
+          if (rule.confidence_score !== oldConf) {
+            console.log(`[BRAIN] Rule confidence adjusted: '${rule.ffmpeg_params?.action || rule.rule?.substring(0, 30)}' ${oldConf.toFixed(2)} → ${rule.confidence_score.toFixed(2)} (good result)`)
+          }
+        }
+      }
+    }
+  }
+
+  // Remove rules below 0.1 confidence
+  for (const category of Object.keys(state.learnedPatterns)) {
+    const rules = state.learnedPatterns[category]?.editing_rules || []
+    const before = rules.length
+    state.learnedPatterns[category].editing_rules = rules.filter((r: any) => {
+      if (r.confidence_score !== undefined && r.confidence_score < 0.1) {
+        console.log(`[BRAIN] Rule removed (confidence < 0.1): '${r.ffmpeg_params?.action || r.rule?.substring(0, 30)}'`)
+        return false
+      }
+      return true
+    })
+    const removed = before - state.learnedPatterns[category].editing_rules.length
+    if (removed > 0) adjusted += removed
+  }
+
+  return { adjusted, added }
+}
 
 async function optimizeMasterPrompt() {
   console.log('[BRAIN] Starting daily prompt optimization...')
+
+  // Self-evaluation step: analyze recent edits before rebuilding prompts
+  try {
+    const improvements = await runSelfEvaluation()
+    if (improvements.length > 0) {
+      const state = loadLearningState()
+      const { adjusted, added } = applyImprovementsToRules(improvements, state)
+      saveLearningState(state)
+      console.log(`[SELF-EVAL] === Summary: ${adjusted} rules adjusted, ${added} new rules added ===`)
+    }
+  } catch (e: any) {
+    console.error('[SELF-EVAL] Self-evaluation failed:', e.message?.substring(0, 150))
+  }
 
   const brain = loadEditorBrain()
 
@@ -12331,7 +12772,14 @@ Start directly with the content.`,
       ;(state.expertise?.marketing?.insights || []).forEach((r: any) => { if (r.rule) allMarketingInsights.push(r.rule) })
       ;(state.expertise?.paid_ads?.insights || []).forEach((r: any) => { if (r.rule) allPaidAdsInsights.push(r.rule) })
 
-      const stagePrompts = await generateStagePrompts(ai, optimizedPrompt, allRules, allSocialInsights, allMarketingInsights, allPaidAdsInsights)
+      // Collect all rule objects (with confidence_score) for filtering
+      const allRuleObjects: any[] = []
+      for (const category of Object.keys(state.learnedPatterns || {})) {
+        const rules = state.learnedPatterns[category]?.editing_rules || []
+        allRuleObjects.push(...rules)
+      }
+
+      const stagePrompts = await generateStagePrompts(ai, optimizedPrompt, allRules, allSocialInsights, allMarketingInsights, allPaidAdsInsights, allRuleObjects)
       brain.stagePrompts = stagePrompts
       brain.stats.stagePromptsGenerated = true
       brain.stats.stagePromptWords = {
