@@ -5831,15 +5831,17 @@ function formatAssTime(seconds: number): string {
 }
 
 // Color grade presets — rich cinematic looks
+// NOTE: Colons inside curves control-point values are escaped as \: so they are
+// not mistaken for FFmpeg filter-option separators (the outer -vf arg is double-quoted).
 const colorGrades: Record<string, string> = {
-  cinematic: "eq=brightness=-0.03:contrast=1.25:saturation=0.85,curves=m='0/0:0.15/0.05:0.5/0.5:0.85/0.95:1/1',colorbalance=rs=0.03:gs=-0.02:bs=0.05:rh=0.05:gh=-0.02:bh=0.02,vignette=PI/4",
-  warm: "eq=brightness=0.04:contrast=1.1:saturation=1.15,colorbalance=rs=0.15:gs=0.08:bs=-0.1:rm=0.1:gm=0.05:bm=-0.08:rh=0.08:gh=0.03:bh=-0.05,curves=r='0/0:0.5/0.55:1/1':b='0/0.05:0.5/0.45:1/0.9'",
-  cold: "eq=brightness=0.01:contrast=1.12:saturation=0.9,colorbalance=rs=-0.1:gs=-0.03:bs=0.15:rm=-0.08:gm=0.02:bm=0.12:rh=-0.05:gh=0.01:bh=0.1,curves=b='0/0.05:0.5/0.58:1/1':r='0/0:0.5/0.45:1/0.92'",
-  vintage: "eq=brightness=0.05:contrast=0.9:saturation=0.6,curves=r='0/0.12:0.5/0.52:1/0.88':g='0/0.08:0.5/0.48:1/0.9':b='0/0.05:0.5/0.4:1/0.8',vignette=PI/3.5",
-  vibrant: "eq=brightness=0.04:contrast=1.25:saturation=1.5,unsharp=5:5:1.2:5:5:0.0,curves=m='0/0:0.4/0.35:0.6/0.7:1/1'",
-  moody: "eq=brightness=-0.05:contrast=1.3:saturation=0.7,curves=m='0/0:0.2/0.08:0.5/0.45:0.8/0.9:1/1',colorbalance=rs=0.02:gs=-0.03:bs=0.05,vignette=PI/3",
+  cinematic: "eq=brightness=-0.03:contrast=1.25:saturation=0.85,curves=m=0/0\\:0.15/0.05\\:0.5/0.5\\:0.85/0.95\\:1/1,colorbalance=rs=0.03:gs=-0.02:bs=0.05:rh=0.05:gh=-0.02:bh=0.02,vignette=PI/4",
+  warm: "eq=brightness=0.04:contrast=1.1:saturation=1.15,colorbalance=rs=0.15:gs=0.08:bs=-0.1:rm=0.1:gm=0.05:bm=-0.08:rh=0.08:gh=0.03:bh=-0.05,curves=r=0/0\\:0.5/0.55\\:1/1:b=0/0.05\\:0.5/0.45\\:1/0.9",
+  cold: "eq=brightness=0.01:contrast=1.12:saturation=0.9,colorbalance=rs=-0.1:gs=-0.03:bs=0.15:rm=-0.08:gm=0.02:bm=0.12:rh=-0.05:gh=0.01:bh=0.1,curves=b=0/0.05\\:0.5/0.58\\:1/1:r=0/0\\:0.5/0.45\\:1/0.92",
+  vintage: "eq=brightness=0.05:contrast=0.9:saturation=0.6,curves=r=0/0.12\\:0.5/0.52\\:1/0.88:g=0/0.08\\:0.5/0.48\\:1/0.9:b=0/0.05\\:0.5/0.4\\:1/0.8,vignette=PI/3.5",
+  vibrant: "eq=brightness=0.04:contrast=1.25:saturation=1.5,unsharp=5:5:1.2:5:5:0.0,curves=m=0/0\\:0.4/0.35\\:0.6/0.7\\:1/1",
+  moody: "eq=brightness=-0.05:contrast=1.3:saturation=0.7,curves=m=0/0\\:0.2/0.08\\:0.5/0.45\\:0.8/0.9\\:1/1,colorbalance=rs=0.02:gs=-0.03:bs=0.05,vignette=PI/3",
   clean: 'eq=brightness=0.04:contrast=1.08:saturation=1.08,unsharp=3:3:0.6',
-  film: "eq=brightness=0.0:contrast=1.15:saturation=0.9,curves=r='0/0.03:0.5/0.5:1/0.95':g='0/0.02:0.5/0.48:1/0.95':b='0/0.05:0.5/0.5:1/0.92',vignette=PI/4.5,colorbalance=rm=0.03:gm=-0.01:bm=-0.02",
+  film: "eq=brightness=0.0:contrast=1.15:saturation=0.9,curves=r=0/0.03\\:0.5/0.5\\:1/0.95:g=0/0.02\\:0.5/0.48\\:1/0.95:b=0/0.05\\:0.5/0.5\\:1/0.92,vignette=PI/4.5,colorbalance=rm=0.03:gm=-0.01:bm=-0.02",
 }
 
 // Hebrew font path for ASS subtitles — Heebo variable font (supports Bold weight)
@@ -8321,7 +8323,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
       }
     }
     const gradeFilter = colorGrades[colorGradeName] || colorGrades.clean
-    console.log(`[COLOR] Applying grade "${colorGradeName}": ${gradeFilter.substring(0, 80)}...`)
+    console.log(`[COLOR] Applying grade "${colorGradeName}"`)
+    console.log(`[COLOR] Filter: ${gradeFilter}`)
     const gradedFile = path.join(uploadsDir, `graded_${timestamp}.mp4`)
     filesToCleanup.push(gradedFile)
 
@@ -9222,8 +9225,10 @@ ${gfxDialogueLines.join('\n')}
       }
     }
 
-    // Cleanup intermediate files
+    // Cleanup intermediate files — never delete the final output or platform exports
+    const finalFileNames = new Set([currentFile, ...outputFiles.map((o: any) => path.join(uploadsDir, o.filename))])
     for (const f of filesToCleanup) {
+      if (finalFileNames.has(f)) continue
       try { if (fs.existsSync(f)) fs.unlinkSync(f) } catch {}
     }
 
