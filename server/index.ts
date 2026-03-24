@@ -3739,15 +3739,88 @@ Frames follow (labeled by segment index):`,
       console.log(`[MOUTH] No videoUrl provided, skipping mouth detection`)
     }
 
+    // === HARD FILTERS: Apply before GPT gets to decide ===
+    // Build indexed segments for filtering
+    let filteredSegments = segments.map((s: any, i: number) => ({ ...s, _originalIndex: i }))
+    const totalBeforeFilters = filteredSegments.length
+    console.log(`[FILTER] === Pre-filtering ${totalBeforeFilters} segments ===`)
+
+    // Helper: calculate word overlap ratio between two texts
+    const calculateWordOverlap = (text1: string, text2: string): number => {
+      const words1 = new Set((text1 || '').split(/\s+/).filter(w => w.length > 1))
+      const words2 = new Set((text2 || '').split(/\s+/).filter(w => w.length > 1))
+      if (words1.size === 0 || words2.size === 0) return 0
+      const overlap = [...words1].filter(w => words2.has(w)).length
+      return overlap / Math.min(words1.size, words2.size)
+    }
+
+    // Step 2: Hard filter — mouth detection
+    const beforeMouthFilter = filteredSegments.length
+    if (mouthResults.length > 0) {
+      filteredSegments = filteredSegments.filter((seg: any) => {
+        const mouthResult = mouthResults.find((r: any) => r.segment === seg._originalIndex)
+        if (mouthResult && mouthResult.mouth === 'listening') {
+          console.log(`[FILTER] Segment ${seg._originalIndex}: REMOVED (mouth=listening)`)
+          return false
+        }
+        return true
+      })
+    }
+    const removedByMouth = beforeMouthFilter - filteredSegments.length
+    console.log(`[FILTER] Step 2 (mouth): removed ${removedByMouth}, kept ${filteredSegments.length}`)
+
+    // Step 3: Hard filter — repetition pattern (first in overlapping pair = dictator = remove)
+    const beforeRepFilter = filteredSegments.length
+    for (let i = 0; i < filteredSegments.length - 1; i++) {
+      const overlap = calculateWordOverlap(filteredSegments[i].text || '', filteredSegments[i + 1].text || '')
+      if (overlap > 0.5) {
+        console.log(`[FILTER] Segment ${filteredSegments[i]._originalIndex}: REMOVED (dictation pair, first=${filteredSegments[i]._originalIndex}, second=${filteredSegments[i + 1]._originalIndex}, overlap=${overlap.toFixed(2)})`)
+        filteredSegments.splice(i, 1)
+        i-- // re-check from same position
+      }
+    }
+    const removedByRep = beforeRepFilter - filteredSegments.length
+    console.log(`[FILTER] Step 3 (repetition): removed ${removedByRep}, kept ${filteredSegments.length}`)
+
+    // Step 4: Hard filter — directing language
+    const DIRECTING_WORDS = ['תגיד', 'עוד פעם', 'בוא נעשה', 'בוא נפרק', 'רגע',
+      'תנשום', 'הכל טוב', 'יופי', 'מעולה', 'עושים את זה', 'רוצים עוד פעם']
+    const beforeDirFilter = filteredSegments.length
+    filteredSegments = filteredSegments.filter((seg: any) => {
+      const hasDirecting = DIRECTING_WORDS.some(word => (seg.text || '').includes(word))
+      if (hasDirecting) {
+        console.log(`[FILTER] Segment ${seg._originalIndex}: REMOVED (directing language)`)
+        return false
+      }
+      return true
+    })
+    const removedByDir = beforeDirFilter - filteredSegments.length
+    console.log(`[FILTER] Step 4 (directing): removed ${removedByDir}, kept ${filteredSegments.length}`)
+
+    // Fallback: if ALL segments filtered out, keep all דובר 1 segments unfiltered
+    if (filteredSegments.length === 0) {
+      console.log(`[FILTER] WARNING: All segments filtered out! Falling back to all דובר 1 segments`)
+      filteredSegments = segments
+        .map((s: any, i: number) => ({ ...s, _originalIndex: i }))
+        .filter((s: any) => (s.speaker || 'דובר 1') === 'דובר 1')
+      if (filteredSegments.length === 0) {
+        // Even דובר 1 is empty, keep everything
+        filteredSegments = segments.map((s: any, i: number) => ({ ...s, _originalIndex: i }))
+      }
+      console.log(`[FILTER] Fallback: using ${filteredSegments.length} segments`)
+    }
+
+    console.log(`[FILTER] === Sending ${filteredSegments.length} segments to GPT for take selection ===`)
+
     // Log which data sources are available
     console.log(`[SELECTOR] Data sources: visualAnalysis=${visualAnalysis ? 'YES' : 'NO'}, presenterIdentification=${presenterIdentification ? 'YES' : 'NO'}`)
     if (presenterIdentification) {
       console.log(`[SELECTOR] Presenter ID: ${presenterIdentification.mainPresenter} (confidence: ${presenterIdentification.confidence}), on-camera: [${(presenterIdentification.onCameraSpeakers || []).join(', ')}], off-camera: [${(presenterIdentification.offCameraSpeakers || []).join(', ')}]`)
     }
 
-    // Build transcript text for GPT
-    const transcriptText = segments.map((s: any, i: number) =>
-      `[${i}] ${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s [${s.speaker || 'דובר 1'}]: "${s.text || ''}"`
+    // Build transcript text for GPT — only filtered segments
+    const transcriptText = filteredSegments.map((s: any) =>
+      `[${s._originalIndex}] ${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s [${s.speaker || 'דובר 1'}]: "${s.text || ''}"`
     ).join('\n')
 
     // Build presenter identification block (authoritative, from earlier frame analysis)
@@ -3785,78 +3858,52 @@ Use the presenter identification above to determine the situation. Since we know
 FALLBACK: Based on Deepgram speaking time, the majority speaker is "${majoritySpeaker}" — treat as the likely presenter.`
     }
 
-    // Build word-level timestamps if available
+    // Build word-level timestamps if available — only for filtered segments
     const wordTimestampsText = wordLevelTimestamps
       ? `\nWORD-LEVEL TIMESTAMPS (use for precise trimming):\n${
-          segments.slice(0, 40).map((s: any, i: number) => {
+          filteredSegments.map((s: any) => {
             const words = s.words || []
             if (words.length === 0) return null
-            return `Segment ${i}: ${words.map((w: any) => `"${w.word}"(${(w.start || 0).toFixed(2)}-${(w.end || 0).toFixed(2)})`).join(' ')}`
+            return `Segment ${s._originalIndex}: ${words.map((w: any) => `"${w.word}"(${(w.start || 0).toFixed(2)}-${(w.end || 0).toFixed(2)})`).join(' ')}`
           }).filter(Boolean).join('\n')
         }`
       : ''
 
-    const systemPrompt = `You are an expert video editor. You receive a full transcript with speaker labels and visual analysis of a video. Your job is to select ONLY the segments that should appear in the final edited video.
+    const systemPrompt = `You are an expert video editor. You receive pre-filtered segments from a presenter video. All off-camera speakers and bad segments have already been removed by automated filters. Your ONLY job is:
 
-STEP 1 — Understand the situation:
-Look at the visual analysis to understand what's happening:
-* If ONE person is visible on screen throughout → this is a presenter video (any other speakers are off-camera crew/assistants — EXCLUDE them entirely)
-* If TWO+ people are visible taking turns → this is an interview/panel (keep ALL visible speakers, exclude only off-camera crew)
-* If NO person is visible → this is voiceover/narration (keep the main voice, it doesn't matter who is on screen)
-
-STEP 2 — Identify speakers:
-* Deepgram assigned speaker labels based on VOICE (acoustic fingerprint)
-* The visual analysis identified who is ON CAMERA
-* Cross-reference: the speaker whose label matches the on-camera person = presenter
-* Any speaker heard but NEVER seen on camera = crew/assistant → EXCLUDE
-
-STEP 3 — Select best takes:
-From the remaining segments (presenter only, or all speakers for interviews):
-* Group segments that contain the same content (multiple takes of same line)
-* Score each take:
-  * Completeness (1-10): full sentence, clean start and end
-  * Fluency (1-10): no stutters, no filler words (אממ, אה, רגע, חכה, בוא, אחי, פאק)
-  * Confidence (1-10): speaker sounds sure, natural delivery
-  * Clean boundaries (1-10): no leftover words from adjacent segments
-* Keep ONLY the best take of each unique line
-* Prefer LATER takes (speaker improved with practice)
-* REJECT any take with filler words if a cleaner alternative exists
-
-STEP 4 — Order the segments:
-Return the selected segments in the order they should appear in the video. This should follow the natural narrative flow, not necessarily chronological order.
-
-STEP 5 — Trim boundaries:
-For each selected segment, if the start or end contains words from a different speaker (bleed), adjust the timestamp:
-* Move start forward past the bleed (+0.2 to +0.5 seconds)
-* Move end backward before the bleed (-0.2 to -0.5 seconds)
-Use word-level timestamps if available for precise trimming.
+1. If multiple segments contain the same content (different takes), keep ONLY the best take based on:
+   * Completeness: full sentence, clean start and end
+   * Fluency: no stutters or filler words (אממ, אה, חכה, בוא, אחי, פאק)
+   * Confidence: natural, sure delivery
+   * Prefer later takes (speaker improved with practice)
+2. Order the selected segments for natural narrative flow.
+3. Trim boundaries if needed:
+   * Move start forward past any bleed (+0.2 to +0.5 seconds)
+   * Move end backward before any bleed (-0.2 to -0.5 seconds)
+   * Use word-level timestamps if available for precise trimming.
 
 CRITICAL RULES:
-* A segment where the speaker is NOT visible on camera should NEVER be included in a presenter-style video, even if the text sounds like presenter content
-* When two speakers say the SAME words, always pick the one who is ON CAMERA
-* Never include directing language: 'תגיד', 'עוד פעם', 'בוא נעשה', 'רגע'
-* Never include reactions: 'פאק', 'אוווו', 'הממ'
-* Never include encouragement: 'יופי', 'מעולה', 'הכל טוב', 'תנשום'
-${presenterIdentification ? `
-IMPORTANT: The presenter identification has CONFIRMED that ${presenterIdentification.mainPresenter} is the on-camera presenter. You must NEVER reject a ${presenterIdentification.mainPresenter} segment as "off-camera". You CAN reject ${presenterIdentification.mainPresenter} segments for quality reasons (bad take, filler, incomplete) but NOT because you think they are a different person or off-camera.` : ''}
+* You CANNOT add segments that are not in the list below.
+* You CANNOT reject segments for speaker reasons — only for quality reasons (bad take when a better take of the same content exists, or reactions like 'פאק', 'אוווו', 'הממ').
+* You CAN reject a segment only if a better version of the same content exists among the provided segments.
+* If a segment is the only version of its content, you MUST keep it.
 
 Return ONLY valid JSON, no markdown fences.`
 
-    const userMessage = `${visualSummary}
+    const userMessage = `PRE-FILTERED SEGMENTS (${filteredSegments.length} segments remaining after automated filters removed off-camera speakers, repetition patterns, and directing language from ${totalBeforeFilters} total):
 
-TRANSCRIPT WITH SPEAKERS (${segments.length} segments, ${speakers.length} speakers):
 ${transcriptText}
 ${wordTimestampsText}
-${mouthDetectionBlock}
+
 VIDEO TYPE: ${contentType || 'unknown'}
 USER INSTRUCTIONS: ${userPrompt || 'none'}
 
-Select the segments for the final video. Return as JSON:
+Choose the best takes from these pre-filtered segments. Return as JSON:
 {
   "situation": "presenter_with_assistant" | "interview" | "panel" | "voiceover" | "single_speaker",
   "on_camera_speakers": ["דובר 1"],
-  "excluded_speakers": ["דובר 2"],
-  "exclude_reason": "reason",
+  "excluded_speakers": [],
+  "exclude_reason": "",
   "selected_segments": [
     {
       "original_index": 3,
@@ -3867,18 +3914,18 @@ Select the segments for the final video. Return as JSON:
       "trimmed_start": 0.3,
       "trimmed_end": 0.2,
       "take_score": 70,
-      "reason": "Clean presenter delivery, best take of this line"
+      "reason": "Best take of this line — clean delivery"
     }
   ],
   "rejected_segments": [
     {
-      "original_index": 2,
-      "speaker": "דובר 2",
-      "reason": "Off-camera assistant dictating the line"
+      "original_index": 5,
+      "speaker": "דובר 1",
+      "reason": "Worse take — stutters, better version exists at segment 7"
     }
   ],
   "total_kept": 6,
-  "total_rejected": 21,
+  "total_rejected": 4,
   "estimated_duration": "32s"
 }`
 
@@ -3975,6 +4022,13 @@ Select the segments for the final video. Return as JSON:
       rejectedSegments: rejectedSegments,
       estimatedDuration: parseFloat(estimatedDuration.toFixed(1)),
       totalInputSegments: segments.length,
+      preFilterCounts: {
+        total: totalBeforeFilters,
+        removedByMouth: removedByMouth,
+        removedByRepetition: removedByRep,
+        removedByDirecting: removedByDir,
+        sentToGpt: filteredSegments.length,
+      },
       elapsed: parseFloat(elapsed),
     })
 
