@@ -900,6 +900,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
           contentType: enrichedInput.userPrompt ? 'user_specified' : 'auto',
           userPrompt: enrichedInput.userPrompt || '',
           wordLevelTimestamps: true,
+          videoUrl: enrichedInput.videoUrls[0],
         }),
       })
 
