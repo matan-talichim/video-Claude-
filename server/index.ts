@@ -3577,7 +3577,7 @@ app.post('/api/auto-editor/select-segments', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(500).json({ message: 'OpenAI לא מחובר' })
 
-    const { segments, visualAnalysis, presenterIdentification, contentType, userPrompt, wordLevelTimestamps } = req.body
+    const { segments, visualAnalysis, presenterIdentification, contentType, userPrompt, wordLevelTimestamps, videoUrl } = req.body
 
     if (!segments || !Array.isArray(segments) || segments.length === 0) {
       return res.status(400).json({ message: 'חסר segments' })
@@ -3588,6 +3588,156 @@ app.post('/api/auto-editor/select-segments', async (req, res) => {
 
     console.log(`[SELECTOR] === Segment Selection ===`)
     console.log(`[SELECTOR] Input: ${segments.length} segments, ${speakers.length} speakers, ${totalDuration.toFixed(1)}s total`)
+
+    // === MOUTH DETECTION: Extract midpoint frames and analyze with GPT Vision ===
+    let mouthDetectionBlock = ''
+    let mouthResults: Array<{ segment: number; timestamp: number; mouth: string }> = []
+
+    if (videoUrl) {
+      const mouthStart = Date.now()
+      try {
+        // Resolve video file path
+        const ffmpeg = getFFmpeg()
+        let videoFile: string
+        if (videoUrl.startsWith('/uploads/') || videoUrl.startsWith('uploads/')) {
+          videoFile = path.join(uploadsDir, path.basename(videoUrl))
+        } else if (videoUrl.startsWith('http')) {
+          const filename = path.basename(new URL(videoUrl, 'http://localhost').pathname)
+          videoFile = path.join(uploadsDir, filename)
+        } else {
+          videoFile = videoUrl
+        }
+
+        if (fs.existsSync(videoFile)) {
+          // Determine which segments to sample (max 30, sample every other if more)
+          const segmentIndices: number[] = []
+          const step = segments.length > 30 ? 2 : 1
+          for (let i = 0; i < segments.length; i += step) {
+            segmentIndices.push(i)
+          }
+
+          console.log(`[MOUTH] Extracting midpoint frames for ${segmentIndices.length} segments...`)
+          const framesDir = path.join(uploadsDir, `mouth_frames_${Date.now()}`)
+          fs.mkdirSync(framesDir, { recursive: true })
+
+          const extractedFrames: Array<{ index: number; midpoint: number; path: string }> = []
+
+          // Extract one frame per segment at midpoint
+          for (const idx of segmentIndices) {
+            const seg = segments[idx]
+            const midpoint = ((seg.start || 0) + (seg.end || 0)) / 2
+            const framePath = path.join(framesDir, `mouth_${idx}.jpg`)
+            try {
+              execSync(
+                `"${ffmpeg}" -ss ${midpoint.toFixed(3)} -i "${videoFile}" -frames:v 1 -vf "scale=320:-1" -q:v 3 -update 1 "${framePath}" -y`,
+                { timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
+              )
+              if (fs.existsSync(framePath) && fs.statSync(framePath).size > 500) {
+                extractedFrames.push({ index: idx, midpoint, path: framePath })
+              }
+            } catch {}
+          }
+
+          const extractTime = ((Date.now() - mouthStart) / 1000).toFixed(1)
+          console.log(`[MOUTH] Extracted ${extractedFrames.length} frames (${extractTime}s)`)
+
+          if (extractedFrames.length > 0) {
+            // Build ONE GPT Vision call with all frames
+            console.log(`[MOUTH] Sending to GPT Vision...`)
+            const visionContent: any[] = [
+              {
+                type: 'text',
+                text: `Here are frames from the middle of each transcript segment. For each frame, determine if the person on camera is:
+A) SPEAKING — mouth open, active facial expression, engaged with camera
+B) LISTENING — mouth closed, looking away, passive expression
+C) NOT VISIBLE — no person in frame
+
+Return ONLY valid JSON array, no markdown fences:
+[{"segment": 0, "timestamp": 3.75, "mouth": "speaking"}, ...]
+
+Frames follow (labeled by segment index):`,
+              },
+            ]
+
+            for (const frame of extractedFrames) {
+              const imageBuffer = fs.readFileSync(frame.path)
+              const base64 = imageBuffer.toString('base64')
+              visionContent.push({
+                type: 'text',
+                text: `Segment ${frame.index} (${frame.midpoint.toFixed(1)}s):`,
+              })
+              visionContent.push({
+                type: 'image_url',
+                image_url: { url: `data:image/jpeg;base64,${base64}`, detail: 'low' },
+              })
+            }
+
+            const visionResponse = await ai.chat.completions.create({
+              model: 'gpt-5.4',
+              max_completion_tokens: 2000,
+              messages: [{
+                role: 'user',
+                content: visionContent,
+              }],
+            })
+
+            const visionText = visionResponse.choices[0]?.message?.content?.trim() || ''
+            const cleanedVision = visionText.replace(/```json|```/g, '').trim()
+            try {
+              mouthResults = JSON.parse(cleanedVision)
+              if (!Array.isArray(mouthResults)) mouthResults = []
+            } catch {
+              console.warn(`[MOUTH] Failed to parse GPT Vision response, falling back to speaker labels`)
+              mouthResults = []
+            }
+          }
+
+          // Clean up extracted frames
+          try {
+            for (const frame of extractedFrames) {
+              try { fs.unlinkSync(frame.path) } catch {}
+            }
+            try { fs.rmdirSync(framesDir) } catch {}
+          } catch {}
+
+          if (mouthResults.length > 0) {
+            const speakingCount = mouthResults.filter(r => r.mouth === 'speaking').length
+            const listeningCount = mouthResults.filter(r => r.mouth === 'listening').length
+            const notVisibleCount = mouthResults.filter(r => r.mouth === 'not_visible' || r.mouth === 'not visible').length
+            const listeningSegments = mouthResults
+              .filter(r => r.mouth === 'listening')
+              .map(r => r.segment)
+
+            const mouthElapsed = ((Date.now() - mouthStart) / 1000).toFixed(1)
+            console.log(`[MOUTH] Results: ${speakingCount} speaking, ${listeningCount} listening, ${notVisibleCount} not visible`)
+            if (listeningSegments.length > 0) {
+              console.log(`[MOUTH] Segments where presenter is LISTENING (off-camera audio): ${listeningSegments.join(',')}`)
+            }
+            console.log(`[MOUTH] Done in ${mouthElapsed}s`)
+
+            // Build the mouth detection block for the GPT prompt
+            mouthDetectionBlock = `\nMOUTH DETECTION (from video frames at each segment's midpoint):\n`
+            for (const r of mouthResults) {
+              const label = r.mouth === 'speaking'
+                ? 'SPEAKING — presenter is delivering this line'
+                : r.mouth === 'listening'
+                  ? 'LISTENING — someone else is speaking, NOT the presenter'
+                  : 'NOT VISIBLE — no person in frame'
+              mouthDetectionBlock += `Segment ${r.segment} (${(r.timestamp || 0).toFixed(1)}s): ${label}\n`
+            }
+            mouthDetectionBlock += `\nRULE: If the person on camera has their mouth CLOSED during a segment, that segment's audio belongs to an OFF-CAMERA speaker (crew/assistant). ALWAYS exclude these segments regardless of speaker label or content.\nIf the person on camera is SPEAKING, the audio matches the on-camera person. Consider keeping these segments (still apply take quality scoring).\n`
+          }
+        } else {
+          console.log(`[MOUTH] Video file not found: ${videoFile}, skipping mouth detection`)
+        }
+      } catch (e: any) {
+        console.log(`[MOUTH] Detection failed, falling back to speaker labels: ${e.message?.substring(0, 100)}`)
+        mouthDetectionBlock = ''
+        mouthResults = []
+      }
+    } else {
+      console.log(`[MOUTH] No videoUrl provided, skipping mouth detection`)
+    }
 
     // Log which data sources are available
     console.log(`[SELECTOR] Data sources: visualAnalysis=${visualAnalysis ? 'YES' : 'NO'}, presenterIdentification=${presenterIdentification ? 'YES' : 'NO'}`)
@@ -3697,7 +3847,7 @@ Return ONLY valid JSON, no markdown fences.`
 TRANSCRIPT WITH SPEAKERS (${segments.length} segments, ${speakers.length} speakers):
 ${transcriptText}
 ${wordTimestampsText}
-
+${mouthDetectionBlock}
 VIDEO TYPE: ${contentType || 'unknown'}
 USER INSTRUCTIONS: ${userPrompt || 'none'}
 
