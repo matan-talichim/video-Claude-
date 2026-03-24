@@ -178,6 +178,7 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
 
   // Screen 4: Results
   if (step === 'done') {
+    console.log('Auto-editor: showing results')
     content = <ExportScreen onReset={handleReset} />
   }
   // Screen 3: Enrichment Review
