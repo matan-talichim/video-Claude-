@@ -3,10 +3,9 @@ import { useAutoEditorStore, type AutoEditorStep } from '../store/autoEditorStor
 
 const STEPS_CONFIG: { key: AutoEditorStep; label: string; activeLabel?: string; icon?: string }[] = [
   { key: 'transcribing', label: 'תמלול הושלם', activeLabel: 'מתמלל את הסרטון...', icon: '🎤' },
-  { key: 'verifying_speakers', label: 'אימות דוברים הושלם', activeLabel: 'מזהה פרזנטור מול עוזר הפקה...', icon: '🔍' },
-  { key: 'validating', label: 'ולידציית חומר', activeLabel: 'מאמת את החומר...' },
   { key: 'analyzing_visuals', label: 'ניתוח תמונה הושלם', activeLabel: 'AI מנתח את התמונה בסרטון...', icon: '👁' },
-  { key: 'cleaning', label: 'ניקוי טעויות וגמגומים', activeLabel: 'מנקה טעויות וגמגומים...', icon: '🧹' },
+  { key: 'selecting_segments', label: 'בחירת קטעים הושלמה', activeLabel: 'AI בוחר את הקטעים הטובים ביותר...', icon: '🎯' },
+  { key: 'validating', label: 'ולידציית חומר', activeLabel: 'מאמת את החומר...' },
   { key: 'enriching', label: 'AI ניתח תוכן', activeLabel: 'AI מנתח את התוכן ומשפר פרומפט...', icon: '🧠' },
   { key: 'review_enrichment', label: 'סקירת הצעות', activeLabel: 'ממתין לאישור...', icon: '📋' },
   { key: 'planning', label: 'תכנון דו-שלבי: במאי + עורך טכני', activeLabel: 'מתכנן גרסה אחת...', icon: '🎬' },

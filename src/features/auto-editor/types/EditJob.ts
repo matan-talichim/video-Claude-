@@ -15,6 +15,7 @@ export interface EditJob {
   transcript: {
     segments: TranscriptSegment[]
     cleanedSegments?: TranscriptSegment[]   // After error cleaning (stutters/fillers removed)
+    selectedSegments?: TranscriptSegment[]  // After unified segment selection (replaces verify+clean)
     cleaningSummary?: {
       total_segments?: number
       kept?: number
@@ -24,10 +25,12 @@ export interface EditJob {
       error?: string
     }
     speakerVerificationSummary?: SpeakerVerificationSummary
+    segmentSelectionSummary?: SegmentSelectionSummary
     speakers: SpeakerInfo[]
     mainPresenter: string         // "דובר 2" etc
     presenterConfidence: 'high' | 'medium' | 'low'
     totalDuration: number
+    segmentSelectionUsed?: boolean  // true if selectSegments was used instead of verify+clean
   } | null
 
   // === VISUAL ANALYSIS ===
@@ -135,6 +138,26 @@ export interface SpeakerVerificationSummary {
   lowConfidence: number
 }
 
+export interface SegmentSelectionResult {
+  originalIndex: number
+  takeScore: number
+  reason: string
+  trimmedStart: number
+  trimmedEnd: number
+}
+
+export interface SegmentSelectionSummary {
+  situation: 'presenter_with_assistant' | 'interview' | 'panel' | 'voiceover' | 'single_speaker'
+  onCameraSpeakers: string[]
+  excludedSpeakers: string[]
+  excludeReason: string
+  selectedCount: number
+  rejectedCount: number
+  estimatedDuration: number
+  totalInputSegments: number
+  elapsed: number
+}
+
 export interface TranscriptSegment {
   start: number
   end: number
@@ -142,6 +165,7 @@ export interface TranscriptSegment {
   speaker: string
   isPresenter: boolean
   speakerVerification?: SpeakerVerificationResult
+  segmentSelection?: SegmentSelectionResult
   words?: { word: string; start: number; end: number; confidence?: number; speaker?: string }[]
 }
 
