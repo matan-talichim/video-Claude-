@@ -270,24 +270,6 @@ export default function Editor() {
     return () => window.removeEventListener('keydown', handler)
   }, [doSave, setSelectedCanvasItem])
 
-  // Warn on navigate away with unsaved changes
-  // Skip warning during Vite HMR updates to avoid false "leave page?" dialogs
-  useEffect(() => {
-    let hmrUpdating = false
-
-    if (import.meta.hot) {
-      import.meta.hot.on('vite:beforeUpdate', () => { hmrUpdating = true })
-      import.meta.hot.on('vite:afterUpdate', () => { hmrUpdating = false })
-    }
-
-    const handler = (e: BeforeUnloadEvent) => {
-      if (isDirty && !hmrUpdating) {
-        e.preventDefault()
-      }
-    }
-    window.addEventListener('beforeunload', handler)
-    return () => window.removeEventListener('beforeunload', handler)
-  }, [isDirty])
 
   return (
     <div className="h-screen flex flex-col bg-[#0A0A0F]" dir="rtl">
