@@ -807,8 +807,8 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       addLog('ניתוח ויזואלי נכשל, ממשיך ללא')
     }
 
-    // === Identify presenter ===
-    if (visualAnalysis && transcript.sortedSpeakers?.length > 1) {
+    // === Identify presenter (runs even without visual analysis — has fallback methods) ===
+    if (transcript.sortedSpeakers?.length > 1) {
       try {
         addLog('מזהה פרזנטור ראשי לפי ניתוח ויזואלי + דיאריזציה...')
         const presenterRes = await fetch(`${API_BASE}/auto-editor/identify-presenter`, {
@@ -876,12 +876,27 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
       const selectorTimer = timeLog('Segment Selection')
       addLog('[SELECTOR] מתחיל בחירת קטעים חכמה — GPT מנתח את כל המידע בקריאה אחת...')
 
+      // Build presenter identification data to pass to selector
+      const presenterIdentification = job.transcript!.mainPresenter ? {
+        mainPresenter: job.transcript!.mainPresenter,
+        confidence: job.transcript!.presenterConfidence || 'low',
+        onCameraSpeakers: [job.transcript!.mainPresenter],
+        offCameraSpeakers: (transcript.sortedSpeakers || [])
+          .map((s: any) => s.speaker)
+          .filter((s: string) => s && !matchesSpeakerClient(s, job.transcript!.mainPresenter)),
+      } : null
+
+      if (presenterIdentification) {
+        addLog(`[SELECTOR] מעביר זיהוי פרזנטור: ${presenterIdentification.mainPresenter} (ביטחון: ${presenterIdentification.confidence})`)
+      }
+
       const selectRes = await fetch(`${API_BASE}/auto-editor/select-segments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           segments: job.transcript!.segments,
           visualAnalysis,
+          presenterIdentification,
           contentType: enrichedInput.userPrompt ? 'user_specified' : 'auto',
           userPrompt: enrichedInput.userPrompt || '',
           wordLevelTimestamps: true,

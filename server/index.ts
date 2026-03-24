@@ -24,7 +24,7 @@ async function getOpenAI() {
     openai = new OpenAI({
       apiKey: (process.env.OPENAI_API_KEY || '').trim(),
       baseURL: 'https://api.openai.com/v1',
-      timeout: 60000,
+      timeout: 120000,
       maxRetries: 3,
     })
   }
@@ -3577,7 +3577,7 @@ app.post('/api/auto-editor/select-segments', async (req, res) => {
     const ai = await getOpenAI()
     if (!ai) return res.status(500).json({ message: 'OpenAI לא מחובר' })
 
-    const { segments, visualAnalysis, contentType, userPrompt, wordLevelTimestamps } = req.body
+    const { segments, visualAnalysis, presenterIdentification, contentType, userPrompt, wordLevelTimestamps } = req.body
 
     if (!segments || !Array.isArray(segments) || segments.length === 0) {
       return res.status(400).json({ message: 'חסר segments' })
@@ -3589,19 +3589,51 @@ app.post('/api/auto-editor/select-segments', async (req, res) => {
     console.log(`[SELECTOR] === Segment Selection ===`)
     console.log(`[SELECTOR] Input: ${segments.length} segments, ${speakers.length} speakers, ${totalDuration.toFixed(1)}s total`)
 
+    // Log which data sources are available
+    console.log(`[SELECTOR] Data sources: visualAnalysis=${visualAnalysis ? 'YES' : 'NO'}, presenterIdentification=${presenterIdentification ? 'YES' : 'NO'}`)
+    if (presenterIdentification) {
+      console.log(`[SELECTOR] Presenter ID: ${presenterIdentification.mainPresenter} (confidence: ${presenterIdentification.confidence}), on-camera: [${(presenterIdentification.onCameraSpeakers || []).join(', ')}], off-camera: [${(presenterIdentification.offCameraSpeakers || []).join(', ')}]`)
+    }
+
     // Build transcript text for GPT
     const transcriptText = segments.map((s: any, i: number) =>
       `[${i}] ${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s [${s.speaker || 'דובר 1'}]: "${s.text || ''}"`
     ).join('\n')
 
+    // Build presenter identification block (authoritative, from earlier frame analysis)
+    const presenterBlock = presenterIdentification
+      ? `\nPRESENTER IDENTIFICATION (AUTHORITATIVE):
+On camera: ${(presenterIdentification.onCameraSpeakers || []).join(', ')}
+Off camera: ${(presenterIdentification.offCameraSpeakers || []).join(', ')}
+Confidence: ${presenterIdentification.confidence || 'medium'}
+This is based on visual frame analysis and is RELIABLE. Use this to determine which speakers to keep and which to exclude. Even if detailed visual analysis is unavailable, this tells you exactly who the presenter is.`
+      : ''
+
     // Build visual analysis summary
-    const visualSummary = visualAnalysis
-      ? `VIDEO ANALYSIS:
+    let visualSummary: string
+    if (visualAnalysis) {
+      visualSummary = `VIDEO ANALYSIS:
 Scene analysis: ${JSON.stringify(visualAnalysis.scene_analysis || visualAnalysis.frames || [], null, 1).substring(0, 3000)}
 Overall: ${JSON.stringify(visualAnalysis.overall || {}, null, 1).substring(0, 1000)}
 Presenter appears in frames: ${JSON.stringify(visualAnalysis.presenter_appears_in_frames || visualAnalysis.presenterFrames || [])}
-Presenter speaking in frames: ${JSON.stringify(visualAnalysis.presenter_speaking_in_frames || [])}`
-      : 'VIDEO ANALYSIS: Not available — treat as single-speaker video.'
+Presenter speaking in frames: ${JSON.stringify(visualAnalysis.presenter_speaking_in_frames || [])}${presenterBlock}`
+    } else if (presenterIdentification) {
+      // Visual analysis timed out but presenter identification succeeded
+      console.log(`[SELECTOR] Visual analysis unavailable, using presenter identification`)
+      visualSummary = `VIDEO ANALYSIS: Detailed visual analysis is unavailable (timed out), but presenter identification succeeded.${presenterBlock}
+Use the presenter identification above to determine the situation. Since we know who is on camera and who is off camera, this is NOT a single-speaker situation if there are off-camera speakers.`
+    } else {
+      // Both failed — fallback to Deepgram majority speaker
+      console.log(`[SELECTOR] No visual data available, using Deepgram majority speaker`)
+      const speakerTimes: Record<string, number> = {}
+      for (const seg of segments) {
+        const sp = seg.speaker || 'דובר 1'
+        speakerTimes[sp] = (speakerTimes[sp] || 0) + ((seg.end || 0) - (seg.start || 0))
+      }
+      const majoritySpeaker = Object.entries(speakerTimes).sort((a, b) => b[1] - a[1])[0]?.[0] || 'דובר 1'
+      visualSummary = `VIDEO ANALYSIS: Not available. No visual or presenter identification data.
+FALLBACK: Based on Deepgram speaking time, the majority speaker is "${majoritySpeaker}" — treat as the likely presenter.`
+    }
 
     // Build word-level timestamps if available
     const wordTimestampsText = wordLevelTimestamps
@@ -3655,6 +3687,8 @@ CRITICAL RULES:
 * Never include directing language: 'תגיד', 'עוד פעם', 'בוא נעשה', 'רגע'
 * Never include reactions: 'פאק', 'אוווו', 'הממ'
 * Never include encouragement: 'יופי', 'מעולה', 'הכל טוב', 'תנשום'
+${presenterIdentification ? `
+IMPORTANT: The presenter identification has CONFIRMED that ${presenterIdentification.mainPresenter} is the on-camera presenter. You must NEVER reject a ${presenterIdentification.mainPresenter} segment as "off-camera". You CAN reject ${presenterIdentification.mainPresenter} segments for quality reasons (bad take, filler, incomplete) but NOT because you think they are a different person or off-camera.` : ''}
 
 Return ONLY valid JSON, no markdown fences.`
 
