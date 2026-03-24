@@ -3384,25 +3384,68 @@ RETAKE DETECTION:
    this is a retake/prompt scenario. REMOVE the presenter's FIRST attempt and KEEP only the LAST/BEST version.
 9. If the presenter says the same idea multiple times in a row, keep only the last version.
 
-BEST TAKE SELECTION:
-10. When you see the presenter saying the same content multiple times (different takes), keep ONLY the cleanest, most complete, and most fluent version. Score each take by:
-    - Completeness: does the sentence start and end properly? (no mid-word cuts)
-    - Fluency: are there stutters, "אממ", "אה", repeated false starts?
-    - Length: longer complete takes are usually better than short fragments
-    - Position: later takes are usually better (presenter improved after practice)
-11. Remove takes with:
-    - Stutters or false starts
-    - Incomplete sentences that trail off
-    - Words said incorrectly and then corrected
-    - Filler words like אממ, אה, רגע, חכה
-12. Always prefer the take where the presenter sounds most confident and natural.
-13. For each group of takes of the same line, add to the reason: "take X of Y kept (cleanest)" so we can log it.
+TAKE SELECTION RULES:
+When multiple takes of the same line exist, score EACH take on a 1-10 scale for these criteria:
+
+A. Completeness (MOST IMPORTANT - weight x3):
+   - The sentence MUST start cleanly — no leftover words from the previous take or thought
+   - The sentence MUST end cleanly — no trailing off, no "אה", no cut mid-word
+   - A full, complete thought must be expressed from start to finish
+   - Score 1-3: Fragment, trails off, or starts mid-thought
+   - Score 4-6: Mostly complete but has a rough start or end
+   - Score 7-10: Clean start and clean end, full thought expressed
+
+B. Fluency (weight x2):
+   - No stutters, false starts, or repeated words
+   - No filler words: אממ, אה, רגע, חכה, בוא, אחי, פאק, כאילו, בעצם, נו
+   - Natural flow without awkward pauses inside the sentence
+   - Score 1-3: Multiple fillers or stutters
+   - Score 4-6: One filler or minor hesitation
+   - Score 7-10: Completely clean and smooth delivery
+
+C. Confidence (weight x1):
+   - Prefer takes where the speaker sounds sure and direct
+   - Avoid takes where the speaker sounds unsure or questioning themselves
+   - Steady pace — not too fast (rushing) and not too slow (hesitant)
+   - Score 1-3: Unsure, questioning tone, unnatural pacing
+   - Score 4-6: Adequate but not commanding
+   - Score 7-10: Confident, natural, authoritative delivery
+
+D. Clean boundaries (weight x2):
+   - Does the take start WITHOUT leftover words from the previous sentence?
+   - Does the take end WITHOUT bleeding into the next thought?
+   - Score 1-3: Starts with words from previous take or ends with words from next
+   - Score 4-6: Minor boundary issue (1 extra word)
+   - Score 7-10: Perfect clean start and end
+
+TAKE SELECTION ALGORITHM:
+- Calculate weighted score: (completeness × 3) + (fluency × 2) + (confidence × 1) + (boundaries × 2)
+- Maximum possible score: 80
+- REJECT any take scoring below 48 (60% threshold) if a better alternative exists
+- CRITICAL: A take with ANY filler word (אממ, אה, רגע, חכה, בוא, אחי, פאק) MUST be rejected if there is ANY cleaner alternative. Zero tolerance for fillers when alternatives exist.
+- When two takes score within 5 points of each other, ALWAYS prefer the LATER take (the speaker improved with practice)
+- Complete sentences ALWAYS win over fragments, regardless of other scores
+
+Content accuracy:
+- If the script/intended message is clear from context, prefer the take that matches the intended message most closely
+- Avoid takes where the speaker changes the meaning or skips important words
+
+For EACH take decision, you MUST log scoring in the reason field using this exact format:
+"take X of Y: completeness=N, fluency=N, confidence=N, boundaries=N, weighted=N → KEEP/REJECT (explanation)"
+
+SEGMENT TRIMMING:
+Instead of rejecting a take entirely when it has a small issue at the start or end, TRIM it:
+- If a take starts with 1-2 leftover words from the previous thought, use "trim_start" and adjust start timestamp forward (typically +0.2s to +0.5s per word)
+- If a take ends with "אה", trailing sound, or incomplete trailing word, use "trim_end" and adjust end timestamp back (typically -0.2s to -0.5s)
+- If BOTH start and end need trimming, use action "keep" with trim_to containing both adjusted start and end
+- Log trimming: include "[TRIMMED start +0.3s]" or "[TRIMMED end -0.2s]" in the reason
+- Trimming is ALWAYS preferred over full removal when the core content is good
 
 KEEP these:
-1. Complete, clean sentences
+1. Complete, clean sentences with clean starts and ends
 2. Natural short pauses between ideas (< 1 second)
 3. Emotional moments and emphasis
-4. The best version of repeated ideas (the cleanest take)
+4. The best version of repeated ideas (highest weighted score)
 
 For each segment, return:
 {
@@ -3410,7 +3453,7 @@ For each segment, return:
     {
       "index": 0,
       "action": "keep" | "remove" | "trim_start" | "trim_end",
-      "reason": "why",
+      "reason": "why (include take scoring for retake groups)",
       "trim_to": { "start": new_start, "end": new_end }
     }
   ],
@@ -3419,15 +3462,16 @@ For each segment, return:
     "kept": number,
     "removed": number,
     "trimmed": number,
-    "removed_reasons": { "filler": count, "stutter": count, "retake": count }
+    "removed_reasons": { "filler": count, "stutter": count, "retake": count, "incomplete": count, "boundary": count }
   }
 }
 
 IMPORTANT:
-- Be aggressive about removing filler and stutters
+- Be VERY aggressive about removing filler words and stutters — zero tolerance when alternatives exist
 - But NEVER remove content that carries the message
-- When in doubt, KEEP the segment
-- Trimming is better than full removal (trim the "אממ" at the start, keep the rest)
+- When in doubt between two takes, prefer the LATER one
+- Trimming is ALWAYS better than full removal — trim the "אממ" at the start, keep the rest
+- If the best available take has a rough start/end, TRIM it rather than removing good content
 - Return ONLY valid JSON, no markdown fences`
 
     const response = await ai.chat.completions.create({
@@ -3443,14 +3487,35 @@ IMPORTANT:
     const retakeCount = (result.segments || []).filter((s: any) => s.action === 'remove' && s.reason?.toLowerCase().includes('retake')).length
     console.log(`[CLEAN] Detected ${retakeCount} retakes (presenter repeated after crew prompt)`)
 
-    // Log best-take selection decisions
+    // Log best-take selection decisions with per-take scoring
     const takeDecisions = (result.segments || []).filter((s: any) => s.reason && /take \d+ of \d+/i.test(s.reason))
     for (const td of takeDecisions) {
-      const segText = presenterSegments[td.index]?.text?.substring(0, 40) || ''
-      console.log(`[CLEAN] Line "${segText}...": ${td.reason} → ${td.action}`)
+      const segText = presenterSegments[td.index]?.text?.substring(0, 50) || ''
+      const scoreMatch = td.reason?.match(/weighted=(\d+)/)
+      const scoreStr = scoreMatch ? ` [score=${scoreMatch[1]}/80]` : ''
+      console.log(`[CLEAN] Take scoring "${segText}..."${scoreStr}: ${td.reason} → ${td.action.toUpperCase()}`)
     }
     if (takeDecisions.length > 0) {
-      console.log(`[CLEAN] Best-take selection: ${takeDecisions.filter((d: any) => d.action === 'keep').length} kept, ${takeDecisions.filter((d: any) => d.action === 'remove').length} discarded`)
+      const kept = takeDecisions.filter((d: any) => d.action === 'keep').length
+      const removed = takeDecisions.filter((d: any) => d.action === 'remove').length
+      console.log(`[CLEAN] Best-take selection: ${kept} kept, ${removed} discarded out of ${takeDecisions.length} take decisions`)
+    }
+
+    // Log trimming decisions
+    const trimDecisions = (result.segments || []).filter((s: any) =>
+      s.action === 'trim_start' || s.action === 'trim_end' || (s.action === 'keep' && s.trim_to)
+    )
+    for (const td of trimDecisions) {
+      const seg = presenterSegments[td.index]
+      if (!seg) continue
+      const segText = seg.text?.substring(0, 40) || ''
+      const origRange = `${(seg.start || 0).toFixed(1)}s-${(seg.end || 0).toFixed(1)}s`
+      const newStart = td.trim_to?.start != null ? `${td.trim_to.start.toFixed(1)}s` : `${(seg.start || 0).toFixed(1)}s`
+      const newEnd = td.trim_to?.end != null ? `${td.trim_to.end.toFixed(1)}s` : `${(seg.end || 0).toFixed(1)}s`
+      console.log(`[CLEAN] Trimmed "${segText}..." ${origRange} → ${newStart}-${newEnd} (${td.reason})`)
+    }
+    if (trimDecisions.length > 0) {
+      console.log(`[CLEAN] Total segments trimmed: ${trimDecisions.length}`)
     }
 
     // Apply cleaning decisions to segments
