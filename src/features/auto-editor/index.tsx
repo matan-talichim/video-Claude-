@@ -95,28 +95,6 @@ export default function AutoEditorEntry({ files, onBack, onClose }: AutoEditorEn
   const enrichment = useAutoEditorStore((s) => s.enrichment)
   const reset = useAutoEditorStore((s) => s.reset)
 
-  // Warn user before closing tab during processing
-  // Skip warning during Vite HMR updates to avoid false "leave page?" dialogs
-  useEffect(() => {
-    const isProcessing = step !== 'idle' && step !== 'done' && step !== 'error'
-    if (isProcessing) {
-      let hmrUpdating = false
-
-      if (import.meta.hot) {
-        import.meta.hot.on('vite:beforeUpdate', () => { hmrUpdating = true })
-        import.meta.hot.on('vite:afterUpdate', () => { hmrUpdating = false })
-      }
-
-      const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-        if (hmrUpdating) return
-        e.preventDefault()
-        e.returnValue = 'העריכה עדיין בתהליך. בטוח שרוצה לצאת?'
-        return e.returnValue
-      }
-      window.addEventListener('beforeunload', handleBeforeUnload)
-      return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-    }
-  }, [step])
 
   // Warn if component unmounts during processing
   useEffect(() => {

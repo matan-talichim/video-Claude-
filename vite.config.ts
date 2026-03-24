@@ -13,6 +13,18 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
     hmr: true,
-    watch: { usePolling: true },
+    watch: {
+      usePolling: true,
+      ignored: [
+        '**/server/uploads/**',
+        '**/server/data/**',
+        '**/server/assets/**',
+        '**/edit-history.json',
+        '**/reflections-history.json',
+        '**/editor-brain.json',
+        '**/learning-state.json',
+        '**/eval_frames_*/**',
+      ],
+    },
   },
 })
