@@ -7780,7 +7780,8 @@ app.post('/api/auto-editor/process', async (req, res) => {
 
     console.log('[PROCESS] Step E: Cutting video with', cuts.length, 'segments and transitions...')
 
-    const { filter: transFilter, useTransitions } = buildTransitionFilter(cuts, transitions, 0.5)
+    const { filter: transFilter, useTransitions: transitionsRequested } = buildTransitionFilter(cuts, transitions, 0.5)
+    let useTransitions = transitionsRequested
 
     try {
       execSync(
@@ -7790,6 +7791,7 @@ app.post('/api/auto-editor/process', async (req, res) => {
       console.log('[PROCESS] Step 1 done: Cut video created' + (useTransitions ? ' with transitions' : ''))
     } catch (e: any) {
       // Fallback: simple concat without xfade if transitions fail
+      useTransitions = false
       console.log('[PROCESS] Transitions failed, falling back to simple concat:', e.message?.slice(0, 100))
       const cutFilters: string[] = []
       const concatInputs: string[] = []
@@ -7864,13 +7866,23 @@ app.post('/api/auto-editor/process', async (req, res) => {
       // === VALIDATE cut ranges don't overlap with non-presenter ===
       presenterCutRanges = validateCutRanges(presenterCutRanges, transcriptForCutting, mainPresenter)
 
-      const nonPresenterCount = nonPresenterSegsDiag.length
+      // Even if the transcript was cleaned (nonPresenterCount === 0), we still need to
+      // isolate presenter audio — the plan cuts may include time ranges where non-presenter
+      // audio exists. Compare presenter range coverage vs total cut duration to decide.
+      const totalCutDuration = cuts.reduce((sum: number, c: any) => sum + (c.keep_end - c.keep_start), 0)
+      const totalPresenterDuration = presenterCutRanges.reduce((sum: number, r: { start: number; end: number }) => sum + (r.end - r.start), 0)
+      const needsPresenterIsolation = presenterCutRanges.length > 0 && totalPresenterDuration < totalCutDuration * 0.95
 
-      if (presenterCutRanges.length > 0 && nonPresenterCount > 0) {
+      console.log(`[SPEAKER] Total cut duration: ${totalCutDuration.toFixed(1)}s, presenter range duration: ${totalPresenterDuration.toFixed(1)}s, needs isolation: ${needsPresenterIsolation}`)
+
+      if (needsPresenterIsolation) {
         // Remap presenter ranges from original timestamps to cut video timestamps
+        // Account for transition duration which shortens the output
+        const transitionDuration = (useTransitions && cuts.length > 1) ? 0.5 : 0
         const remappedRanges: Array<{ start: number; end: number }> = []
         let cutOffset = 0
-        for (const cut of cuts) {
+        for (let ci = 0; ci < cuts.length; ci++) {
+          const cut = cuts[ci]
           const cutStart = cut.keep_start
           const cutEnd = cut.keep_end
           const cutDuration = cutEnd - cutStart
@@ -7887,6 +7899,10 @@ app.post('/api/auto-editor/process', async (req, res) => {
             }
           }
           cutOffset += cutDuration
+          // Subtract transition overlap for all cuts except the last
+          if (ci < cuts.length - 1) {
+            cutOffset -= transitionDuration
+          }
         }
 
         // Merge remapped ranges (only merge very close ones to avoid leaking)
@@ -7901,80 +7917,124 @@ app.post('/api/auto-editor/process', async (req, res) => {
           }
         })
 
+        // === DURATION VERIFICATION LOGGING ===
+        const totalCutSegments = finalRanges.reduce((sum, r) => sum + (r.end - r.start), 0)
+        console.log(`[SPEAKER] Total cut segments: ${totalCutSegments.toFixed(1)}s across ${finalRanges.length} ranges`)
+        console.log(`[SPEAKER] Ranges: ${finalRanges.map(r => `${r.start.toFixed(1)}-${r.end.toFixed(1)}`).join(', ')}`)
+
         if (finalRanges.length > 0) {
-          // Extract each presenter segment and concat
-          const segmentFiles: string[] = []
-          for (let i = 0; i < finalRanges.length; i++) {
-            const range = finalRanges[i]
-            const segFile = path.join(uploadsDir, `presenter_seg_${timestamp}_${i}.mp4`)
-            filesToCleanup.push(segFile)
+          // Use filter_complex with trim+atrim+concat to cut BOTH video AND audio precisely
+          // This is more reliable than segment extraction + concat demuxer which can
+          // have timestamp drift and -ss/-to interpretation issues across FFmpeg versions
+          const presenterOutput = path.join(uploadsDir, `presenter_cut_${timestamp}.mp4`)
+          filesToCleanup.push(presenterOutput)
 
-            try {
-              execSync(
-                `"${ffmpegPath}" -i "${currentFile}" -ss ${range.start} -to ${range.end} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${segFile}" -y`,
-                { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
-              )
+          const trimFilters: string[] = []
+          const concatInputs: string[] = []
+          finalRanges.forEach((range, i) => {
+            trimFilters.push(`[0:v]trim=start=${range.start}:end=${range.end},setpts=PTS-STARTPTS[pv${i}]`)
+            trimFilters.push(`[0:a]atrim=start=${range.start}:end=${range.end},asetpts=PTS-STARTPTS[pa${i}]`)
+            concatInputs.push(`[pv${i}][pa${i}]`)
+          })
+          const presenterFilter = [...trimFilters, `${concatInputs.join('')}concat=n=${finalRanges.length}:v=1:a=1[outv][outa]`].join(';')
 
-              if (fs.existsSync(segFile) && fs.statSync(segFile).size > 0) {
-                segmentFiles.push(segFile)
-              }
-            } catch (e: any) {
-              console.warn(`[PROCESS] Presenter segment ${i} failed:`, e.stderr?.toString().substring(0, 200))
+          try {
+            execSync(
+              `"${ffmpegPath}" -i "${currentFile}" -filter_complex "${presenterFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -avoid_negative_ts make_zero "${presenterOutput}" -y`,
+              { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+            )
+
+            if (fs.existsSync(presenterOutput) && fs.statSync(presenterOutput).size > 0) {
+              // === AUDIO VERIFICATION ===
+              console.log('[SPEAKER] === VERIFICATION ===')
+              try {
+                const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
+                const inputDur = execSync(
+                  `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${currentFile}"`,
+                  { timeout: 10000, encoding: 'utf-8' }
+                ).trim()
+                const outDur = execSync(
+                  `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${presenterOutput}"`,
+                  { timeout: 10000, encoding: 'utf-8' }
+                ).trim()
+                const inputDuration = parseFloat(inputDur)
+                const outputDuration = parseFloat(outDur)
+                const removedTime = inputDuration - outputDuration
+
+                console.log(`[SPEAKER] Input duration: ${inputDuration.toFixed(1)}s`)
+                console.log(`[SPEAKER] Output duration: ${outputDuration.toFixed(1)}s`)
+                console.log(`[SPEAKER] Total cut segments: ${totalCutSegments.toFixed(1)}s across ${finalRanges.length} ranges`)
+                console.log(`[SPEAKER] Final output duration: ${outputDuration.toFixed(1)}s`)
+                console.log(`[SPEAKER] Removed: ${removedTime.toFixed(1)}s (${Math.round(removedTime / inputDuration * 100)}% of cut video)`)
+
+                if (Math.abs(outputDuration - totalCutSegments) > 2) {
+                  console.warn(`[SPEAKER] WARNING: Output duration (${outputDuration.toFixed(1)}s) differs from expected cut segments (${totalCutSegments.toFixed(1)}s) by ${Math.abs(outputDuration - totalCutSegments).toFixed(1)}s — possible audio bleed`)
+                }
+
+                if (removedTime < 2) {
+                  console.warn('[SPEAKER] Warning: Less than 2s removed - presenter filter may not be working correctly')
+                }
+              } catch {}
+
+              currentFile = presenterOutput
+              console.log(`[PROCESS] Step 1.5 done: Cut to presenter only (${finalRanges.length} segments via filter_complex)`)
             }
-          }
+          } catch (e: any) {
+            console.warn('[PROCESS] Presenter filter_complex failed, trying fallback with segment extraction:', e.stderr?.toString().substring(0, 200))
 
-          if (segmentFiles.length > 0) {
-            const listFile = path.join(uploadsDir, `presenter_list_${timestamp}.txt`)
-            filesToCleanup.push(listFile)
-            fs.writeFileSync(listFile, segmentFiles.map(f => `file '${f}'`).join('\n'))
+            // Fallback: extract segments individually with -ss (input option) + -t (duration)
+            // Using -ss before -i for input seeking and -t for unambiguous duration
+            const segmentFiles: string[] = []
+            for (let i = 0; i < finalRanges.length; i++) {
+              const range = finalRanges[i]
+              const duration = range.end - range.start
+              const segFile = path.join(uploadsDir, `presenter_seg_${timestamp}_${i}.mp4`)
+              filesToCleanup.push(segFile)
 
-            const presenterOutput = path.join(uploadsDir, `presenter_cut_${timestamp}.mp4`)
-            filesToCleanup.push(presenterOutput)
+              try {
+                execSync(
+                  `"${ffmpegPath}" -ss ${range.start} -i "${currentFile}" -t ${duration} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -avoid_negative_ts make_zero "${segFile}" -y`,
+                  { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+                )
 
-            try {
-              execSync(
-                `"${ffmpegPath}" -f concat -safe 0 -i "${listFile}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${presenterOutput}" -y`,
-                { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
-              )
-
-              if (fs.existsSync(presenterOutput) && fs.statSync(presenterOutput).size > 0) {
-                // === AUDIO VERIFICATION ===
-                console.log('[SPEAKER] === VERIFICATION ===')
-                try {
-                  const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
-                  const inputDur = execSync(
-                    `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${currentFile}"`,
-                    { timeout: 10000, encoding: 'utf-8' }
-                  ).trim()
-                  const outDur = execSync(
-                    `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${presenterOutput}"`,
-                    { timeout: 10000, encoding: 'utf-8' }
-                  ).trim()
-                  const inputDuration = parseFloat(inputDur)
-                  const outputDuration = parseFloat(outDur)
-                  const removedTime = inputDuration - outputDuration
-
-                  console.log(`[SPEAKER] Input duration: ${inputDuration.toFixed(1)}s`)
-                  console.log(`[SPEAKER] Output duration: ${outputDuration.toFixed(1)}s`)
-                  console.log(`[SPEAKER] Removed: ${removedTime.toFixed(1)}s (${Math.round(removedTime / inputDuration * 100)}% of cut video)`)
-
-                  if (removedTime < 5) {
-                    console.warn('[SPEAKER] Warning: Less than 5s removed - presenter filter may not be working correctly')
-                  }
-                } catch {}
-
-                currentFile = presenterOutput
-                console.log(`[PROCESS] Step 1.5 done: Cut to presenter only (${segmentFiles.length} segments)`)
+                if (fs.existsSync(segFile) && fs.statSync(segFile).size > 0) {
+                  segmentFiles.push(segFile)
+                }
+              } catch (e2: any) {
+                console.warn(`[PROCESS] Presenter segment ${i} failed:`, e2.stderr?.toString().substring(0, 200))
               }
-            } catch (e: any) {
-              console.warn('[PROCESS] Presenter concat failed:', e.stderr?.toString().substring(0, 200))
+            }
+
+            if (segmentFiles.length > 0) {
+              const listFile = path.join(uploadsDir, `presenter_list_${timestamp}.txt`)
+              filesToCleanup.push(listFile)
+              fs.writeFileSync(listFile, segmentFiles.map(f => `file '${f}'`).join('\n'))
+
+              const fallbackOutput = path.join(uploadsDir, `presenter_fallback_${timestamp}.mp4`)
+              filesToCleanup.push(fallbackOutput)
+
+              try {
+                execSync(
+                  `"${ffmpegPath}" -f concat -safe 0 -i "${listFile}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${fallbackOutput}" -y`,
+                  { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
+                )
+
+                if (fs.existsSync(fallbackOutput) && fs.statSync(fallbackOutput).size > 0) {
+                  currentFile = fallbackOutput
+                  console.log(`[PROCESS] Step 1.5 done: Cut to presenter only (${segmentFiles.length} segments via fallback concat)`)
+                }
+              } catch (e3: any) {
+                console.warn('[PROCESS] Presenter fallback concat also failed:', e3.stderr?.toString().substring(0, 200))
+              }
             }
           }
         } else {
           console.log('[PROCESS] Step 1.5: No remapped ranges found, keeping full cut')
         }
-      } else if (nonPresenterCount === 0) {
-        console.log('[PROCESS] Step 1.5: All segments are from presenter, no filtering needed')
+      } else if (presenterCutRanges.length === 0) {
+        console.log('[PROCESS] Step 1.5: No presenter cut ranges found, keeping full cut')
+      } else {
+        console.log(`[PROCESS] Step 1.5: Presenter covers ${(totalPresenterDuration / totalCutDuration * 100).toFixed(0)}% of cut video, no isolation needed`)
       }
     } else {
       console.log('[PROCESS] Step 1.5 skipped:', !mainPresenter || mainPresenter === 'none' ? 'No presenter identified' : `No transcript segments (${transcriptSegments.length})`)
