@@ -3569,6 +3569,241 @@ IMPORTANT:
   }
 })
 
+// POST /api/auto-editor/select-segments — Unified segment selection (replaces verify-speakers + clean + tighten)
+// One GPT-5.4 call that receives all info and decides what to keep.
+app.post('/api/auto-editor/select-segments', async (req, res) => {
+  const startTime = Date.now()
+  try {
+    const ai = await getOpenAI()
+    if (!ai) return res.status(500).json({ message: 'OpenAI לא מחובר' })
+
+    const { segments, visualAnalysis, contentType, userPrompt, wordLevelTimestamps } = req.body
+
+    if (!segments || !Array.isArray(segments) || segments.length === 0) {
+      return res.status(400).json({ message: 'חסר segments' })
+    }
+
+    const totalDuration = segments.reduce((acc: number, s: any) => acc + ((s.end || 0) - (s.start || 0)), 0)
+    const speakers = [...new Set(segments.map((s: any) => s.speaker || 'דובר 1'))]
+
+    console.log(`[SELECTOR] === Segment Selection ===`)
+    console.log(`[SELECTOR] Input: ${segments.length} segments, ${speakers.length} speakers, ${totalDuration.toFixed(1)}s total`)
+
+    // Build transcript text for GPT
+    const transcriptText = segments.map((s: any, i: number) =>
+      `[${i}] ${(s.start || 0).toFixed(1)}s-${(s.end || 0).toFixed(1)}s [${s.speaker || 'דובר 1'}]: "${s.text || ''}"`
+    ).join('\n')
+
+    // Build visual analysis summary
+    const visualSummary = visualAnalysis
+      ? `VIDEO ANALYSIS:
+Scene analysis: ${JSON.stringify(visualAnalysis.scene_analysis || visualAnalysis.frames || [], null, 1).substring(0, 3000)}
+Overall: ${JSON.stringify(visualAnalysis.overall || {}, null, 1).substring(0, 1000)}
+Presenter appears in frames: ${JSON.stringify(visualAnalysis.presenter_appears_in_frames || visualAnalysis.presenterFrames || [])}
+Presenter speaking in frames: ${JSON.stringify(visualAnalysis.presenter_speaking_in_frames || [])}`
+      : 'VIDEO ANALYSIS: Not available — treat as single-speaker video.'
+
+    // Build word-level timestamps if available
+    const wordTimestampsText = wordLevelTimestamps
+      ? `\nWORD-LEVEL TIMESTAMPS (use for precise trimming):\n${
+          segments.slice(0, 40).map((s: any, i: number) => {
+            const words = s.words || []
+            if (words.length === 0) return null
+            return `Segment ${i}: ${words.map((w: any) => `"${w.word}"(${(w.start || 0).toFixed(2)}-${(w.end || 0).toFixed(2)})`).join(' ')}`
+          }).filter(Boolean).join('\n')
+        }`
+      : ''
+
+    const systemPrompt = `You are an expert video editor. You receive a full transcript with speaker labels and visual analysis of a video. Your job is to select ONLY the segments that should appear in the final edited video.
+
+STEP 1 — Understand the situation:
+Look at the visual analysis to understand what's happening:
+* If ONE person is visible on screen throughout → this is a presenter video (any other speakers are off-camera crew/assistants — EXCLUDE them entirely)
+* If TWO+ people are visible taking turns → this is an interview/panel (keep ALL visible speakers, exclude only off-camera crew)
+* If NO person is visible → this is voiceover/narration (keep the main voice, it doesn't matter who is on screen)
+
+STEP 2 — Identify speakers:
+* Deepgram assigned speaker labels based on VOICE (acoustic fingerprint)
+* The visual analysis identified who is ON CAMERA
+* Cross-reference: the speaker whose label matches the on-camera person = presenter
+* Any speaker heard but NEVER seen on camera = crew/assistant → EXCLUDE
+
+STEP 3 — Select best takes:
+From the remaining segments (presenter only, or all speakers for interviews):
+* Group segments that contain the same content (multiple takes of same line)
+* Score each take:
+  * Completeness (1-10): full sentence, clean start and end
+  * Fluency (1-10): no stutters, no filler words (אממ, אה, רגע, חכה, בוא, אחי, פאק)
+  * Confidence (1-10): speaker sounds sure, natural delivery
+  * Clean boundaries (1-10): no leftover words from adjacent segments
+* Keep ONLY the best take of each unique line
+* Prefer LATER takes (speaker improved with practice)
+* REJECT any take with filler words if a cleaner alternative exists
+
+STEP 4 — Order the segments:
+Return the selected segments in the order they should appear in the video. This should follow the natural narrative flow, not necessarily chronological order.
+
+STEP 5 — Trim boundaries:
+For each selected segment, if the start or end contains words from a different speaker (bleed), adjust the timestamp:
+* Move start forward past the bleed (+0.2 to +0.5 seconds)
+* Move end backward before the bleed (-0.2 to -0.5 seconds)
+Use word-level timestamps if available for precise trimming.
+
+CRITICAL RULES:
+* A segment where the speaker is NOT visible on camera should NEVER be included in a presenter-style video, even if the text sounds like presenter content
+* When two speakers say the SAME words, always pick the one who is ON CAMERA
+* Never include directing language: 'תגיד', 'עוד פעם', 'בוא נעשה', 'רגע'
+* Never include reactions: 'פאק', 'אוווו', 'הממ'
+* Never include encouragement: 'יופי', 'מעולה', 'הכל טוב', 'תנשום'
+
+Return ONLY valid JSON, no markdown fences.`
+
+    const userMessage = `${visualSummary}
+
+TRANSCRIPT WITH SPEAKERS (${segments.length} segments, ${speakers.length} speakers):
+${transcriptText}
+${wordTimestampsText}
+
+VIDEO TYPE: ${contentType || 'unknown'}
+USER INSTRUCTIONS: ${userPrompt || 'none'}
+
+Select the segments for the final video. Return as JSON:
+{
+  "situation": "presenter_with_assistant" | "interview" | "panel" | "voiceover" | "single_speaker",
+  "on_camera_speakers": ["דובר 1"],
+  "excluded_speakers": ["דובר 2"],
+  "exclude_reason": "reason",
+  "selected_segments": [
+    {
+      "original_index": 3,
+      "speaker": "דובר 1",
+      "start": 21.2,
+      "end": 25.0,
+      "text": "...",
+      "trimmed_start": 0.3,
+      "trimmed_end": 0.2,
+      "take_score": 70,
+      "reason": "Clean presenter delivery, best take of this line"
+    }
+  ],
+  "rejected_segments": [
+    {
+      "original_index": 2,
+      "speaker": "דובר 2",
+      "reason": "Off-camera assistant dictating the line"
+    }
+  ],
+  "total_kept": 6,
+  "total_rejected": 21,
+  "estimated_duration": "32s"
+}`
+
+    console.log(`[SELECTOR] Sending to GPT-5.4 (${systemPrompt.length + userMessage.length} chars)...`)
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-5.4',
+      max_completion_tokens: 8000,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+    })
+
+    const content = response.choices[0].message.content?.trim() || ''
+    const cleaned = content.replace(/```json|```/g, '').trim()
+    const result = JSON.parse(cleaned)
+
+    // Log situation detection
+    console.log(`[SELECTOR] Situation detected: ${result.situation}`)
+    console.log(`[SELECTOR] On camera: ${(result.on_camera_speakers || []).join(', ')} | Excluded: ${(result.excluded_speakers || []).join(', ')}`)
+    if (result.exclude_reason) {
+      console.log(`[SELECTOR] Exclude reason: ${result.exclude_reason}`)
+    }
+
+    const selectedSegments = result.selected_segments || []
+    const rejectedSegments = result.rejected_segments || []
+
+    console.log(`[SELECTOR] Selected: ${selectedSegments.length} segments | Rejected: ${rejectedSegments.length} segments`)
+
+    // Log each selected segment
+    for (const seg of selectedSegments) {
+      const trimInfo = (seg.trimmed_start || seg.trimmed_end)
+        ? ` [trimmed: start+${seg.trimmed_start || 0}s, end-${seg.trimmed_end || 0}s]`
+        : ''
+      console.log(`[SELECTOR] Segment ${seg.original_index} (${seg.start?.toFixed(1)}-${seg.end?.toFixed(1)}s): KEEP — "${(seg.text || '').substring(0, 50)}..." (score=${seg.take_score})${trimInfo}`)
+    }
+
+    // Log each rejected segment
+    for (const seg of rejectedSegments) {
+      console.log(`[SELECTOR] Segment ${seg.original_index}: REJECT — ${seg.reason}`)
+    }
+
+    // Build cleaned segments with adjusted timestamps
+    const finalSegments = selectedSegments.map((sel: any) => {
+      const origSeg = segments[sel.original_index] || {}
+      const adjustedStart = (sel.start || origSeg.start || 0) + (sel.trimmed_start || 0)
+      const adjustedEnd = (sel.end || origSeg.end || 0) - (sel.trimmed_end || 0)
+      return {
+        start: adjustedStart,
+        end: adjustedEnd,
+        text: sel.text || origSeg.text || '',
+        speaker: sel.speaker || origSeg.speaker || 'דובר 1',
+        isPresenter: true,
+        words: origSeg.words,
+        segmentSelection: {
+          originalIndex: sel.original_index,
+          takeScore: sel.take_score,
+          reason: sel.reason,
+          trimmedStart: sel.trimmed_start || 0,
+          trimmedEnd: sel.trimmed_end || 0,
+        },
+      }
+    })
+
+    // Determine main presenter from selected segments
+    const presenterVotes: Record<string, number> = {}
+    for (const seg of finalSegments) {
+      presenterVotes[seg.speaker] = (presenterVotes[seg.speaker] || 0) + 1
+    }
+    const mainPresenter = Object.entries(presenterVotes)
+      .sort((a, b) => (b[1] as number) - (a[1] as number))[0]?.[0] || segments[0]?.speaker || 'דובר 1'
+
+    // Mark non-presenter segments
+    for (const seg of finalSegments) {
+      seg.isPresenter = matchesSpeaker(seg.speaker, mainPresenter)
+    }
+
+    const estimatedDuration = finalSegments.reduce((acc: number, s: any) => acc + (s.end - s.start), 0)
+
+    console.log(`[SELECTOR] === Done: ${finalSegments.length} segments, ~${estimatedDuration.toFixed(1)}s estimated ===`)
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+
+    res.json({
+      segments: finalSegments,
+      situation: result.situation,
+      onCameraSpeakers: result.on_camera_speakers || [],
+      excludedSpeakers: result.excluded_speakers || [],
+      excludeReason: result.exclude_reason || '',
+      mainPresenter,
+      selectedCount: finalSegments.length,
+      rejectedCount: rejectedSegments.length,
+      rejectedSegments: rejectedSegments,
+      estimatedDuration: parseFloat(estimatedDuration.toFixed(1)),
+      totalInputSegments: segments.length,
+      elapsed: parseFloat(elapsed),
+    })
+
+  } catch (e: any) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+    console.error(`[SELECTOR] Failed after ${elapsed}s:`, e.message?.substring(0, 200))
+    res.status(500).json({
+      message: `Segment selection failed: ${e.message?.substring(0, 100)}`,
+      fallbackToLegacy: true,
+    })
+  }
+})
+
 // POST /api/auto-editor/creative-brief — Step 1: Creative Director analyzes content
 app.post('/api/auto-editor/creative-brief', async (req, res) => {
   try {
@@ -7959,8 +8194,12 @@ app.post('/api/auto-editor/process', async (req, res) => {
     }
 
     // === TIGHTEN CUT BOUNDARIES to remove speaker bleed ===
+    // Skip if segment selection was used (trimming already done inside selectSegments)
+    const segmentSelectionUsed = job?.transcript?.segmentSelectionUsed || req.body.segmentSelectionUsed || false
     const allTranscriptSegments = transcript?.segments || []
-    if (mainPresenter && mainPresenter !== 'none' && allTranscriptSegments.length > 0) {
+    if (segmentSelectionUsed) {
+      console.log(`[PROCESS] Step E: Skipping tightenCutBoundaries — already trimmed by segment selection`)
+    } else if (mainPresenter && mainPresenter !== 'none' && allTranscriptSegments.length > 0) {
       console.log(`[PROCESS] Step E: Tightening segment boundaries to remove speaker bleed...`)
       cuts = tightenCutBoundaries(cuts, allTranscriptSegments, mainPresenter)
     }

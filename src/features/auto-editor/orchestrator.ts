@@ -7,7 +7,7 @@ import { generateBackground } from './services/nanoBananaService'
 // B-Roll now goes through unified KIE.ai API on server side
 import { findMusic } from './services/pixabayService'
 import { BASE_VISUAL_PROMPT, BASE_ENRICH_PROMPT } from './constants/basePrompts'
-import type { EditJob, TranscriptSegment, SubtitleSegment, SpeakerVerificationSummary } from './types/EditJob'
+import type { EditJob, TranscriptSegment, SubtitleSegment, SpeakerVerificationSummary, SegmentSelectionSummary } from './types/EditJob'
 import { createEmptyEditJob } from './types/EditJob'
 
 const API_BASE = 'http://localhost:3001/api'
@@ -755,101 +755,7 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     // Also keep store updated for UI
     setTranscript(transcript)
 
-    // Step 1.5 — Speaker Verification (detect presenter vs production assistant)
-    setStep('verifying_speakers')
-    setProgress({ current: 0, total: 1, label: 'מזהה דוברים — מפריד בין פרזנטור לעוזר הפקה...' })
-
-    try {
-      const verifyTimer = timeLog('Speaker Verification')
-      addLog('[SPEAKER VERIFY] מתחיל אימות דוברים — 4 שיטות זיהוי...')
-
-      const verifyRes = await fetch(`${API_BASE}/auto-editor/verify-speakers`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          segments: job.transcript!.segments,
-          videoUrl: enrichedInput.videoUrls[0],
-        }),
-      })
-
-      if (verifyRes.ok) {
-        const verifyData = await verifyRes.json()
-        const corrected: TranscriptSegment[] = (verifyData.segments || []).map((s: any) => ({
-          start: s.start || 0,
-          end: s.end || 0,
-          text: s.text || '',
-          speaker: s.speaker || 'דובר 1',
-          isPresenter: s.isPresenter ?? false,
-          speakerVerification: s.speakerVerification,
-          words: s.words,
-        }))
-
-        // Update EditJob with corrected segments
-        job.transcript!.segments = corrected
-        job.transcript!.speakerVerificationSummary = verifyData.summary as SpeakerVerificationSummary
-
-        // Re-calculate speaker times after correction
-        const newSpeakerTimes: Record<string, number> = {}
-        for (const seg of corrected) {
-          newSpeakerTimes[seg.speaker] = (newSpeakerTimes[seg.speaker] || 0) + (seg.end - seg.start)
-        }
-        job.transcript!.speakers = Object.entries(newSpeakerTimes).map(([name, totalTime]) => ({
-          name,
-          totalTime,
-          isPresenter: name === verifyData.presenterLabel,
-        }))
-
-        // If verification found a presenter, set it
-        if (verifyData.presenterLabel) {
-          job.transcript!.mainPresenter = verifyData.presenterLabel
-          job.transcript!.presenterConfidence = 'high'
-        }
-
-        // Update store transcript
-        transcript.segments = corrected.map((s: TranscriptSegment) => ({
-          start: s.start,
-          end: s.end,
-          text: s.text,
-          sourceFile: 0,
-          speaker: s.speaker,
-          isPresenter: s.isPresenter,
-        }))
-        if (verifyData.presenterLabel) {
-          transcript.mainSpeaker = verifyData.presenterLabel
-        }
-        setTranscript({ ...transcript })
-
-        const sum = verifyData.summary
-        addLog(`[SPEAKER VERIFY] הושלם: ${sum.presenterSegments} קטעי פרזנטור (${sum.presenterDuration}ש), ${sum.assistantSegments} קטעי עוזר הפקה (${sum.assistantDuration}ש)`)
-        addLog(`[SPEAKER VERIFY] זוגות דיקטציה: ${sum.dictationPairsFound}, ביטחון גבוה: ${sum.highConfidence}/${sum.totalSegments}`)
-        verifyTimer.done(`${sum.presenterSegments} presenter, ${sum.assistantSegments} assistant, ${sum.dictationPairsFound} dictation pairs`)
-      } else {
-        addLog('[SPEAKER VERIFY] אימות דוברים נכשל, ממשיך עם תמלול מקורי')
-      }
-    } catch (e: any) {
-      console.warn('[AUTO-EDIT] Speaker verification failed, continuing:', e.message)
-      addLog('[SPEAKER VERIFY] שגיאה באימות דוברים, ממשיך ללא')
-    }
-
-    store.markStepCompleted('verifying_speakers')
-
-    // Step 2 — Validation
-    setStep('validating')
-    if (enrichedInput.targetDuration !== -1) {
-      const validation = validateAvailableContent(
-        job.transcript.totalDuration,
-        enrichedInput.targetDuration,
-        enrichedInput.numberOfVideos,
-        transcript.segments
-      )
-      if (!validation.valid) {
-        setError(validation.message!)
-        return
-      }
-    }
-    addLog('ולידציה עברה בהצלחה')
-
-    // Step 3 — Visual Analysis
+    // Step 2 — Visual Analysis (moved before segment selection so GPT has visual data)
     setStep('analyzing_visuals')
     setProgress({ current: 0, total: 1, label: 'AI מנתח את התמונה בסרטון...' })
 
@@ -961,37 +867,207 @@ export async function runAutoEditor(input: AutoEditorInput): Promise<void> {
     setEnergyAnalysis(energyAnalysis)
     addLog(`ניתוח אנרגיה: ${energyAnalysis.wordsPerMinute} מילים/דקה (${energyAnalysis.pace}), ${energyAnalysis.peaks.length} שיאים, ${energyAnalysis.valleys.length} שפלים`)
 
-    // === Step: Clean transcript (remove stutters, fillers, retakes) ===
-    setStep('cleaning')
-    setProgress({ current: 0, total: 1, label: 'מנקה טעויות וגמגומים...' })
+    // === Unified Segment Selection (replaces Speaker Verify + CLEAN + tighten) ===
+    setStep('selecting_segments')
+    setProgress({ current: 0, total: 1, label: 'AI בוחר את הקטעים הטובים ביותר — דובר, ניקוי, ציון...' })
 
+    let segmentSelectionUsed = false
     try {
-      const cleanResponse = await fetch(`${API_BASE}/auto-editor/clean-transcript`, {
+      const selectorTimer = timeLog('Segment Selection')
+      addLog('[SELECTOR] מתחיל בחירת קטעים חכמה — GPT מנתח את כל המידע בקריאה אחת...')
+
+      const selectRes = await fetch(`${API_BASE}/auto-editor/select-segments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          transcript: { segments: job.transcript!.segments },
-          mainPresenter: job.transcript!.mainPresenter,
+          segments: job.transcript!.segments,
+          visualAnalysis,
+          contentType: enrichedInput.userPrompt ? 'user_specified' : 'auto',
+          userPrompt: enrichedInput.userPrompt || '',
+          wordLevelTimestamps: true,
         }),
       })
 
-      if (cleanResponse.ok) {
-        const cleanResult = await cleanResponse.json()
-        job.transcript!.cleanedSegments = cleanResult.cleanedSegments
-        job.transcript!.cleaningSummary = cleanResult.summary
+      if (selectRes.ok) {
+        const selectData = await selectRes.json()
+        const selected: TranscriptSegment[] = (selectData.segments || []).map((s: any) => ({
+          start: s.start || 0,
+          end: s.end || 0,
+          text: s.text || '',
+          speaker: s.speaker || 'דובר 1',
+          isPresenter: s.isPresenter ?? true,
+          words: s.words,
+          segmentSelection: s.segmentSelection,
+        }))
 
-        const removed = cleanResult.originalCount - cleanResult.cleanedCount
-        addLog(`ניקוי תמלול: ${cleanResult.originalCount} → ${cleanResult.cleanedCount} קטעים (הוסרו ${removed} קטעים פגומים)`)
-        console.log(`[AUTO-EDIT] Cleaned: ${cleanResult.originalCount} → ${cleanResult.cleanedCount} segments`)
+        // Store selected segments in EditJob (replaces both cleanedSegments and speaker verification)
+        job.transcript!.selectedSegments = selected
+        job.transcript!.segmentSelectionUsed = true
+        job.transcript!.segmentSelectionSummary = {
+          situation: selectData.situation,
+          onCameraSpeakers: selectData.onCameraSpeakers || [],
+          excludedSpeakers: selectData.excludedSpeakers || [],
+          excludeReason: selectData.excludeReason || '',
+          selectedCount: selectData.selectedCount,
+          rejectedCount: selectData.rejectedCount,
+          estimatedDuration: selectData.estimatedDuration,
+          totalInputSegments: selectData.totalInputSegments,
+          elapsed: selectData.elapsed,
+        }
+
+        // Set main presenter from selection
+        if (selectData.mainPresenter) {
+          job.transcript!.mainPresenter = selectData.mainPresenter
+          job.transcript!.presenterConfidence = 'high'
+
+          // Update store for UI
+          store.setDetectedPresenter(selectData.mainPresenter, 'high', '')
+          store.setMainPresenter(selectData.mainPresenter)
+          transcript.mainSpeaker = selectData.mainPresenter
+        }
+
+        // Update speaker list
+        const newSpeakerTimes: Record<string, number> = {}
+        for (const seg of selected) {
+          newSpeakerTimes[seg.speaker] = (newSpeakerTimes[seg.speaker] || 0) + (seg.end - seg.start)
+        }
+        job.transcript!.speakers = Object.entries(newSpeakerTimes).map(([name, totalTime]) => ({
+          name,
+          totalTime,
+          isPresenter: matchesSpeakerClient(name, selectData.mainPresenter || ''),
+        }))
+
+        // Also set cleanedSegments for backward compatibility with downstream steps
+        job.transcript!.cleanedSegments = selected
+
+        segmentSelectionUsed = true
+
+        addLog(`[SELECTOR] סיטואציה: ${selectData.situation}`)
+        addLog(`[SELECTOR] במצלמה: ${(selectData.onCameraSpeakers || []).join(', ')} | הוחרגו: ${(selectData.excludedSpeakers || []).join(', ')}`)
+        addLog(`[SELECTOR] נבחרו: ${selectData.selectedCount} קטעים (~${selectData.estimatedDuration}ש) | נדחו: ${selectData.rejectedCount} קטעים`)
+        selectorTimer.done(`${selectData.selectedCount} selected, ${selectData.rejectedCount} rejected, situation=${selectData.situation}`)
       } else {
-        addLog('ניקוי תמלול נכשל, ממשיך עם התמלול המקורי')
+        const errData = await selectRes.json().catch(() => ({}))
+        addLog(`[SELECTOR] בחירת קטעים נכשלה (${errData.message || 'unknown'}), נופל לשיטה הישנה...`)
+        console.warn('[AUTO-EDIT] Segment selection failed, falling back to legacy verify+clean')
       }
     } catch (e: any) {
-      console.warn('[AUTO-EDIT] Transcript cleaning failed:', e.message)
-      addLog('ניקוי תמלול נכשל, ממשיך עם התמלול המקורי')
+      console.warn('[AUTO-EDIT] Segment selection failed, falling back to legacy:', e.message)
+      addLog('[SELECTOR] שגיאה בבחירת קטעים, נופל לשיטה הישנה...')
     }
 
-    store.markStepCompleted('cleaning')
+    // === Fallback: Legacy Speaker Verify + Clean (if selectSegments failed) ===
+    if (!segmentSelectionUsed) {
+      addLog('[FALLBACK] משתמש בשיטה הישנה: אימות דוברים + ניקוי תמלול')
+
+      // Legacy Speaker Verification
+      try {
+        const verifyTimer = timeLog('Speaker Verification (fallback)')
+        addLog('[SPEAKER VERIFY] מתחיל אימות דוברים — 4 שיטות זיהוי...')
+
+        const verifyRes = await fetch(`${API_BASE}/auto-editor/verify-speakers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            segments: job.transcript!.segments,
+            videoUrl: enrichedInput.videoUrls[0],
+          }),
+        })
+
+        if (verifyRes.ok) {
+          const verifyData = await verifyRes.json()
+          const corrected: TranscriptSegment[] = (verifyData.segments || []).map((s: any) => ({
+            start: s.start || 0,
+            end: s.end || 0,
+            text: s.text || '',
+            speaker: s.speaker || 'דובר 1',
+            isPresenter: s.isPresenter ?? false,
+            speakerVerification: s.speakerVerification,
+            words: s.words,
+          }))
+
+          job.transcript!.segments = corrected
+          job.transcript!.speakerVerificationSummary = verifyData.summary as SpeakerVerificationSummary
+
+          const newSpeakerTimes: Record<string, number> = {}
+          for (const seg of corrected) {
+            newSpeakerTimes[seg.speaker] = (newSpeakerTimes[seg.speaker] || 0) + (seg.end - seg.start)
+          }
+          job.transcript!.speakers = Object.entries(newSpeakerTimes).map(([name, totalTime]) => ({
+            name,
+            totalTime,
+            isPresenter: name === verifyData.presenterLabel,
+          }))
+
+          if (verifyData.presenterLabel) {
+            job.transcript!.mainPresenter = verifyData.presenterLabel
+            job.transcript!.presenterConfidence = 'high'
+          }
+
+          transcript.segments = corrected.map((s: TranscriptSegment) => ({
+            start: s.start,
+            end: s.end,
+            text: s.text,
+            sourceFile: 0,
+            speaker: s.speaker,
+            isPresenter: s.isPresenter,
+          }))
+          if (verifyData.presenterLabel) {
+            transcript.mainSpeaker = verifyData.presenterLabel
+          }
+          setTranscript({ ...transcript })
+
+          const sum = verifyData.summary
+          addLog(`[SPEAKER VERIFY] הושלם: ${sum.presenterSegments} קטעי פרזנטור, ${sum.assistantSegments} קטעי עוזר הפקה`)
+          verifyTimer.done(`${sum.presenterSegments} presenter, ${sum.assistantSegments} assistant`)
+        }
+      } catch (e: any) {
+        console.warn('[AUTO-EDIT] Speaker verification fallback failed:', e.message)
+        addLog('[SPEAKER VERIFY] אימות דוברים נכשל, ממשיך עם תמלול מקורי')
+      }
+
+      // Legacy Clean Transcript
+      try {
+        const cleanResponse = await fetch(`${API_BASE}/auto-editor/clean-transcript`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transcript: { segments: job.transcript!.segments },
+            mainPresenter: job.transcript!.mainPresenter,
+          }),
+        })
+
+        if (cleanResponse.ok) {
+          const cleanResult = await cleanResponse.json()
+          job.transcript!.cleanedSegments = cleanResult.cleanedSegments
+          job.transcript!.cleaningSummary = cleanResult.summary
+
+          const removed = cleanResult.originalCount - cleanResult.cleanedCount
+          addLog(`ניקוי תמלול: ${cleanResult.originalCount} → ${cleanResult.cleanedCount} קטעים (הוסרו ${removed})`)
+        }
+      } catch (e: any) {
+        console.warn('[AUTO-EDIT] Transcript cleaning fallback failed:', e.message)
+        addLog('ניקוי תמלול נכשל, ממשיך עם התמלול המקורי')
+      }
+    }
+
+    store.markStepCompleted('selecting_segments')
+
+    // Step — Validation
+    setStep('validating')
+    if (enrichedInput.targetDuration !== -1) {
+      const validation = validateAvailableContent(
+        job.transcript.totalDuration,
+        enrichedInput.targetDuration,
+        enrichedInput.numberOfVideos,
+        transcript.segments
+      )
+      if (!validation.valid) {
+        setError(validation.message!)
+        return
+      }
+    }
+    addLog('ולידציה עברה בהצלחה')
 
     // Step 4 — Enrich prompt
     setStep('enriching')
