@@ -7034,6 +7034,125 @@ setInterval(() => {
   } catch {}
 }, 600000) // every 10 minutes
 
+// Tighten cut boundaries to remove audio bleed from adjacent speakers.
+// Uses word-level timestamps when available; falls back to fixed buffers.
+function tightenCutBoundaries(
+  cuts: Array<{keep_start: number, keep_end: number}>,
+  transcriptSegments: any[],
+  mainPresenter: string
+): Array<{keep_start: number, keep_end: number}> {
+  if (!transcriptSegments || transcriptSegments.length === 0 || !mainPresenter || mainPresenter === 'none') {
+    return cuts
+  }
+
+  // Sort all segments by start time for lookup
+  const sorted = [...transcriptSegments].sort((a: any, b: any) => a.start - b.start)
+
+  const tightened = cuts.map((cut, ci) => {
+    const origStart = cut.keep_start
+    const origEnd = cut.keep_end
+    let newStart = origStart
+    let newEnd = origEnd
+
+    // Find transcript segments that overlap with this cut
+    const overlapping = sorted.filter((seg: any) =>
+      seg.start < origEnd && seg.end > origStart
+    )
+
+    if (overlapping.length === 0) {
+      return cut // No transcript data for this cut, keep as-is
+    }
+
+    // --- Tighten START ---
+    // Find the segment that was playing right BEFORE this cut starts
+    const segBeforeCut = sorted.filter((seg: any) => seg.end <= origStart + 0.5 && seg.end >= origStart - 0.5)
+      .sort((a: any, b: any) => b.end - a.end)[0]
+    // Find the first segment within this cut
+    const firstSegInCut = overlapping[0]
+
+    const prevIsDifferentSpeaker = segBeforeCut && !matchesSpeaker(segBeforeCut.speaker, mainPresenter)
+    const firstIsPresenter = firstSegInCut && matchesSpeaker(firstSegInCut.speaker, mainPresenter)
+
+    if (prevIsDifferentSpeaker && firstIsPresenter) {
+      // Previous segment is a different speaker — risk of bleed at cut start
+      // Use word-level timestamps if available for precision
+      const words = firstSegInCut.words || []
+      const presenterWords = words.filter((w: any) => matchesSpeaker(w.speaker, mainPresenter))
+
+      if (presenterWords.length > 0) {
+        // Use the first presenter word's start time (word-level precision)
+        const firstPresenterWord = presenterWords[0]
+        const wordStart = firstPresenterWord.start
+        // Only tighten if the word starts after the cut start (don't expand)
+        if (wordStart > origStart && wordStart < origStart + 0.8) {
+          newStart = Math.max(origStart, wordStart - 0.05) // tiny padding before the word
+          console.log(`[TIGHTEN] Segment ${ci}: start tightened via word-level: ${origStart.toFixed(2)}→${newStart.toFixed(2)} (first presenter word at ${wordStart.toFixed(2)}s)`)
+        }
+      } else {
+        // No word-level data — use fixed buffer
+        newStart = origStart + 0.3
+        console.log(`[TIGHTEN] Segment ${ci}: start tightened +0.3s buffer: ${origStart.toFixed(2)}→${newStart.toFixed(2)} (prev speaker: ${segBeforeCut.speaker})`)
+      }
+    }
+
+    // --- Tighten END ---
+    // Find the segment that starts right AFTER this cut ends
+    const segAfterCut = sorted.filter((seg: any) => seg.start >= origEnd - 0.5 && seg.start <= origEnd + 0.5)
+      .sort((a: any, b: any) => a.start - b.start)[0]
+    // Find the last segment within this cut
+    const lastSegInCut = overlapping[overlapping.length - 1]
+
+    const nextIsDifferentSpeaker = segAfterCut && !matchesSpeaker(segAfterCut.speaker, mainPresenter)
+    const lastIsPresenter = lastSegInCut && matchesSpeaker(lastSegInCut.speaker, mainPresenter)
+
+    if (nextIsDifferentSpeaker && lastIsPresenter) {
+      // Next segment is a different speaker — risk of bleed at cut end
+      const words = lastSegInCut.words || []
+      const presenterWords = words.filter((w: any) => matchesSpeaker(w.speaker, mainPresenter))
+
+      if (presenterWords.length > 0) {
+        // Use the last presenter word's end time (word-level precision)
+        const lastPresenterWord = presenterWords[presenterWords.length - 1]
+        const wordEnd = lastPresenterWord.end
+        // Only tighten if the word ends before the cut end (don't expand)
+        if (wordEnd < origEnd && wordEnd > origEnd - 0.8) {
+          newEnd = Math.min(origEnd, wordEnd + 0.05) // tiny padding after the word
+          console.log(`[TIGHTEN] Segment ${ci}: end tightened via word-level: ${origEnd.toFixed(2)}→${newEnd.toFixed(2)} (last presenter word at ${wordEnd.toFixed(2)}s)`)
+        }
+      } else {
+        // No word-level data — use fixed buffer
+        newEnd = origEnd - 0.2
+        console.log(`[TIGHTEN] Segment ${ci}: end tightened -0.2s buffer: ${origEnd.toFixed(2)}→${newEnd.toFixed(2)} (next speaker: ${segAfterCut.speaker})`)
+      }
+    }
+
+    // Safety: ensure the cut is still valid (at least 0.5s)
+    if (newEnd - newStart < 0.5) {
+      console.log(`[TIGHTEN] Segment ${ci}: tightened range too short (${(newEnd - newStart).toFixed(2)}s), reverting to original`)
+      return cut
+    }
+
+    if (newStart !== origStart || newEnd !== origEnd) {
+      const startTrim = newStart - origStart
+      const endTrim = origEnd - newEnd
+      const parts: string[] = []
+      if (startTrim > 0) parts.push(`trimmed start ${startTrim.toFixed(2)}s`)
+      if (endTrim > 0) parts.push(`trimmed end ${endTrim.toFixed(2)}s`)
+      console.log(`[PROCESS] Segment ${ci}: original ${origStart.toFixed(1)}-${origEnd.toFixed(1)}s → tightened ${newStart.toFixed(1)}-${newEnd.toFixed(1)}s (${parts.join(', ')})`)
+    } else {
+      console.log(`[TIGHTEN] Segment ${ci}: ${origStart.toFixed(1)}-${origEnd.toFixed(1)}s — no adjacent speaker change, keeping as-is`)
+    }
+
+    return { keep_start: newStart, keep_end: newEnd }
+  })
+
+  const origTotal = cuts.reduce((sum, c) => sum + (c.keep_end - c.keep_start), 0)
+  const newTotal = tightened.reduce((sum, c) => sum + (c.keep_end - c.keep_start), 0)
+  console.log(`[PROCESS] Step E: Tightened ${cuts.length} segments: ${origTotal.toFixed(1)}s → ${newTotal.toFixed(1)}s (removed ${(origTotal - newTotal).toFixed(1)}s of potential bleed)`)
+
+  return tightened
+}
+
 // Build cut ranges that strictly include only presenter segments
 function buildPresenterCutRanges(
   transcript: any,
@@ -7839,11 +7958,18 @@ app.post('/api/auto-editor/process', async (req, res) => {
       }
     }
 
+    // === TIGHTEN CUT BOUNDARIES to remove speaker bleed ===
+    const allTranscriptSegments = transcript?.segments || []
+    if (mainPresenter && mainPresenter !== 'none' && allTranscriptSegments.length > 0) {
+      console.log(`[PROCESS] Step E: Tightening segment boundaries to remove speaker bleed...`)
+      cuts = tightenCutBoundaries(cuts, allTranscriptSegments, mainPresenter)
+    }
+
     const transitions = planTransitions
     const cutFile = path.join(uploadsDir, `cut_${timestamp}.mp4`)
     filesToCleanup.push(cutFile)
 
-    console.log('[PROCESS] Step E: Cutting video with', cuts.length, 'segments and transitions...')
+    console.log('[PROCESS] Step E: Cutting video with', cuts.length, 'segments and tightened boundaries...')
 
     const { filter: transFilter, useTransitions: transitionsRequested } = buildTransitionFilter(cuts, transitions, 0.5)
     let useTransitions = transitionsRequested
@@ -7878,232 +8004,11 @@ app.post('/api/auto-editor/process', async (req, res) => {
     // ============================================
     // STEP 1.5: PRESENTER-ONLY AUDIO ISOLATION
     // ============================================
-    // If we have transcript segments and a main presenter,
-    // re-cut the video to only include segments where the presenter speaks
-    const transcriptSegments = transcript?.segments || []
-    if (mainPresenter && mainPresenter !== 'none' && transcriptSegments.length > 0) {
-      console.log(`[PROCESS] Step 1.5: Isolating presenter "${mainPresenter}" audio...`)
-
-      // === DIAGNOSTIC LOGGING ===
-      const uniqueSpeakers = [...new Set(transcriptSegments.map((s: any) => s.speaker))]
-      console.log('[SPEAKER] All unique speakers in transcript:', uniqueSpeakers)
-      console.log('[SPEAKER] Target presenter:', mainPresenter)
-
-      // Segment count per speaker
-      const speakerCounts: Record<string, {count: number, totalTime: number}> = {}
-      transcriptSegments.forEach((seg: any) => {
-        const speaker = seg.speaker || 'unknown'
-        if (!speakerCounts[speaker]) speakerCounts[speaker] = { count: 0, totalTime: 0 }
-        speakerCounts[speaker].count++
-        speakerCounts[speaker].totalTime += (seg.end - seg.start)
-      })
-      console.log('[SPEAKER] Segments per speaker:', JSON.stringify(speakerCounts, null, 2))
-
-      // Match results for EACH speaker
-      uniqueSpeakers.forEach(speaker => {
-        const matches = matchesSpeaker(speaker, mainPresenter)
-        console.log(`[SPEAKER] matchesSpeaker("${speaker}", "${mainPresenter}") = ${matches}`)
-      })
-
-      // Show which segments pass the filter
-      const presenterSegsDiag = transcriptSegments.filter((seg: any) =>
-        matchesSpeaker(seg.speaker, mainPresenter)
-      )
-      const nonPresenterSegsDiag = transcriptSegments.filter((seg: any) =>
-        !matchesSpeaker(seg.speaker, mainPresenter)
-      )
-      console.log(`[SPEAKER] Presenter segments: ${presenterSegsDiag.length} (${presenterSegsDiag.reduce((sum: number, s: any) => sum + s.end - s.start, 0).toFixed(1)}s)`)
-      console.log(`[SPEAKER] Non-presenter segments being CUT: ${nonPresenterSegsDiag.length} (${nonPresenterSegsDiag.reduce((sum: number, s: any) => sum + s.end - s.start, 0).toFixed(1)}s)`)
-
-      // Show first 3 segments of EACH speaker for verification
-      uniqueSpeakers.forEach(speaker => {
-        const segs = transcriptSegments.filter((s: any) => s.speaker === speaker).slice(0, 3)
-        console.log(`[SPEAKER] "${speaker}" first 3 segments:`)
-        segs.forEach((s: any) => {
-          console.log(`  [${s.start.toFixed(1)}s-${s.end.toFixed(1)}s] "${(s.text || '').substring(0, 60)}"`)
-        })
-      })
-
-      // === BUILD CUT RANGES using strict function ===
-      const transcriptForCutting = { segments: transcriptSegments }
-      let presenterCutRanges = buildPresenterCutRanges(transcriptForCutting, mainPresenter)
-
-      // === VALIDATE cut ranges don't overlap with non-presenter ===
-      presenterCutRanges = validateCutRanges(presenterCutRanges, transcriptForCutting, mainPresenter)
-
-      // Even if the transcript was cleaned (nonPresenterCount === 0), we still need to
-      // isolate presenter audio — the plan cuts may include time ranges where non-presenter
-      // audio exists. Compare presenter range coverage vs total cut duration to decide.
-      const totalCutDuration = cuts.reduce((sum: number, c: any) => sum + (c.keep_end - c.keep_start), 0)
-      const totalPresenterDuration = presenterCutRanges.reduce((sum: number, r: { start: number; end: number }) => sum + (r.end - r.start), 0)
-      const needsPresenterIsolation = presenterCutRanges.length > 0 && totalPresenterDuration < totalCutDuration * 0.95
-
-      console.log(`[SPEAKER] Total cut duration: ${totalCutDuration.toFixed(1)}s, presenter range duration: ${totalPresenterDuration.toFixed(1)}s, needs isolation: ${needsPresenterIsolation}`)
-
-      if (needsPresenterIsolation) {
-        // Remap presenter ranges from original timestamps to cut video timestamps
-        // Account for transition duration which shortens the output
-        const transitionDuration = (useTransitions && cuts.length > 1) ? 0.5 : 0
-        const remappedRanges: Array<{ start: number; end: number }> = []
-        let cutOffset = 0
-        for (let ci = 0; ci < cuts.length; ci++) {
-          const cut = cuts[ci]
-          const cutStart = cut.keep_start
-          const cutEnd = cut.keep_end
-          const cutDuration = cutEnd - cutStart
-
-          for (const range of presenterCutRanges) {
-            // Check if presenter range overlaps with this cut
-            const overlapStart = Math.max(range.start, cutStart)
-            const overlapEnd = Math.min(range.end, cutEnd)
-            if (overlapStart < overlapEnd) {
-              remappedRanges.push({
-                start: cutOffset + (overlapStart - cutStart),
-                end: cutOffset + (overlapEnd - cutStart),
-              })
-            }
-          }
-          cutOffset += cutDuration
-          // Subtract transition overlap for all cuts except the last
-          if (ci < cuts.length - 1) {
-            cutOffset -= transitionDuration
-          }
-        }
-
-        // Merge remapped ranges (only merge very close ones to avoid leaking)
-        const finalRanges: Array<{ start: number; end: number }> = []
-        remappedRanges.sort((a, b) => a.start - b.start)
-        remappedRanges.forEach(range => {
-          const last = finalRanges[finalRanges.length - 1]
-          if (last && range.start - last.end < 0.2) {
-            last.end = Math.max(last.end, range.end)
-          } else {
-            finalRanges.push({ ...range })
-          }
-        })
-
-        // === DURATION VERIFICATION LOGGING ===
-        const totalCutSegments = finalRanges.reduce((sum, r) => sum + (r.end - r.start), 0)
-        console.log(`[SPEAKER] Total cut segments: ${totalCutSegments.toFixed(1)}s across ${finalRanges.length} ranges`)
-        console.log(`[SPEAKER] Ranges: ${finalRanges.map(r => `${r.start.toFixed(1)}-${r.end.toFixed(1)}`).join(', ')}`)
-
-        if (finalRanges.length > 0) {
-          // Use filter_complex with trim+atrim+concat to cut BOTH video AND audio precisely
-          // This is more reliable than segment extraction + concat demuxer which can
-          // have timestamp drift and -ss/-to interpretation issues across FFmpeg versions
-          const presenterOutput = path.join(uploadsDir, `presenter_cut_${timestamp}.mp4`)
-          filesToCleanup.push(presenterOutput)
-
-          const trimFilters: string[] = []
-          const concatInputs: string[] = []
-          finalRanges.forEach((range, i) => {
-            trimFilters.push(`[0:v]trim=start=${range.start}:end=${range.end},setpts=PTS-STARTPTS[pv${i}]`)
-            trimFilters.push(`[0:a]atrim=start=${range.start}:end=${range.end},asetpts=PTS-STARTPTS[pa${i}]`)
-            concatInputs.push(`[pv${i}][pa${i}]`)
-          })
-          const presenterFilter = [...trimFilters, `${concatInputs.join('')}concat=n=${finalRanges.length}:v=1:a=1[outv][outa]`].join(';')
-
-          try {
-            execSync(
-              `"${ffmpegPath}" -i "${currentFile}" -filter_complex "${presenterFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -avoid_negative_ts make_zero "${presenterOutput}" -y`,
-              { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
-            )
-
-            if (fs.existsSync(presenterOutput) && fs.statSync(presenterOutput).size > 0) {
-              // === AUDIO VERIFICATION ===
-              console.log('[SPEAKER] === VERIFICATION ===')
-              try {
-                const ffprobePath = ffmpegPath.replace(/ffmpeg([^/]*)$/, 'ffprobe$1')
-                const inputDur = execSync(
-                  `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${currentFile}"`,
-                  { timeout: 10000, encoding: 'utf-8' }
-                ).trim()
-                const outDur = execSync(
-                  `"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${presenterOutput}"`,
-                  { timeout: 10000, encoding: 'utf-8' }
-                ).trim()
-                const inputDuration = parseFloat(inputDur)
-                const outputDuration = parseFloat(outDur)
-                const removedTime = inputDuration - outputDuration
-
-                console.log(`[SPEAKER] Input duration: ${inputDuration.toFixed(1)}s`)
-                console.log(`[SPEAKER] Output duration: ${outputDuration.toFixed(1)}s`)
-                console.log(`[SPEAKER] Total cut segments: ${totalCutSegments.toFixed(1)}s across ${finalRanges.length} ranges`)
-                console.log(`[SPEAKER] Final output duration: ${outputDuration.toFixed(1)}s`)
-                console.log(`[SPEAKER] Removed: ${removedTime.toFixed(1)}s (${Math.round(removedTime / inputDuration * 100)}% of cut video)`)
-
-                if (Math.abs(outputDuration - totalCutSegments) > 2) {
-                  console.warn(`[SPEAKER] WARNING: Output duration (${outputDuration.toFixed(1)}s) differs from expected cut segments (${totalCutSegments.toFixed(1)}s) by ${Math.abs(outputDuration - totalCutSegments).toFixed(1)}s — possible audio bleed`)
-                }
-
-                if (removedTime < 2) {
-                  console.warn('[SPEAKER] Warning: Less than 2s removed - presenter filter may not be working correctly')
-                }
-              } catch {}
-
-              currentFile = presenterOutput
-              console.log(`[PROCESS] Step 1.5 done: Cut to presenter only (${finalRanges.length} segments via filter_complex)`)
-            }
-          } catch (e: any) {
-            console.warn('[PROCESS] Presenter filter_complex failed, trying fallback with segment extraction:', e.stderr?.toString().substring(0, 200))
-
-            // Fallback: extract segments individually with -ss (input option) + -t (duration)
-            // Using -ss before -i for input seeking and -t for unambiguous duration
-            const segmentFiles: string[] = []
-            for (let i = 0; i < finalRanges.length; i++) {
-              const range = finalRanges[i]
-              const duration = range.end - range.start
-              const segFile = path.join(uploadsDir, `presenter_seg_${timestamp}_${i}.mp4`)
-              filesToCleanup.push(segFile)
-
-              try {
-                execSync(
-                  `"${ffmpegPath}" -ss ${range.start} -i "${currentFile}" -t ${duration} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -avoid_negative_ts make_zero "${segFile}" -y`,
-                  { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
-                )
-
-                if (fs.existsSync(segFile) && fs.statSync(segFile).size > 0) {
-                  segmentFiles.push(segFile)
-                }
-              } catch (e2: any) {
-                console.warn(`[PROCESS] Presenter segment ${i} failed:`, e2.stderr?.toString().substring(0, 200))
-              }
-            }
-
-            if (segmentFiles.length > 0) {
-              const listFile = path.join(uploadsDir, `presenter_list_${timestamp}.txt`)
-              filesToCleanup.push(listFile)
-              fs.writeFileSync(listFile, segmentFiles.map(f => `file '${f}'`).join('\n'))
-
-              const fallbackOutput = path.join(uploadsDir, `presenter_fallback_${timestamp}.mp4`)
-              filesToCleanup.push(fallbackOutput)
-
-              try {
-                execSync(
-                  `"${ffmpegPath}" -f concat -safe 0 -i "${listFile}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${fallbackOutput}" -y`,
-                  { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
-                )
-
-                if (fs.existsSync(fallbackOutput) && fs.statSync(fallbackOutput).size > 0) {
-                  currentFile = fallbackOutput
-                  console.log(`[PROCESS] Step 1.5 done: Cut to presenter only (${segmentFiles.length} segments via fallback concat)`)
-                }
-              } catch (e3: any) {
-                console.warn('[PROCESS] Presenter fallback concat also failed:', e3.stderr?.toString().substring(0, 200))
-              }
-            }
-          }
-        } else {
-          console.log('[PROCESS] Step 1.5: No remapped ranges found, keeping full cut')
-        }
-      } else if (presenterCutRanges.length === 0) {
-        console.log('[PROCESS] Step 1.5: No presenter cut ranges found, keeping full cut')
-      } else {
-        console.log(`[PROCESS] Step 1.5: Presenter covers ${(totalPresenterDuration / totalCutDuration * 100).toFixed(0)}% of cut video, no isolation needed`)
-      }
-    } else {
-      console.log('[PROCESS] Step 1.5 skipped:', !mainPresenter || mainPresenter === 'none' ? 'No presenter identified' : `No transcript segments (${transcriptSegments.length})`)
-    }
+    // Skipped — segment boundaries are already tightened in Step E using
+    // word-level timestamps and speaker-aware buffers. Re-cutting with
+    // original-timeline presenter ranges would use wrong timestamps
+    // against the already-cut video.
+    console.log('[PROCESS] Step 1.5: Skipped — segments already tightened in Step E')
 
     // ============================================
     // STEP 1.75: INSERT B-ROLL CLIPS
