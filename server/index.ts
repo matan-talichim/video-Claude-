@@ -11814,6 +11814,10 @@ async function sendLearningReport(state: any, results: any) {
 }
 
 async function runServerLearning(options?: { budget?: number, force?: boolean }) {
+  if (process.env.DISABLE_LEARNING === 'true') {
+    console.log('[LEARN] Learning DISABLED by DISABLE_LEARNING env var');
+    return;
+  }
   if (autoEditorBusy) {
     console.log('[LEARN] Skipping: auto-editor is active')
     // Reschedule for 10 minutes later
@@ -13727,6 +13731,10 @@ Start directly with the content.`,
 // ==================== DAILY LEARNING SCHEDULER ====================
 
 function scheduleDailyLearning() {
+  if (process.env.DISABLE_LEARNING === 'true') {
+    console.log('[LEARN] Learning DISABLED by DISABLE_LEARNING env var');
+    return;
+  }
   // In development: don't schedule ANY automatic learning
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT) {
     console.log('[LEARN] Development mode: automatic learning DISABLED (use Railway)')
@@ -13890,6 +13898,10 @@ function startTelegramBotListener() {
               console.log('[TELEGRAM BOT] Report requested')
               await sendFullReport()
             } else if (text === 'צא ללמוד' || text === 'למד' || text === 'learn') {
+              if (process.env.DISABLE_LEARNING === 'true') {
+                await sendTelegram('⛔ הלמידה מושבתת. הסר DISABLE_LEARNING מ-Railway Variables כדי להפעיל.');
+                return;
+              }
               console.log('[TELEGRAM BOT] Manual learning triggered (force mode)')
               await sendTelegram('🚀 יוצא ללמוד עכשיו... (תקציב: $1)')
               // Run learning in background with force: true to bypass 6-hour check
