@@ -7,7 +7,7 @@ import { generateBackground } from './services/nanoBananaService'
 // B-Roll now goes through unified KIE.ai API on server side
 import { findMusic } from './services/pixabayService'
 import { BASE_VISUAL_PROMPT, BASE_ENRICH_PROMPT } from './constants/basePrompts'
-import type { EditJob, TranscriptSegment, SubtitleSegment, SpeakerVerificationSummary, SegmentSelectionSummary } from './types/EditJob'
+import type { EditJob, TranscriptSegment, SubtitleSegment, SpeakerVerificationSummary } from './types/EditJob'
 import { createEmptyEditJob } from './types/EditJob'
 
 const API_BASE = 'http://localhost:3001/api'
